@@ -14,6 +14,7 @@ import (
 	tracepb "go.opentelemetry.io/proto/otlp/trace/v1"
 	collectortracepb "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 
+	"github.com/Flopsstuff/cotel/internal/pricing"
 	"github.com/Flopsstuff/cotel/internal/storage"
 )
 
@@ -168,5 +169,28 @@ func decodeSpan(sp *tracepb.Span, svcName string, resAttrs map[string]any, resJS
 		f := toFloat64(v)
 		s.CostUSD = &f
 	}
+
+	// Derive cost from token counts when the producer did not supply cost_usd.
+	// Claude Code beta telemetry omits the field; we compute it ingest-time so
+	// the stored row is always queryable without a per-query price JOIN.
+	if s.CostUSD == nil && s.Model != "" {
+		in := derefInt64(s.InputTokens)
+		out := derefInt64(s.OutputTokens)
+		cr := derefInt64(s.CacheReadTokens)
+		cw := derefInt64(s.CacheWriteTokens)
+		if in+out+cr+cw > 0 {
+			if c := pricing.Compute(s.Model, in, out, cr, cw); c > 0 {
+				s.CostUSD = &c
+			}
+		}
+	}
+
 	return s
+}
+
+func derefInt64(p *int64) int64 {
+	if p == nil {
+		return 0
+	}
+	return *p
 }

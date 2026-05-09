@@ -21,12 +21,11 @@
               "endTimeUnixNano":   "1778327129000000000",
               "status": {"code": 1},
               "attributes": [
-                {"key": "model",           "value": {"stringValue": "claude-opus-4-7"}},
-                {"key": "input_tokens",    "value": {"intValue": "2048"}},
-                {"key": "output_tokens",   "value": {"intValue": "768"}},
-                {"key": "cache_read_tokens",  "value": {"intValue": "512"}},
-                {"key": "cache_creation_tokens","value": {"intValue": "256"}},
-                {"key": "cost_usd",        "value": {"doubleValue": 0.00921}}
+                {"key": "model",                 "value": {"stringValue": "claude-opus-4-7"}},
+                {"key": "input_tokens",          "value": {"intValue": "2048"}},
+                {"key": "output_tokens",         "value": {"intValue": "768"}},
+                {"key": "cache_read_tokens",     "value": {"intValue": "512"}},
+                {"key": "cache_creation_tokens", "value": {"intValue": "256"}}
               ]
             },
             {
