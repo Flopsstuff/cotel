@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { Fragment, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useSession } from '../api'
 import { Card, KpiCard, DataTable, EmptyState, ErrorState, LoadingSkeleton, sessionStatusBadge } from '../components'
@@ -87,9 +87,8 @@ export default function SessionDetail() {
                     const widthPct = Math.max((span.duration_ms / totalRange) * 100, 0.5)
                     const isOpen = expanded.has(i)
                     return (
-                      <>
+                      <Fragment key={i}>
                         <tr
-                          key={i}
                           className={[styles.wfRow, styles.wfRowClickable].join(' ')}
                           onClick={() => toggleExpanded(i)}
                         >
@@ -119,7 +118,7 @@ export default function SessionDetail() {
                           </td>
                         </tr>
                         {isOpen && (
-                          <tr key={`${i}-detail`} className={styles.detailRow}>
+                          <tr className={styles.detailRow}>
                             <td colSpan={5} className={styles.detailCell}>
                               <pre className={styles.attrPre}>
                                 {(() => {
@@ -137,7 +136,7 @@ export default function SessionDetail() {
                             </td>
                           </tr>
                         )}
-                      </>
+                      </Fragment>
                     )
                   })}
                 </tbody>

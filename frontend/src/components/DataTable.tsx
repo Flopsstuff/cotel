@@ -46,7 +46,7 @@ export function DataTable<T extends object>({ columns, rows, onRowClick }: DataT
       <table className={styles.table}>
         <thead>
           <tr>
-            {columns.map((col) => {
+            {columns.map((col, colIdx) => {
               const isActive = sort?.key === col.key
               const thClass = [
                 styles.th,
@@ -56,7 +56,7 @@ export function DataTable<T extends object>({ columns, rows, onRowClick }: DataT
                 .filter(Boolean)
                 .join(' ')
               return (
-                <th key={String(col.key)} className={thClass} onClick={() => handleHeaderClick(col)}>
+                <th key={colIdx} className={thClass} onClick={() => handleHeaderClick(col)}>
                   {col.label}
                   {col.sortable && (
                     <span className={styles.sortIcon}>
@@ -75,8 +75,8 @@ export function DataTable<T extends object>({ columns, rows, onRowClick }: DataT
               className={[styles.tr, onRowClick ? styles.trClickable : ''].filter(Boolean).join(' ')}
               onClick={() => onRowClick?.(row)}
             >
-              {columns.map((col) => (
-                <td key={String(col.key)} className={styles.td}>
+              {columns.map((col, colIdx) => (
+                <td key={colIdx} className={styles.td}>
                   {col.render
                     ? col.render(row[col.key] as unknown, row)
                     : String((row[col.key] as unknown) ?? '')}
