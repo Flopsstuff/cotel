@@ -23,6 +23,7 @@ export default defineConfig({
           text: 'Architecture Decisions',
           items: [
             { text: 'ADR-0001 — Storage Engine', link: '/decisions/0001-storage' },
+            { text: 'ADR-0002 — Dashboard React SPA', link: '/decisions/0002-dashboard-react-spa' },
             { text: 'ADR-0003 — Release Policy', link: '/decisions/0003-release-policy' },
             { text: 'ADR-0004 — Multi-User Separation', link: '/decisions/0004-multi-user-separation' },
           ],
