@@ -1,0 +1,144 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Version segment to bump (first release will be v0.1.0)'
+        required: true
+        default: 'minor'
+        type: choice
+        options:
+          - minor
+          - patch
+          - major
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  release:
+    name: Create release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - name: Ensure running on main
+        run: |
+          if [ "${{ github.ref }}" != "refs/heads/main" ]; then
+            echo "::error::Releases must be triggered from the main branch."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compute next version
+        id: version
+        run: |
+          LATEST=$(git tag -l "v[0-9]*.[0-9]*.[0-9]*" | sort -V | tail -1)
+          if [ -z "$LATEST" ]; then
+            TAG="v0.1.0"
+          else
+            MAJOR=$(echo "$LATEST" | sed 's/^v//' | cut -d. -f1)
+            MINOR=$(echo "$LATEST" | sed 's/^v//' | cut -d. -f2)
+            PATCH=$(echo "$LATEST" | sed 's/^v//' | cut -d. -f3)
+            case "${{ inputs.bump }}" in
+              major) TAG="v$((MAJOR+1)).0.0" ;;
+              minor) TAG="v${MAJOR}.$((MINOR+1)).0" ;;
+              patch) TAG="v${MAJOR}.${MINOR}.$((PATCH+1))" ;;
+            esac
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+          echo "Next version: $TAG"
+
+      - name: Update CHANGELOG and extract release notes
+        run: |
+          python3 - "${{ steps.version.outputs.version }}" "$(date -u +%Y-%m-%d)" << 'PYEOF'
+          import sys, re
+
+          version, date = sys.argv[1], sys.argv[2]
+
+          with open("CHANGELOG.md") as f:
+              content = f.read()
+
+          if "## [Unreleased]" not in content:
+              print("::error::CHANGELOG.md has no [Unreleased] section.")
+              sys.exit(1)
+
+          # Stamp [Unreleased] → [version] - date, keep a fresh [Unreleased] at top
+          updated = content.replace(
+              "## [Unreleased]",
+              f"## [Unreleased]\n\n## [{version}] - {date}",
+              1
+          )
+
+          with open("CHANGELOG.md", "w") as f:
+              f.write(updated)
+
+          # Extract notes between the new versioned heading and the next ## heading
+          pattern = rf"## \[{re.escape(version)}\] - {re.escape(date)}\n(.*?)(?=\n## \[|\Z)"
+          m = re.search(pattern, updated, re.DOTALL)
+          notes = m.group(1).strip() if m else "_No changes documented._"
+
+          with open("release-notes.md", "w") as f:
+              f.write(notes or "_No changes documented._")
+
+          print(f"Release notes written ({len(notes)} chars)")
+          PYEOF
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Commit and tag
+        run: |
+          git add CHANGELOG.md
+          git commit -m "chore: release ${{ steps.version.outputs.tag }}"
+          git tag -a "${{ steps.version.outputs.tag }}" \
+            -m "Release ${{ steps.version.outputs.tag }}"
+          git push origin HEAD:main
+          git push origin "${{ steps.version.outputs.tag }}"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=semver,pattern={{version}},value=${{ steps.version.outputs.tag }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ steps.version.outputs.tag }}
+            type=raw,value=latest
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ steps.version.outputs.tag }}" \
+            --title "cotel ${{ steps.version.outputs.tag }}" \
+            --notes-file release-notes.md
