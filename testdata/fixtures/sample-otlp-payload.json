@@ -39,7 +39,8 @@
               "status": {"code": 1},
               "attributes": [
                 {"key": "session.id", "value": {"stringValue": "sess_abc123"}},
-                {"key": "tool.name",  "value": {"stringValue": "Bash"}}
+                {"key": "tool.name",  "value": {"stringValue": "Bash"}},
+                {"key": "command",    "value": {"stringValue": "git status"}}
               ]
             },
             {
@@ -52,7 +53,8 @@
               "status": {"code": 2, "message": "command exited with code 1"},
               "attributes": [
                 {"key": "session.id", "value": {"stringValue": "sess_abc123"}},
-                {"key": "tool.name",  "value": {"stringValue": "Bash"}}
+                {"key": "tool.name",  "value": {"stringValue": "Bash"}},
+                {"key": "command",    "value": {"stringValue": "npm test"}}
               ]
             }
           ]

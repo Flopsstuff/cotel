@@ -49,7 +49,8 @@
               "endTimeUnixNano":   "1778327065000000000",
               "status": {"code": 2, "message": "timeout"},
               "attributes": [
-                {"key": "tool_name", "value": {"stringValue": "Bash"}}
+                {"key": "tool_name", "value": {"stringValue": "Bash"}},
+                {"key": "command",   "value": {"stringValue": "go test ./..."}}
               ]
             }
           ]

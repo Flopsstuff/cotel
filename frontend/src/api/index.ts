@@ -8,6 +8,7 @@ export const fetcher = (url: string) =>
 
 export interface OverviewResponse {
   sessions_count: number
+  users_count: number
   total_cost_usd: number
   total_input_tokens: number
   total_output_tokens: number
@@ -75,6 +76,14 @@ export interface ToolItem {
   fail_rate: number
 }
 
+export interface BashCommandItem {
+  command: string
+  calls: number
+  avg_duration_ms: number
+  fail_count: number
+  fail_rate: number
+}
+
 export interface ModelItem {
   model: string
   span_count: number
@@ -83,25 +92,32 @@ export interface ModelItem {
   total_output_tokens: number
 }
 
-function uidParam(userId: string): string {
-  return userId ? `&user_id=${encodeURIComponent(userId)}` : ''
+export interface UserRow {
+  user_id: string
+  is_default: boolean
+  sessions: number
+  total_cost_usd: number
+  total_input_tokens: number
+  total_output_tokens: number
+  span_count: number
+  last_seen: string
+}
+
+export interface UsersResponse {
+  items: UserRow[]
 }
 
 export function useUsers() {
-  return useSWR<{ items: string[] }>('/api/v1/users', fetcher)
+  return useSWR<UsersResponse>('/api/v1/users', fetcher)
 }
 
-export function useOverview(userId = '', refreshInterval = 30_000) {
-  return useSWR<OverviewResponse>(
-    `/api/v1/overview?_=1${uidParam(userId)}`,
-    fetcher,
-    { refreshInterval },
-  )
+export function useOverview(refreshInterval = 30_000) {
+  return useSWR<OverviewResponse>('/api/v1/overview', fetcher, { refreshInterval })
 }
 
-export function useSessions(page = 1, limit = 50, sort = 'start_time', order = 'desc', userId = '') {
+export function useSessions(page = 1, limit = 50, sort = 'start_time', order = 'desc') {
   return useSWR<SessionsResponse>(
-    `/api/v1/sessions?page=${page}&limit=${limit}&sort=${sort}&order=${order}${uidParam(userId)}`,
+    `/api/v1/sessions?page=${page}&limit=${limit}&sort=${sort}&order=${order}`,
     fetcher,
   )
 }
@@ -110,27 +126,24 @@ export function useSession(id: string) {
   return useSWR<SessionDetailResponse>(id ? `/api/v1/sessions/${id}` : null, fetcher)
 }
 
-export function useCosts(from?: string, to?: string, userId = '') {
+export function useCosts(from?: string, to?: string) {
   const params = new URLSearchParams()
   if (from) params.set('from', from)
   if (to) params.set('to', to)
-  if (userId) params.set('user_id', userId)
   const qs = params.toString()
   return useSWR<CostsResponse>(`/api/v1/costs${qs ? `?${qs}` : ''}`, fetcher)
 }
 
-export function useTools(userId = '') {
-  return useSWR<{ items: ToolItem[] }>(
-    `/api/v1/tools?_=1${uidParam(userId)}`,
-    fetcher,
-  )
+export function useTools() {
+  return useSWR<{ items: ToolItem[] }>('/api/v1/tools', fetcher)
 }
 
-export function useModels(userId = '') {
-  return useSWR<{ items: ModelItem[] }>(
-    `/api/v1/models?_=1${uidParam(userId)}`,
-    fetcher,
-  )
+export function useBashCommands() {
+  return useSWR<{ items: BashCommandItem[] }>('/api/v1/bash-commands', fetcher)
+}
+
+export function useModels() {
+  return useSWR<{ items: ModelItem[] }>('/api/v1/models', fetcher)
 }
 
 export interface HistoryBucket {
@@ -165,10 +178,9 @@ export interface HistoryResponse {
   heatmap: HeatmapCell[]
 }
 
-export function useHistory(granularity: string, from?: string, to?: string, userId = '') {
+export function useHistory(granularity: string, from?: string, to?: string) {
   const params = new URLSearchParams({ granularity })
   if (from) params.set('from', from)
   if (to) params.set('to', to)
-  if (userId) params.set('user_id', userId)
   return useSWR<HistoryResponse>(`/api/v1/history?${params.toString()}`, fetcher)
 }

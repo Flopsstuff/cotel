@@ -51,6 +51,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleCosts(w, r)
 	case path == "/tools" || path == "/tools/":
 		h.handleTools(w, r)
+	case path == "/bash-commands" || path == "/bash-commands/":
+		h.handleBashCommands(w, r)
 	case path == "/models" || path == "/models/":
 		h.handleModels(w, r)
 	case path == "/history" || path == "/history/":
@@ -102,24 +104,49 @@ func userIDClause(r *http.Request) (clause string, arg string) {
 
 // ---- /api/v1/users ----
 
+type userRow struct {
+	UserID            string  `json:"user_id"`
+	IsDefault         bool    `json:"is_default"`
+	Sessions          int64   `json:"sessions"`
+	TotalCostUSD      float64 `json:"total_cost_usd"`
+	TotalInputTokens  int64   `json:"total_input_tokens"`
+	TotalOutputTokens int64   `json:"total_output_tokens"`
+	SpanCount         int64   `json:"span_count"`
+	LastSeen          string  `json:"last_seen"`
+}
+
 type usersResponse struct {
-	Items []string `json:"items"`
+	Items []userRow `json:"items"`
 }
 
 func (h *Handler) handleUsers(w http.ResponseWriter, _ *http.Request) {
 	rows, _ := h.db.Query(`
-		SELECT DISTINCT user_id
+		SELECT
+			COALESCE(user_id, '') AS user_id,
+			user_id IS NULL       AS is_default,
+			COUNT(DISTINCT session_id) AS sessions,
+			COALESCE(SUM(cost_usd), 0) AS total_cost_usd,
+			COALESCE(SUM(input_tokens), 0) AS total_input_tokens,
+			COALESCE(SUM(output_tokens), 0) AS total_output_tokens,
+			COUNT(*) AS span_count,
+			MAX(end_time) AS last_seen
 		FROM spans
-		WHERE user_id IS NOT NULL AND user_id <> ''
-		ORDER BY user_id ASC
+		GROUP BY user_id
+		ORDER BY total_cost_usd DESC
 	`)
-	items := []string{}
+	items := []userRow{}
 	if rows != nil {
 		defer rows.Close()
 		for rows.Next() {
-			var uid string
-			_ = rows.Scan(&uid)
-			items = append(items, uid)
+			var u userRow
+			var lastSeen time.Time
+			var isDefault bool
+			_ = rows.Scan(&u.UserID, &isDefault, &u.Sessions,
+				&u.TotalCostUSD, &u.TotalInputTokens, &u.TotalOutputTokens,
+				&u.SpanCount, &lastSeen)
+			u.IsDefault = isDefault
+			u.LastSeen = lastSeen.UTC().Format(time.RFC3339)
+			items = append(items, u)
 		}
 	}
 	jsonOK(w, usersResponse{Items: items})
@@ -152,6 +179,7 @@ func (h *Handler) handleHealth(w http.ResponseWriter, _ *http.Request) {
 
 type overviewResponse struct {
 	SessionsCount     int64          `json:"sessions_count"`
+	UsersCount        int64          `json:"users_count"`
 	TotalCostUSD      float64        `json:"total_cost_usd"`
 	TotalInputTokens  int64          `json:"total_input_tokens"`
 	TotalOutputTokens int64          `json:"total_output_tokens"`
@@ -202,6 +230,9 @@ func (h *Handler) handleOverview(w http.ResponseWriter, r *http.Request) {
 		&resp.TotalOutputTokens,
 		&resp.TotalCacheTokens,
 	)
+
+	// Count distinct users (NULL counts as one "default" group).
+	_ = h.db.QueryRow(`SELECT COUNT(DISTINCT user_id) FROM spans`).Scan(&resp.UsersCount)
 
 	costArgs := []any{since}
 	if uid != "" {
@@ -641,6 +672,65 @@ func (h *Handler) handleTools(w http.ResponseWriter, r *http.Request) {
 	}
 
 	jsonOK(w, toolsResponse{Items: items})
+}
+
+// ---- /api/v1/bash-commands ----
+
+type bashCommandItem struct {
+	Command       string  `json:"command"`
+	Calls         int64   `json:"calls"`
+	AvgDurationMS float64 `json:"avg_duration_ms"`
+	FailCount     int64   `json:"fail_count"`
+	FailRate      float64 `json:"fail_rate"`
+}
+
+type bashCommandsResponse struct {
+	Items []bashCommandItem `json:"items"`
+}
+
+// handleBashCommands returns per-command breakdown for Bash tool spans.
+// The command is extracted from the span attributes JSON: direct "command" key first,
+// then falling back to the "command" field inside a JSON-encoded "tool_input" value.
+func (h *Handler) handleBashCommands(w http.ResponseWriter, r *http.Request) {
+	uidClause, uid := userIDClause(r)
+	args := []any{}
+	if uid != "" {
+		args = append(args, uid)
+	}
+	rows, _ := h.db.Query(`
+		WITH cmd AS (
+			SELECT
+				COALESCE(
+					attributes->>'command',
+					TRY_CAST(attributes->>'tool_input' AS JSON)->>'command'
+				) AS bash_command,
+				duration_ms,
+				status_code
+			FROM spans
+			WHERE tool_name = 'Bash'`+uidClause+`
+		)
+		SELECT
+			bash_command,
+			COUNT(*) AS calls,
+			AVG(duration_ms) AS avg_dur_ms,
+			COUNT(*) FILTER (WHERE status_code = 2) AS fail_count,
+			100.0 * COUNT(*) FILTER (WHERE status_code = 2) / COUNT(*) AS fail_rate
+		FROM cmd
+		WHERE bash_command IS NOT NULL
+		GROUP BY bash_command ORDER BY calls DESC
+	`, args...)
+
+	items := []bashCommandItem{}
+	if rows != nil {
+		defer rows.Close()
+		for rows.Next() {
+			var t bashCommandItem
+			_ = rows.Scan(&t.Command, &t.Calls, &t.AvgDurationMS, &t.FailCount, &t.FailRate)
+			items = append(items, t)
+		}
+	}
+
+	jsonOK(w, bashCommandsResponse{Items: items})
 }
 
 // ---- /api/v1/models ----

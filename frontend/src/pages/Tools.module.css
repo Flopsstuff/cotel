@@ -8,3 +8,19 @@
 .chartBlock {
   margin-bottom: var(--space-4);
 }
+
+.sectionNote {
+  font-size: var(--text-sm);
+  color: var(--color-text-3);
+  margin-bottom: var(--space-3);
+}
+
+.commandCell {
+  font-family: var(--font-mono, monospace);
+  font-size: var(--text-sm);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: block;
+  max-width: 480px;
+}

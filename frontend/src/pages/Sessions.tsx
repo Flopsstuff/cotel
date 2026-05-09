@@ -1,7 +1,6 @@
 import { useState, useMemo } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useSessions } from '../api'
-import { useUserContext } from '../context/UserContext'
 import { Card, DataTable, EmptyState, ErrorState, LoadingSkeleton, sessionStatusBadge } from '../components'
 import type { SessionItem } from '../api'
 import styles from './Sessions.module.css'
@@ -11,9 +10,7 @@ export default function Sessions() {
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState<'all' | 'ok' | 'error'>('all')
   const navigate = useNavigate()
-  const { userId } = useUserContext()
-
-  const { data, error, isLoading } = useSessions(page, 50, 'start_time', 'desc', userId)
+  const { data, error, isLoading } = useSessions(page, 50, 'start_time', 'desc')
 
   const filtered = useMemo(() => {
     if (!data) return []

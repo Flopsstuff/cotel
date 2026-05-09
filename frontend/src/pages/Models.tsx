@@ -1,13 +1,11 @@
 import { useMemo } from 'react'
 import { useModels } from '../api'
-import { useUserContext } from '../context/UserContext'
 import { Card, DataTable, EmptyState, ErrorState, LoadingSkeleton } from '../components'
 import type { ModelItem } from '../api'
 import styles from './Models.module.css'
 
 export default function Models() {
-  const { userId } = useUserContext()
-  const { data, error, isLoading } = useModels(userId)
+  const { data, error, isLoading } = useModels()
 
   const rows = useMemo(() => {
     if (!data) return []

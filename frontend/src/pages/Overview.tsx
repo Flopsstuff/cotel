@@ -2,7 +2,6 @@ import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
 import { useOverview, useSessions } from '../api'
-import { useUserContext } from '../context/UserContext'
 import { Card, KpiCard, DataTable, EmptyState, ErrorState, RefreshIndicator, KpiSkeleton, ChartSkeleton, LoadingSkeleton, sessionStatusBadge, ChartTooltip } from '../components'
 import type { SessionItem } from '../api'
 import styles from './Overview.module.css'
@@ -16,10 +15,8 @@ function fmtTokens(n: number): string {
 export default function Overview() {
   const [paused, setPaused] = useState(false)
   const navigate = useNavigate()
-  const { userId } = useUserContext()
-
-  const { data, error, isLoading, isValidating, mutate } = useOverview(userId, paused ? 0 : 30_000)
-  const { data: recent, isLoading: recentLoading } = useSessions(1, 5, 'start_time', 'desc', userId)
+  const { data, error, isLoading, isValidating, mutate } = useOverview(paused ? 0 : 30_000)
+  const { data: recent, isLoading: recentLoading } = useSessions(1, 5, 'start_time', 'desc')
 
   return (
     <div>
@@ -42,7 +39,8 @@ export default function Overview() {
       ) : data ? (
         <>
           <div className={styles.kpiRow}>
-            <KpiCard label="Sessions" value={String(data.sessions_count)} />
+            <KpiCard label="Sessions (30d)" value={String(data.sessions_count)} />
+            <KpiCard label="Users" value={String(data.users_count)} />
             <KpiCard label="Total Cost (30d)" value={`$${data.total_cost_usd.toFixed(4)}`} />
             <KpiCard label="Input Tokens (30d)" value={fmtTokens(data.total_input_tokens)} />
             <KpiCard label="Output Tokens (30d)" value={fmtTokens(data.total_output_tokens)} />

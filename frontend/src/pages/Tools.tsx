@@ -1,15 +1,19 @@
-import { useTools } from '../api'
-import { useUserContext } from '../context/UserContext'
+import { useTools, useBashCommands } from '../api'
 import { Card, DataTable, EmptyState, ErrorState, LoadingSkeleton, ChartSkeleton, failRateBadge, ChartTooltip } from '../components'
-import type { ToolItem } from '../api'
+import type { ToolItem, BashCommandItem } from '../api'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
 import styles from './Tools.module.css'
 
+function truncateCommand(cmd: string, max = 80): string {
+  return cmd.length > max ? cmd.slice(0, max - 1) + '…' : cmd
+}
+
 export default function Tools() {
-  const { userId } = useUserContext()
-  const { data, error, isLoading } = useTools(userId)
+  const { data, error, isLoading } = useTools()
+  const { data: bashData, isLoading: bashLoading } = useBashCommands()
 
   const topTools = data?.items.slice().sort((a, b) => b.calls - a.calls).slice(0, 10) ?? []
+  const hasBashCommands = (bashData?.items.length ?? 0) > 0
 
   return (
     <div>
@@ -64,6 +68,48 @@ export default function Tools() {
               rows={data.items}
             />
           </Card>
+
+          {bashLoading ? (
+            <Card title="Bash Command Breakdown">
+              <LoadingSkeleton rows={4} height={36} />
+            </Card>
+          ) : hasBashCommands ? (
+            <Card title="Bash Command Breakdown">
+              <p className={styles.sectionNote}>
+                Each distinct command passed to the Bash tool, sorted by call count.
+                Commands are extracted from the <code>command</code> span attribute.
+              </p>
+              <DataTable<BashCommandItem>
+                columns={[
+                  {
+                    key: 'command',
+                    label: 'Command',
+                    sortable: true,
+                    render: (v) => (
+                      <span className={styles.commandCell} title={String(v)}>
+                        {truncateCommand(String(v))}
+                      </span>
+                    ),
+                  },
+                  { key: 'calls', label: 'Calls', sortable: true },
+                  {
+                    key: 'avg_duration_ms',
+                    label: 'Avg Duration',
+                    sortable: true,
+                    render: (v) => `${Number(v).toFixed(0)}ms`,
+                  },
+                  { key: 'fail_count', label: 'Errors', sortable: true },
+                  {
+                    key: 'fail_rate',
+                    label: 'Error Rate',
+                    sortable: true,
+                    render: (v) => failRateBadge(Number(v)),
+                  },
+                ]}
+                rows={bashData!.items}
+              />
+            </Card>
+          ) : null}
         </>
       )}
     </div>
