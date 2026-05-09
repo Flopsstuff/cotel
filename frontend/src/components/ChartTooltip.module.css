@@ -1,0 +1,13 @@
+.tooltip {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-base);
+  box-shadow: var(--shadow-2);
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-sm);
+}
+.label { color: var(--color-text-2); margin: 0 0 var(--space-1); font-size: var(--text-xs); }
+.row { display: flex; align-items: center; gap: var(--space-1); margin: 0; }
+.dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.name { color: var(--color-text-2); }
+.value { color: var(--color-text-1); font-weight: 600; margin-left: var(--space-1); }

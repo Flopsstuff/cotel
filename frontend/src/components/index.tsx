@@ -9,6 +9,7 @@ export { EmptyState } from './EmptyState'
 export { ErrorState } from './ErrorState'
 export { RefreshIndicator } from './RefreshIndicator'
 export { DateRangePicker } from './DateRangePicker'
+export { ChartTooltip } from './ChartTooltip'
 
 // Alias for pages still importing LoadingState
 export { LoadingSkeleton as LoadingState } from './LoadingSkeleton'

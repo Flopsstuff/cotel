@@ -1,5 +1,5 @@
 import { useTools } from '../api'
-import { Card, DataTable, EmptyState, ErrorState, LoadingSkeleton, ChartSkeleton, failRateBadge } from '../components'
+import { Card, DataTable, EmptyState, ErrorState, LoadingSkeleton, ChartSkeleton, failRateBadge, ChartTooltip } from '../components'
 import type { ToolItem } from '../api'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
 import styles from './Tools.module.css'
@@ -34,7 +34,7 @@ export default function Tools() {
                   tick={{ fontSize: 11, fill: 'var(--color-text-3)' }}
                   width={160}
                 />
-                <Tooltip formatter={(v: number) => [v, 'Calls']} />
+                <Tooltip content={<ChartTooltip formatter={(v) => [String(v), 'Calls']} />} />
                 <Bar dataKey="calls" fill="var(--color-chart-1)" radius={[0, 2, 2, 0]} />
               </BarChart>
             </ResponsiveContainer>

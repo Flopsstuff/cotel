@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import useSWR from 'swr'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
 import { fetcher, type OverviewResponse, type SessionItem } from '../api'
-import { Card, KpiCard, DataTable, EmptyState, ErrorState, RefreshIndicator, KpiSkeleton, ChartSkeleton, LoadingSkeleton, sessionStatusBadge } from '../components'
+import { Card, KpiCard, DataTable, EmptyState, ErrorState, RefreshIndicator, KpiSkeleton, ChartSkeleton, LoadingSkeleton, sessionStatusBadge, ChartTooltip } from '../components'
 import styles from './Overview.module.css'
 
 function fmtTokens(n: number): string {
@@ -62,7 +62,7 @@ export default function Overview() {
                 <BarChart data={data.daily_costs} margin={{ top: 4, right: 8, bottom: 4, left: 0 }}>
                   <XAxis dataKey="date" tick={{ fontSize: 11, fill: 'var(--color-text-3)' }} tickFormatter={(d) => d.slice(5)} />
                   <YAxis tick={{ fontSize: 11, fill: 'var(--color-text-3)' }} tickFormatter={(v) => `$${v.toFixed(2)}`} width={52} />
-                  <Tooltip formatter={(v: number) => [`$${v.toFixed(4)}`, 'Cost']} labelStyle={{ color: 'var(--color-text-1)' }} />
+                  <Tooltip content={<ChartTooltip formatter={(v) => [`$${v.toFixed(4)}`, 'Cost']} />} />
                   <Bar dataKey="cost_usd" fill="var(--color-chart-1)" radius={[2, 2, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
