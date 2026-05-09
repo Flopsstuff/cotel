@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import useSWR from 'swr'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
 import { fetcher, type OverviewResponse, type SessionItem } from '../api'
@@ -14,6 +14,7 @@ function fmtTokens(n: number): string {
 
 export default function Overview() {
   const [paused, setPaused] = useState(false)
+  const navigate = useNavigate()
 
   const { data, error, isLoading, isValidating, mutate } = useSWR<OverviewResponse>(
     '/api/v1/overview',
@@ -138,7 +139,7 @@ export default function Overview() {
                 },
               ]}
               rows={recent.items}
-              onRowClick={(row) => { window.location.href = `/sessions/${row.session_id}` }}
+              onRowClick={(row) => navigate(`/sessions/${row.session_id}`)}
             />
             <div className={styles.viewAll}>
               <Link to="/sessions" className={styles.viewAllLink}>View all sessions →</Link>
