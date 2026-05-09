@@ -176,7 +176,7 @@ func (h *Handler) handleOverview(w http.ResponseWriter, _ *http.Request) {
 	mrows, _ := h.db.Query(`
 		SELECT model, COUNT(*) AS span_count
 		FROM spans
-		WHERE start_time >= ? AND model IS NOT NULL
+		WHERE start_time >= ? AND model IS NOT NULL AND model <> ''
 		GROUP BY model ORDER BY span_count DESC LIMIT 5
 	`, since)
 	if mrows != nil {
@@ -191,7 +191,7 @@ func (h *Handler) handleOverview(w http.ResponseWriter, _ *http.Request) {
 	trows, _ := h.db.Query(`
 		SELECT tool_name, COUNT(*) AS call_count
 		FROM spans
-		WHERE start_time >= ? AND tool_name IS NOT NULL
+		WHERE start_time >= ? AND tool_name IS NOT NULL AND tool_name <> ''
 		GROUP BY tool_name ORDER BY call_count DESC LIMIT 5
 	`, since)
 	if trows != nil {
@@ -252,7 +252,7 @@ func (h *Handler) handleSessions(w http.ResponseWriter, r *http.Request) {
 	allowedSorts := map[string]string{
 		"start_time": "MIN(start_time)",
 		"cost_usd":   "SUM(cost_usd)",
-		"tool_calls": "COUNT(*) FILTER (WHERE tool_name IS NOT NULL)",
+		"tool_calls": "COUNT(*) FILTER (WHERE tool_name IS NOT NULL AND tool_name <> '')",
 	}
 	sortExpr, ok := allowedSorts[sort]
 	if !ok {
@@ -272,7 +272,7 @@ func (h *Handler) handleSessions(w http.ResponseWriter, r *http.Request) {
 			COALESCE(SUM(cost_usd), 0),
 			COALESCE(SUM(input_tokens), 0),
 			COALESCE(SUM(output_tokens), 0),
-			COUNT(*) FILTER (WHERE tool_name IS NOT NULL),
+			COUNT(*) FILTER (WHERE tool_name IS NOT NULL AND tool_name <> ''),
 			MAX(CASE WHEN status_code = 2 THEN 1 ELSE 0 END)
 		FROM spans
 		WHERE session_id IS NOT NULL
@@ -472,7 +472,7 @@ func (h *Handler) handleCosts(w http.ResponseWriter, r *http.Request) {
 	mrows, _ := h.db.Query(`
 		SELECT model, COALESCE(SUM(cost_usd), 0)
 		FROM spans
-		WHERE start_time >= ? AND start_time <= ? AND model IS NOT NULL
+		WHERE start_time >= ? AND start_time <= ? AND model IS NOT NULL AND model <> ''
 		GROUP BY model ORDER BY SUM(cost_usd) DESC
 	`, from, to)
 	resp.ByModel = []costModelRow{}
@@ -546,7 +546,7 @@ func (h *Handler) handleTools(w http.ResponseWriter, _ *http.Request) {
 			COUNT(*) FILTER (WHERE status_code = 2) AS fail_count,
 			100.0 * COUNT(*) FILTER (WHERE status_code = 2) / COUNT(*) AS fail_rate
 		FROM spans
-		WHERE tool_name IS NOT NULL
+		WHERE tool_name IS NOT NULL AND tool_name <> ''
 		GROUP BY tool_name ORDER BY calls DESC
 	`)
 
@@ -586,7 +586,7 @@ func (h *Handler) handleModels(w http.ResponseWriter, _ *http.Request) {
 			COALESCE(SUM(input_tokens), 0),
 			COALESCE(SUM(output_tokens), 0)
 		FROM spans
-		WHERE model IS NOT NULL
+		WHERE model IS NOT NULL AND model <> ''
 		GROUP BY model ORDER BY span_count DESC
 	`)
 

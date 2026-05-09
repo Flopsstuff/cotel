@@ -38,7 +38,7 @@
               "endTimeUnixNano":   "1778327055000000000",
               "status": {"code": 1},
               "attributes": [
-                {"key": "tool.name", "value": {"stringValue": "Read"}}
+                {"key": "tool_name", "value": {"stringValue": "Read"}}
               ]
             },
             {
@@ -50,7 +50,7 @@
               "endTimeUnixNano":   "1778327065000000000",
               "status": {"code": 2, "message": "timeout"},
               "attributes": [
-                {"key": "tool.name", "value": {"stringValue": "Bash"}}
+                {"key": "tool_name", "value": {"stringValue": "Bash"}}
               ]
             }
           ]

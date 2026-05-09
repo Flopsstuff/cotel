@@ -394,6 +394,24 @@ func TestTools(t *testing.T) {
 				}
 			},
 		},
+		{
+			name: "spans without tool_name are excluded",
+			seed: func(t *testing.T, db *storage.DB) {
+				now := time.Now()
+				// Span with empty tool_name (zero value — no tool attribute in original trace).
+				insertSpan(t, db, storage.Span{
+					TraceID: "t1", SpanID: "s1", Name: "interaction", SessionID: "sess1",
+					ToolName: "", StartTime: now, EndTime: now.Add(time.Second),
+				})
+			},
+			wantStatus: http.StatusOK,
+			checkBody: func(t *testing.T, body map[string]any) {
+				items := body["items"].([]any)
+				if len(items) != 0 {
+					t.Errorf("want empty items (empty-tool_name spans excluded), got %v", items)
+				}
+			},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -446,6 +464,24 @@ func TestModels(t *testing.T) {
 				first := items[0].(map[string]any)
 				if first["model"] != "claude-3-sonnet" {
 					t.Errorf("want model=claude-3-sonnet, got %v", first["model"])
+				}
+			},
+		},
+		{
+			name: "spans without model are excluded",
+			seed: func(t *testing.T, db *storage.DB) {
+				now := time.Now()
+				// Span with empty model (zero value — no model attribute in original trace).
+				insertSpan(t, db, storage.Span{
+					TraceID: "t1", SpanID: "s1", Name: "tool", SessionID: "sess1",
+					Model: "", StartTime: now, EndTime: now.Add(time.Second),
+				})
+			},
+			wantStatus: http.StatusOK,
+			checkBody: func(t *testing.T, body map[string]any) {
+				items := body["items"].([]any)
+				if len(items) != 0 {
+					t.Errorf("want empty items (empty-model spans excluded), got %v", items)
 				}
 			},
 		},
