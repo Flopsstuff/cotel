@@ -22,7 +22,7 @@ RUN go mod download
 
 COPY . .
 # Copy the compiled SPA into the embed path before go build
-COPY --from=frontend /app/frontend/dist ./internal/dashboard/static/
+COPY --from=frontend /app/internal/dashboard/static/ ./internal/dashboard/static/
 RUN CGO_ENABLED=1 GOOS=linux \
     go build -ldflags="-s -w" -o /cotel ./cmd/cotel
 
