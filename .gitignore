@@ -5,3 +5,5 @@
 .env
 .env.*
 !.env.example
+frontend/node_modules/
+internal/dashboard/static/assets/

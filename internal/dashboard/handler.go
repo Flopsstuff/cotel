@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"io/fs"
 	"math"
 	"net/http"
 	"strconv"
@@ -16,6 +17,9 @@ import (
 
 //go:embed templates/*.html
 var tmplFS embed.FS
+
+//go:embed static
+var staticFS embed.FS
 
 var tmpl = template.Must(template.New("").Funcs(template.FuncMap{
 	"fmtCost": func(f float64) string { return fmt.Sprintf("$%.4f", f) },
@@ -88,22 +92,47 @@ const pageSize = 50
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
+
+	// SSR routes take priority — kept for transition period.
 	switch {
 	case path == "/" || path == "/dashboard":
 		h.serveIndex(w, r)
+		return
 	case path == "/sessions":
 		h.serveSessions(w, r)
+		return
 	case strings.HasPrefix(path, "/sessions/"):
 		h.serveSession(w, r, strings.TrimPrefix(path, "/sessions/"))
+		return
 	case path == "/costs":
 		h.serveCosts(w, r)
+		return
 	case path == "/tools":
 		h.serveTools(w, r)
+		return
 	case path == "/healthz":
 		h.serveHealthz(w, r)
-	default:
-		http.NotFound(w, r)
+		return
 	}
+
+	// Try to serve from the embedded static SPA build.
+	sub, _ := fs.Sub(staticFS, "static")
+	staticHandler := http.FileServer(http.FS(sub))
+
+	// If the requested file exists in the FS, serve it directly.
+	if _, err := fs.Stat(sub, strings.TrimPrefix(path, "/")); err == nil {
+		staticHandler.ServeHTTP(w, r)
+		return
+	}
+
+	// Catch-all: serve index.html so React Router can handle the route.
+	idx, err := staticFS.ReadFile("static/index.html")
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Write(idx) //nolint:errcheck
 }
 
 func (h *Handler) serveHealthz(w http.ResponseWriter, r *http.Request) {

@@ -1,8 +1,18 @@
 # syntax=docker/dockerfile:1
-# Multi-stage build — CGo required for go-duckdb.
+# Multi-stage build — Node frontend first, then CGo Go build.
 
 ##############################################################################
-# Builder
+# Frontend build
+##############################################################################
+FROM node:22-alpine AS frontend
+WORKDIR /app/frontend
+COPY frontend/package*.json ./
+RUN npm ci
+COPY frontend/ .
+RUN npm run build
+
+##############################################################################
+# Go builder (CGo required for go-duckdb)
 ##############################################################################
 FROM golang:1.23-bookworm AS builder
 
@@ -11,6 +21,8 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
+# Copy the compiled SPA into the embed path before go build
+COPY --from=frontend /app/internal/dashboard/static/ ./internal/dashboard/static/
 RUN CGO_ENABLED=1 GOOS=linux \
     go build -ldflags="-s -w" -o /cotel ./cmd/cotel
 
