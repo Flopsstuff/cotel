@@ -113,3 +113,42 @@ export function useTools() {
 export function useModels() {
   return useSWR<{ items: ModelItem[] }>('/api/v1/models', fetcher)
 }
+
+export interface HistoryBucket {
+  bucket: string
+  sessions: number
+  spans: number
+  cost_usd: number
+  input_tokens: number
+  output_tokens: number
+}
+
+export interface HistoryModelRow {
+  bucket: string
+  model: string
+  cost_usd: number
+  spans: number
+}
+
+export interface HeatmapCell {
+  date: string
+  hour: number
+  count: number
+  cost_usd: number
+}
+
+export interface HistoryResponse {
+  granularity: string
+  from: string
+  to: string
+  buckets: HistoryBucket[]
+  by_model: HistoryModelRow[]
+  heatmap: HeatmapCell[]
+}
+
+export function useHistory(granularity: string, from?: string, to?: string) {
+  const params = new URLSearchParams({ granularity })
+  if (from) params.set('from', from)
+  if (to) params.set('to', to)
+  return useSWR<HistoryResponse>(`/api/v1/history?${params.toString()}`, fetcher)
+}

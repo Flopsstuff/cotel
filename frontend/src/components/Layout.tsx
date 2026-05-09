@@ -1,11 +1,12 @@
 import { ReactNode } from 'react'
 import { NavLink } from 'react-router-dom'
-import { Activity, DollarSign, Layers, Cpu, Wrench } from 'lucide-react'
+import { Activity, DollarSign, Layers, Cpu, Wrench, CalendarDays } from 'lucide-react'
 import styles from './Layout.module.css'
 
 const navItems = [
   { to: '/', label: 'Overview', icon: <Activity size={15} />, end: true },
   { to: '/sessions', label: 'Sessions', icon: <Layers size={15} /> },
+  { to: '/history', label: 'History', icon: <CalendarDays size={15} /> },
   { to: '/costs', label: 'Costs', icon: <DollarSign size={15} /> },
   { to: '/tools', label: 'Tools', icon: <Wrench size={15} /> },
   { to: '/models', label: 'Models', icon: <Cpu size={15} /> },

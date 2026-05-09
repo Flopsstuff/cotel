@@ -53,6 +53,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleTools(w, r)
 	case path == "/models" || path == "/models/":
 		h.handleModels(w, r)
+	case path == "/history" || path == "/history/":
+		h.handleHistory(w, r)
 	case path == "/health" || path == "/health/":
 		h.handleHealth(w, r)
 	default:
@@ -601,4 +603,132 @@ func (h *Handler) handleModels(w http.ResponseWriter, _ *http.Request) {
 	}
 
 	jsonOK(w, modelsResponse{Items: items})
+}
+
+// ---- /api/v1/history ----
+
+type historyBucket struct {
+	Bucket       string  `json:"bucket"`
+	Sessions     int64   `json:"sessions"`
+	Spans        int64   `json:"spans"`
+	CostUSD      float64 `json:"cost_usd"`
+	InputTokens  int64   `json:"input_tokens"`
+	OutputTokens int64   `json:"output_tokens"`
+}
+
+type historyModelRow struct {
+	Bucket  string  `json:"bucket"`
+	Model   string  `json:"model"`
+	CostUSD float64 `json:"cost_usd"`
+	Spans   int64   `json:"spans"`
+}
+
+type heatmapCell struct {
+	Date    string  `json:"date"`
+	Hour    int     `json:"hour"`
+	Count   int64   `json:"count"`
+	CostUSD float64 `json:"cost_usd"`
+}
+
+type historyResponse struct {
+	Granularity string            `json:"granularity"`
+	From        string            `json:"from"`
+	To          string            `json:"to"`
+	Buckets     []historyBucket   `json:"buckets"`
+	ByModel     []historyModelRow `json:"by_model"`
+	Heatmap     []heatmapCell     `json:"heatmap"`
+}
+
+func historyBucketExpr(gran string) string {
+	switch gran {
+	case "hour":
+		return "strftime(CAST(start_time AS TIMESTAMP), '%Y-%m-%d %H:00')"
+	case "week":
+		return "strftime(date_trunc('week', CAST(start_time AS TIMESTAMP))::TIMESTAMP, '%Y-%m-%d')"
+	case "month":
+		return "strftime(CAST(start_time AS TIMESTAMP), '%Y-%m')"
+	default:
+		return "strftime(CAST(start_time AS TIMESTAMP), '%Y-%m-%d')"
+	}
+}
+
+func (h *Handler) handleHistory(w http.ResponseWriter, r *http.Request) {
+	gran := r.URL.Query().Get("granularity")
+	switch gran {
+	case "hour", "day", "week", "month":
+	default:
+		gran = "day"
+	}
+
+	from, to := parseDateRange(r)
+	bucketExpr := historyBucketExpr(gran)
+
+	var resp historyResponse
+	resp.Granularity = gran
+	resp.From = from.Format("2006-01-02")
+	resp.To = to.Format("2006-01-02")
+
+	brows, _ := h.db.Query(fmt.Sprintf(`
+		SELECT
+			%s AS bucket,
+			COUNT(DISTINCT session_id) AS sessions,
+			COUNT(*) AS spans,
+			COALESCE(SUM(cost_usd), 0) AS cost_usd,
+			COALESCE(SUM(input_tokens), 0) AS input_tokens,
+			COALESCE(SUM(output_tokens), 0) AS output_tokens
+		FROM spans
+		WHERE start_time >= ? AND start_time <= ?
+		GROUP BY bucket ORDER BY bucket ASC
+	`, bucketExpr), from, to)
+	resp.Buckets = []historyBucket{}
+	if brows != nil {
+		defer brows.Close()
+		for brows.Next() {
+			var b historyBucket
+			_ = brows.Scan(&b.Bucket, &b.Sessions, &b.Spans, &b.CostUSD, &b.InputTokens, &b.OutputTokens)
+			resp.Buckets = append(resp.Buckets, b)
+		}
+	}
+
+	mrows, _ := h.db.Query(fmt.Sprintf(`
+		SELECT
+			%s AS bucket,
+			model,
+			COALESCE(SUM(cost_usd), 0) AS cost_usd,
+			COUNT(*) AS spans
+		FROM spans
+		WHERE start_time >= ? AND start_time <= ? AND model IS NOT NULL AND model <> ''
+		GROUP BY bucket, model ORDER BY bucket ASC, SUM(cost_usd) DESC
+	`, bucketExpr), from, to)
+	resp.ByModel = []historyModelRow{}
+	if mrows != nil {
+		defer mrows.Close()
+		for mrows.Next() {
+			var m historyModelRow
+			_ = mrows.Scan(&m.Bucket, &m.Model, &m.CostUSD, &m.Spans)
+			resp.ByModel = append(resp.ByModel, m)
+		}
+	}
+
+	hrows, _ := h.db.Query(`
+		SELECT
+			strftime(CAST(start_time AS TIMESTAMP), '%Y-%m-%d') AS date,
+			CAST(strftime(CAST(start_time AS TIMESTAMP), '%H') AS INTEGER) AS hour,
+			COUNT(*) AS count,
+			COALESCE(SUM(cost_usd), 0) AS cost_usd
+		FROM spans
+		WHERE start_time >= ? AND start_time <= ?
+		GROUP BY date, hour ORDER BY date ASC, hour ASC
+	`, from, to)
+	resp.Heatmap = []heatmapCell{}
+	if hrows != nil {
+		defer hrows.Close()
+		for hrows.Next() {
+			var c heatmapCell
+			_ = hrows.Scan(&c.Date, &c.Hour, &c.Count, &c.CostUSD)
+			resp.Heatmap = append(resp.Heatmap, c)
+		}
+	}
+
+	jsonOK(w, resp)
 }

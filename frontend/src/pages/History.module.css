@@ -1,0 +1,230 @@
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-bottom: var(--space-6);
+}
+
+.title {
+  font-size: var(--text-xl);
+  font-weight: 700;
+  color: var(--color-text-1);
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+/* Preset quick-range buttons */
+.presets {
+  display: flex;
+  gap: var(--space-1);
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-base);
+  padding: 2px;
+}
+
+.presetBtn {
+  padding: var(--space-1) var(--space-3);
+  border: none;
+  background: transparent;
+  border-radius: 4px;
+  font-size: var(--text-sm);
+  color: var(--color-text-2);
+  cursor: pointer;
+  transition: background var(--duration-fast), color var(--duration-fast);
+}
+
+.presetBtn:hover {
+  background: var(--color-surface);
+  color: var(--color-text-1);
+}
+
+.presetBtnActive {
+  background: var(--color-surface);
+  color: var(--color-accent);
+  font-weight: 600;
+}
+
+/* Granularity switcher */
+.granSwitcher {
+  display: flex;
+  gap: var(--space-1);
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-base);
+  padding: 2px;
+}
+
+.granBtn {
+  padding: var(--space-1) var(--space-3);
+  border: none;
+  background: transparent;
+  border-radius: 4px;
+  font-size: var(--text-sm);
+  color: var(--color-text-2);
+  cursor: pointer;
+  transition: background var(--duration-fast), color var(--duration-fast);
+}
+
+.granBtn:hover {
+  background: var(--color-surface);
+  color: var(--color-text-1);
+}
+
+.granBtnActive {
+  background: var(--color-surface);
+  color: var(--color-accent);
+  font-weight: 600;
+}
+
+/* KPI row */
+.kpiRow {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--space-4);
+  margin-bottom: var(--space-6);
+}
+
+@media (max-width: 900px) {
+  .kpiRow {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+/* Side-by-side area charts */
+.dualChart {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-6);
+}
+
+@media (max-width: 720px) {
+  .dualChart {
+    grid-template-columns: 1fr;
+  }
+}
+
+.chartPane {}
+
+.chartLabel {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--color-text-2);
+  margin: 0 0 var(--space-2);
+}
+
+/* ---- Calendar heatmap ---- */
+.calWrap {
+  position: relative;
+  overflow-x: auto;
+  padding-bottom: var(--space-4);
+}
+
+.calSvg {
+  display: block;
+  /* SVG overflow for tooltip */
+  overflow: visible;
+}
+
+.calMonthLabel {
+  font-size: 11px;
+  fill: var(--color-text-3);
+}
+
+/* Day-of-week labels alongside the grid */
+.calDow {
+  display: flex;
+  flex-direction: column;
+  position: absolute;
+  left: -28px;
+  top: 22px;
+  gap: 0;
+}
+
+.calDow span {
+  font-size: 10px;
+  color: var(--color-text-3);
+  height: 17px;
+  line-height: 14px;
+}
+
+.calLegend {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin-top: var(--space-3);
+}
+
+.calLegendLabel {
+  font-size: var(--text-xs);
+  color: var(--color-text-3);
+}
+
+.calLegendCell {
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+}
+
+/* ---- Hour-of-day heatmap ---- */
+.hourWrap {
+  position: relative;
+  overflow-x: auto;
+}
+
+.hourGrid {
+  display: grid;
+  /* 1 label col + 24 hour cols */
+  grid-template-columns: 36px repeat(24, 1fr);
+  gap: 3px;
+  align-items: center;
+  min-width: 600px;
+}
+
+.hourRowLabel {
+  font-size: var(--text-xs);
+  color: var(--color-text-3);
+  text-align: right;
+  padding-right: var(--space-2);
+  white-space: nowrap;
+}
+
+.hourColLabel {
+  font-size: 10px;
+  color: var(--color-text-3);
+  text-align: center;
+}
+
+.hourCell {
+  height: 18px;
+  border-radius: 2px;
+  cursor: default;
+  transition: opacity var(--duration-fast);
+}
+
+.hourCell:hover {
+  opacity: 0.8;
+}
+
+/* ---- Floating tooltip (shared) ---- */
+.floatTip {
+  position: fixed;
+  pointer-events: none;
+  z-index: var(--z-tooltip);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-base);
+  box-shadow: var(--shadow-2);
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--color-text-1);
+  line-height: 1.5;
+  white-space: nowrap;
+}
