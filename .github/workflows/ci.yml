@@ -13,6 +13,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Frontend build
+        working-directory: frontend
+        run: npm ci && npm run build
+
       - uses: actions/setup-go@v5
         with:
           go-version: "1.23"
@@ -62,6 +72,12 @@ jobs:
 
       - name: Dashboard health check
         run: curl -sf http://localhost:8080/
+
+      - name: JSON API health check
+        run: |
+          RESP=$(curl -sf http://localhost:8080/api/v1/health)
+          echo "api/v1/health: $RESP"
+          echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); assert d['status'] == 'ok', f'expected status ok, got {d}'"
 
       - name: Tear down
         if: always()

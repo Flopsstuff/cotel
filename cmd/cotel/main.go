@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/Flopsstuff/cotel/internal/api"
 	"github.com/Flopsstuff/cotel/internal/dashboard"
 	"github.com/Flopsstuff/cotel/internal/ingest"
 	"github.com/Flopsstuff/cotel/internal/storage"
@@ -50,8 +51,10 @@ func main() {
 	ingestMux := http.NewServeMux()
 	ingestMux.Handle("/v1/traces", ingest.New(db))
 
+	ro := db.ReadOnly()
 	dashMux := http.NewServeMux()
-	dashMux.Handle("/", dashboard.New(db.ReadOnly()))
+	dashMux.Handle("/api/v1/", api.New(ro))
+	dashMux.Handle("/", dashboard.New(ro))
 
 	ingestAddr := env("COTEL_INGEST_ADDR", ":4318")
 	dashAddr := env("COTEL_DASH_ADDR", ":8080")

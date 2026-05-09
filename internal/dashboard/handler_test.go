@@ -3,6 +3,7 @@ package dashboard_test
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/Flopsstuff/cotel/internal/dashboard"
@@ -36,15 +37,21 @@ func TestDashboardRoutesEmptyDB(t *testing.T) {
 	}
 }
 
-func TestDashboard404(t *testing.T) {
+// TestDashboardSPACatchAll verifies that unknown paths return the SPA index.html
+// (200 + text/html) so React Router can handle client-side routing.
+func TestDashboardSPACatchAll(t *testing.T) {
 	db := openTestDB(t)
 	h := dashboard.New(db)
 
 	req := httptest.NewRequest(http.MethodGet, "/no-such-page", nil)
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, req)
-	if w.Code != http.StatusNotFound {
-		t.Errorf("want 404, got %d", w.Code)
+	if w.Code != http.StatusOK {
+		t.Errorf("SPA catch-all: want 200, got %d", w.Code)
+	}
+	ct := w.Header().Get("Content-Type")
+	if !strings.Contains(ct, "text/html") {
+		t.Errorf("SPA catch-all: want text/html Content-Type, got %q", ct)
 	}
 }
 
