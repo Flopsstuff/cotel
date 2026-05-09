@@ -2,3 +2,6 @@
 *.duckdb.wal
 /cotel
 /data/
+.env
+.env.*
+!.env.example
