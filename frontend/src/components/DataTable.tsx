@@ -56,7 +56,13 @@ export function DataTable<T extends object>({ columns, rows, onRowClick }: DataT
                 .filter(Boolean)
                 .join(' ')
               return (
-                <th key={colIdx} className={thClass} onClick={() => handleHeaderClick(col)}>
+                <th
+                  key={colIdx}
+                  scope="col"
+                  aria-sort={isActive ? (sort!.dir === 'asc' ? 'ascending' : 'descending') : col.sortable ? 'none' : undefined}
+                  className={thClass}
+                  onClick={() => handleHeaderClick(col)}
+                >
                   {col.label}
                   {col.sortable && (
                     <span className={styles.sortIcon}>

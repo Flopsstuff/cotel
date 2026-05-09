@@ -39,6 +39,7 @@ export default function Sessions() {
           {(['all', 'ok', 'error'] as const).map((s) => (
             <button
               key={s}
+              aria-pressed={statusFilter === s}
               className={[styles.chip, statusFilter === s ? styles.chipActive : ''].filter(Boolean).join(' ')}
               onClick={() => { setStatusFilter(s); setPage(1) }}
             >
