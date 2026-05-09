@@ -55,14 +55,24 @@ func TestDashboardSPACatchAll(t *testing.T) {
 	}
 }
 
-func TestDashboardSessionDetail404(t *testing.T) {
+// TestDashboardSPARoutes verifies that known dashboard paths return the SPA
+// index (200 + text/html) — React Router handles routing client-side.
+func TestDashboardSPARoutes(t *testing.T) {
 	db := openTestDB(t)
 	h := dashboard.New(db)
 
-	req := httptest.NewRequest(http.MethodGet, "/sessions/nonexistent-session-id", nil)
-	w := httptest.NewRecorder()
-	h.ServeHTTP(w, req)
-	if w.Code != http.StatusNotFound {
-		t.Errorf("want 404, got %d", w.Code)
+	paths := []string{"/", "/sessions", "/sessions/some-id", "/costs", "/tools", "/models"}
+	for _, path := range paths {
+		t.Run(path, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, path, nil)
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, req)
+			if w.Code != http.StatusOK {
+				t.Errorf("GET %s: want 200, got %d", path, w.Code)
+			}
+			if ct := w.Header().Get("Content-Type"); !strings.Contains(ct, "text/html") {
+				t.Errorf("GET %s: want text/html, got %q", path, ct)
+			}
+		})
 	}
 }
