@@ -1,0 +1,36 @@
+import { ReactNode } from 'react'
+import { NavLink } from 'react-router-dom'
+import { Activity, DollarSign, Layers, Cpu, Wrench } from 'lucide-react'
+import styles from './Layout.module.css'
+
+const navItems = [
+  { to: '/', label: 'Overview', icon: <Activity size={15} />, end: true },
+  { to: '/sessions', label: 'Sessions', icon: <Layers size={15} /> },
+  { to: '/costs', label: 'Costs', icon: <DollarSign size={15} /> },
+  { to: '/tools', label: 'Tools', icon: <Wrench size={15} /> },
+  { to: '/models', label: 'Models', icon: <Cpu size={15} /> },
+]
+
+export function Layout({ children }: { children: ReactNode }) {
+  return (
+    <div className={styles.shell}>
+      <nav className={styles.sidebar}>
+        <div className={styles.brand}>cotel</div>
+        {navItems.map(({ to, label, icon, end }) => (
+          <NavLink
+            key={to}
+            to={to}
+            end={end}
+            className={({ isActive }) =>
+              isActive ? `${styles.navLink} ${styles.navLinkActive}` : styles.navLink
+            }
+          >
+            {icon}
+            <span className={styles.navLabel}>{label}</span>
+          </NavLink>
+        ))}
+      </nav>
+      <main className={styles.main}>{children}</main>
+    </div>
+  )
+}

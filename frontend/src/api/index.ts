@@ -83,8 +83,8 @@ export interface ModelItem {
   total_output_tokens: number
 }
 
-export function useOverview() {
-  return useSWR<OverviewResponse>('/api/v1/overview', fetcher, { refreshInterval: 30_000 })
+export function useOverview(refreshInterval = 30_000) {
+  return useSWR<OverviewResponse>('/api/v1/overview', fetcher, { refreshInterval })
 }
 
 export function useSessions(page = 1, limit = 50, sort = 'start_time', order = 'desc') {

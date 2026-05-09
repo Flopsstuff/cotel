@@ -4,11 +4,12 @@
 }
 
 .sidebar {
-  width: 200px;
-  background: #1a1a2e;
-  color: #e0e0e0;
-  padding: var(--space-4) 0;
+  width: 160px;
   flex-shrink: 0;
+  background: var(--color-surface);
+  border-right: 1px solid var(--color-border);
+  display: flex;
+  flex-direction: column;
   position: sticky;
   top: 0;
   height: 100vh;
@@ -16,32 +17,42 @@
 }
 
 .brand {
-  padding: 0 var(--space-4) var(--space-6);
+  padding: var(--space-4) var(--space-4) var(--space-3);
+  font-size: var(--text-base);
   font-weight: 700;
-  font-size: var(--text-lg);
-  color: #fff;
-  letter-spacing: -0.01em;
+  color: var(--color-text-1);
+  border-bottom: 1px solid var(--color-border);
 }
 
 .navLink {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding: var(--space-2) var(--space-4);
-  color: #a0a0b0;
+  padding: 10px var(--space-4);
+  color: var(--color-text-2);
   text-decoration: none;
   font-size: var(--text-sm);
-  transition: color var(--duration-fast) var(--easing-default), background var(--duration-fast) var(--easing-default);
+  font-weight: 500;
+  border-left: 3px solid transparent;
+  transition: background var(--duration-fast) var(--easing-default),
+              color var(--duration-fast) var(--easing-default);
 }
 
 .navLink:hover {
-  color: #fff;
+  background: var(--color-surface-2);
+  color: var(--color-text-1);
   text-decoration: none;
 }
 
 .navLinkActive {
-  color: #fff;
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--color-accent-bg) !important;
+  color: var(--color-accent) !important;
+  border-left-color: var(--color-accent) !important;
+}
+
+.navLabel {
+  overflow: hidden;
+  white-space: nowrap;
 }
 
 .main {
@@ -52,20 +63,18 @@
   background: var(--color-bg);
 }
 
-.card {
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-base);
-  box-shadow: var(--shadow-1);
-  padding: var(--space-4);
-  margin-bottom: var(--space-4);
-}
+@media (max-width: 768px) {
+  .sidebar {
+    width: 48px;
+  }
 
-.cardTitle {
-  font-size: var(--text-xs);
-  font-weight: 600;
-  color: var(--color-text-2);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  margin: 0 0 var(--space-3);
+  .brand,
+  .navLabel {
+    display: none;
+  }
+
+  .navLink {
+    justify-content: center;
+    padding: 12px;
+  }
 }
