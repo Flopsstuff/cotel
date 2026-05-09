@@ -1,6 +1,6 @@
 import useSWR from 'swr'
 
-const fetcher = (url: string) =>
+export const fetcher = (url: string) =>
   fetch(url).then((r) => {
     if (!r.ok) throw new Error(`${r.status} ${r.statusText}`)
     return r.json()
@@ -83,8 +83,8 @@ export interface ModelItem {
   total_output_tokens: number
 }
 
-export function useOverview() {
-  return useSWR<OverviewResponse>('/api/v1/overview', fetcher, { refreshInterval: 30_000 })
+export function useOverview(refreshInterval = 30_000) {
+  return useSWR<OverviewResponse>('/api/v1/overview', fetcher, { refreshInterval })
 }
 
 export function useSessions(page = 1, limit = 50, sort = 'start_time', order = 'desc') {

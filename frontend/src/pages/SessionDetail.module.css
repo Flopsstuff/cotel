@@ -1,0 +1,176 @@
+.nav {
+  margin-bottom: var(--space-4);
+}
+
+.backLink {
+  font-size: var(--text-sm);
+  color: var(--color-accent);
+}
+
+.title {
+  font-size: var(--text-lg);
+  font-weight: 600;
+  color: var(--color-text-1);
+  margin-bottom: var(--space-4);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.sessionId {
+  font-family: var(--font-mono);
+  font-size: var(--text-mono-base);
+  word-break: break-all;
+}
+
+.kpiRow {
+  display: flex;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-6);
+}
+
+.notFound {
+  padding: var(--space-8);
+  text-align: center;
+}
+
+.notFoundTitle {
+  font-size: var(--text-lg);
+  font-weight: 600;
+  color: var(--color-text-1);
+  margin: 0 0 var(--space-2);
+}
+
+.notFoundSub {
+  font-size: var(--text-sm);
+  color: var(--color-text-2);
+  margin: 0 0 var(--space-4);
+}
+
+/* Waterfall */
+
+.waterfallWrapper {
+  overflow-x: auto;
+}
+
+.waterfallTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+
+.wfTh {
+  text-align: left;
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-surface-2);
+  color: var(--color-text-2);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.wfRow {
+  border-bottom: 1px solid var(--color-border);
+}
+
+.wfRowClickable {
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--easing-default);
+}
+
+.wfRowClickable:hover {
+  background: var(--color-surface-2);
+}
+
+.wfTd {
+  padding: var(--space-2) var(--space-3);
+  vertical-align: middle;
+}
+
+.spanName {
+  display: block;
+  font-size: var(--text-sm);
+  color: var(--color-text-1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 200px;
+}
+
+.toolName {
+  display: block;
+  font-size: var(--text-xs);
+  font-family: var(--font-mono);
+  color: var(--color-text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 200px;
+}
+
+.waterfallCell {
+  position: relative;
+  height: 18px;
+  background: var(--color-surface-2);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.waterfallBar {
+  position: absolute;
+  top: 2px;
+  height: calc(100% - 4px);
+  border-radius: var(--radius-sm);
+  min-width: 3px;
+}
+
+.barOk {
+  background: var(--color-chart-1);
+}
+
+.barError {
+  background: var(--color-danger);
+}
+
+.duration {
+  font-family: var(--font-mono);
+  font-size: var(--text-mono-sm);
+  color: var(--color-text-2);
+}
+
+.expandIcon {
+  font-size: 10px;
+  color: var(--color-text-3);
+}
+
+.detailRow {
+  background: var(--color-surface-2);
+}
+
+.detailCell {
+  padding: var(--space-3) var(--space-4);
+}
+
+.attrPre {
+  font-family: var(--font-mono);
+  font-size: var(--text-mono-sm);
+  color: var(--color-text-1);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-3);
+  overflow-x: auto;
+  margin: 0 0 var(--space-2);
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.tokenRow {
+  display: flex;
+  gap: var(--space-4);
+  font-size: var(--text-sm);
+  color: var(--color-text-2);
+}

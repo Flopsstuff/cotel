@@ -1,0 +1,10 @@
+.title {
+  font-size: var(--text-xl);
+  font-weight: 700;
+  color: var(--color-text-1);
+  margin-bottom: var(--space-4);
+}
+
+.chartBlock {
+  margin-bottom: var(--space-4);
+}

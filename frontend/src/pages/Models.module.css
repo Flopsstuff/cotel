@@ -1,0 +1,22 @@
+.title {
+  font-size: var(--text-xl);
+  font-weight: 700;
+  color: var(--color-text-1);
+  margin-bottom: var(--space-4);
+}
+
+.barContainer {
+  width: 120px;
+  height: 10px;
+  background: var(--color-surface-2);
+  border-radius: var(--radius-full);
+  overflow: hidden;
+}
+
+.bar {
+  height: 100%;
+  background: var(--color-chart-1);
+  border-radius: var(--radius-full);
+  transition: width var(--duration-base) var(--easing-in-out);
+  min-width: 3px;
+}
