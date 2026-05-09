@@ -65,7 +65,7 @@ jobs:
           PC_ID=$(echo "$RESP" | jq -r \
             --arg oid "$ORIGIN_ID" \
             --arg url "$GH_HTML_URL" \
-            '(.issues // []) | map(select(.originId == $oid or (.description // "" | contains($url)))) | first | .id // ""')
+            '(if type == "array" then . else (.issues // []) end) | map(select(.originId == $oid or (.description // "" | contains($url)))) | first | .id // ""')
 
           if [ -n "$PC_ID" ]; then
             echo "Updating existing Paperclip issue $PC_ID (action=$GH_ACTION)"
@@ -131,7 +131,7 @@ jobs:
           PC_ID=$(echo "$RESP" | jq -r \
             --arg oid "$ORIGIN_ID" \
             --arg url "$GH_HTML_URL" \
-            '(.issues // []) | map(select(.originId == $oid or (.description // "" | contains($url)))) | first | .id // ""')
+            '(if type == "array" then . else (.issues // []) end) | map(select(.originId == $oid or (.description // "" | contains($url)))) | first | .id // ""')
 
           if [ -z "$PC_ID" ]; then
             echo "No matching Paperclip issue found for $ORIGIN_ID — nothing to close."
