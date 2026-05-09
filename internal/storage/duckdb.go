@@ -106,6 +106,12 @@ INSERT OR IGNORE INTO spans (
   attributes, resource_attrs
 ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
 
+// Exec runs an arbitrary SQL statement on the write connection. Used by tests
+// for bulk data setup (e.g. INSERT … SELECT FROM range).
+func (db *DB) Exec(query string, args ...any) (sql.Result, error) {
+	return db.rw.Exec(query, args...)
+}
+
 func (db *DB) InsertSpan(s Span) error {
 	if s.Attributes == "" {
 		s.Attributes = "{}"
