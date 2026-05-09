@@ -1,0 +1,241 @@
+{{define "head"}}
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+  :root {
+    --bg:         #f8fafc;
+    --surface:    #ffffff;
+    --surface-2:  #f1f5f9;
+    --border:     #e2e8f0;
+    --border-2:   #cbd5e1;
+    --text-1:     #0f172a;
+    --text-2:     #475569;
+    --text-3:     #94a3b8;
+    --accent:     #2563eb;
+    --accent-bg:  #eff6ff;
+    --success:    #15803d;
+    --warning:    #d97706;
+    --danger:     #dc2626;
+    --danger-bg:  #fef2f2;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg:         #020617;
+      --surface:    #0f172a;
+      --surface-2:  #1e293b;
+      --border:     #334155;
+      --border-2:   #475569;
+      --text-1:     #f8fafc;
+      --text-2:     #94a3b8;
+      --text-3:     #475569;
+      --accent:     #60a5fa;
+      --accent-bg:  #172554;
+      --success:    #4ade80;
+      --warning:    #fbbf24;
+      --danger:     #f87171;
+      --danger-bg:  #450a0a;
+    }
+  }
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+    background: var(--bg);
+    color: var(--text-1);
+    display: flex;
+    min-height: 100vh;
+  }
+  /* Sidebar */
+  .sidebar {
+    width: 160px;
+    min-width: 160px;
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    padding: 0;
+  }
+  .sidebar-brand {
+    padding: 16px 16px 12px;
+    font-weight: 700;
+    font-size: 15px;
+    color: var(--text-1);
+    border-bottom: 1px solid var(--border);
+  }
+  .nav-item {
+    display: block;
+    padding: 10px 16px;
+    color: var(--text-2);
+    text-decoration: none;
+    font-size: 13px;
+    font-weight: 500;
+    border-left: 3px solid transparent;
+  }
+  .nav-item:hover { background: var(--surface-2); color: var(--text-1); }
+  .nav-item.active {
+    background: var(--accent-bg);
+    color: var(--accent);
+    border-left-color: var(--accent);
+  }
+  .nav-item.disabled { color: var(--text-3); cursor: default; pointer-events: none; }
+  /* Main */
+  .main {
+    flex: 1;
+    padding: 32px;
+    overflow-y: auto;
+    min-width: 0;
+  }
+  .page-title {
+    font-size: 20px;
+    font-weight: 700;
+    margin: 0 0 24px;
+    color: var(--text-1);
+  }
+  /* Cards */
+  .cards { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 24px; }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 16px;
+    min-width: 140px;
+    box-shadow: 0 1px 2px rgba(0,0,0,.06);
+  }
+  .card-label {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text-2);
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    margin-bottom: 4px;
+  }
+  .card-value {
+    font-size: 22px;
+    font-weight: 700;
+    color: var(--text-1);
+    font-variant-numeric: tabular-nums;
+  }
+  /* Sections */
+  .section { margin-bottom: 32px; }
+  .section-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-2);
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    margin: 0 0 12px;
+  }
+  /* Table */
+  .table-wrap {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+    box-shadow: 0 1px 2px rgba(0,0,0,.06);
+  }
+  table { width: 100%; border-collapse: collapse; }
+  th {
+    background: var(--surface-2);
+    padding: 8px 12px;
+    text-align: left;
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text-2);
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    white-space: nowrap;
+  }
+  td {
+    padding: 8px 12px;
+    font-size: 13px;
+    color: var(--text-1);
+    border-top: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  tr.error-row { background: var(--danger-bg); }
+  td.mono { font-family: ui-monospace,'JetBrains Mono','Fira Code',monospace; font-size: 12px; }
+  td.muted { color: var(--text-2); }
+  td.ok { color: var(--success); }
+  td.error { color: var(--danger); }
+  /* Chart container */
+  .chart-wrap {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 16px;
+    box-shadow: 0 1px 2px rgba(0,0,0,.06);
+  }
+  .chart-canvas { width: 100% !important; height: 200px !important; }
+  /* Empty state */
+  .empty {
+    padding: 32px;
+    text-align: center;
+    color: var(--text-3);
+    font-style: italic;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+  }
+  /* Pagination */
+  .pagination {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 16px;
+    font-size: 13px;
+  }
+  .page-btn {
+    padding: 4px 10px;
+    border: 1px solid var(--border-2);
+    border-radius: 4px;
+    color: var(--text-1);
+    text-decoration: none;
+    background: var(--surface);
+  }
+  .page-btn:hover { background: var(--surface-2); }
+  .page-btn.current {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: white;
+  }
+  .page-btn.disabled { color: var(--text-3); pointer-events: none; }
+  /* Breadcrumb */
+  .breadcrumb { font-size: 13px; color: var(--text-2); margin-bottom: 16px; }
+  .breadcrumb a { color: var(--accent); text-decoration: none; }
+  .breadcrumb a:hover { text-decoration: underline; }
+  /* Info grid */
+  .info-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 8px 24px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 16px;
+    margin-bottom: 16px;
+  }
+  .info-row { display: flex; flex-direction: column; }
+  .info-label { font-size: 11px; color: var(--text-3); text-transform: uppercase; letter-spacing: .05em; }
+  .info-value { font-size: 14px; font-weight: 500; color: var(--text-1); margin-top: 2px; }
+  /* Row link */
+  tr.clickable { cursor: pointer; }
+  tr.clickable:hover td { background: var(--surface-2); }
+  @media (max-width: 768px) {
+    .sidebar { width: 48px; min-width: 48px; }
+    .sidebar-brand span, .nav-item span { display: none; }
+    .main { padding: 16px; }
+  }
+</style>
+{{end}}
+
+{{define "nav"}}
+<aside class="sidebar">
+  <div class="sidebar-brand">cotel</div>
+  <a href="/" class="nav-item {{if eq .ActiveNav "overview"}}active{{end}}">Overview</a>
+  <a href="/sessions" class="nav-item {{if eq .ActiveNav "sessions"}}active{{end}}">Sessions</a>
+  <a href="#" class="nav-item disabled">Costs</a>
+  <a href="#" class="nav-item disabled">Tools</a>
+</aside>
+{{end}}

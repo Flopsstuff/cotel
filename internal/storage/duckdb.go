@@ -30,11 +30,11 @@ func (r *ReadDB) Query(query string, args ...any) (*sql.Rows, error) {
 	return r.db.Query(query, args...)
 }
 
-// ReadOnly opens a separate read-only connection to the same DuckDB file.
+// ReadOnly returns a dashboard-safe view sharing the writer's pool.
+// A separate read-only connection to the same file misses WAL-buffered writes;
+// sharing rw ensures dashboard queries always see committed data.
 func (d *DB) ReadOnly() *ReadDB {
-	ro, _ := sql.Open("duckdb", d.path+"?access_mode=read_only")
-	ro.SetMaxOpenConns(4)
-	return &ReadDB{db: ro}
+	return &ReadDB{db: d.rw}
 }
 
 // OpenReadOnly opens a read-only connection to a DuckDB file. Safe to call
