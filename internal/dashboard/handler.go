@@ -19,6 +19,13 @@ var tmplFS embed.FS
 
 var tmpl = template.Must(template.New("").Funcs(template.FuncMap{
 	"fmtCost": func(f float64) string { return fmt.Sprintf("$%.4f", f) },
+	"fmtPct":  func(f float64) string { return fmt.Sprintf("%.1f%%", f) },
+	"monthDay": func(s string) string {
+		if len(s) >= 10 {
+			return s[5:10]
+		}
+		return s
+	},
 	"fmtTokens": func(n int64) string {
 		if n >= 1_000_000 {
 			return fmt.Sprintf("%.1fM", float64(n)/1_000_000)
@@ -88,6 +95,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.serveSessions(w, r)
 	case strings.HasPrefix(path, "/sessions/"):
 		h.serveSession(w, r, strings.TrimPrefix(path, "/sessions/"))
+	case path == "/costs":
+		h.serveCosts(w, r)
+	case path == "/tools":
+		h.serveTools(w, r)
 	case path == "/healthz":
 		h.serveHealthz(w, r)
 	default:
@@ -222,6 +233,7 @@ type sessionListRow struct {
 	OutTokens  int64
 	ToolCalls  int64
 	HasError   bool
+	IsActive   bool
 }
 
 func (h *Handler) serveSessions(w http.ResponseWriter, r *http.Request) {
@@ -249,7 +261,8 @@ func (h *Handler) serveSessions(w http.ResponseWriter, r *http.Request) {
 			COALESCE(s.input_tokens, 0),
 			COALESCE(s.output_tokens, 0),
 			COALESCE(t.tool_calls, 0),
-			COALESCE(e.errors, 0) > 0 AS has_error
+			COALESCE(e.errors, 0) > 0 AS has_error,
+			s.end_time >= NOW() - INTERVAL '10 minutes' AS is_active
 		FROM spans s
 		LEFT JOIN (
 			SELECT session_id, COUNT(*) AS tool_calls
@@ -272,17 +285,17 @@ func (h *Handler) serveSessions(w http.ResponseWriter, r *http.Request) {
 		for rows.Next() {
 			var s sessionListRow
 			_ = rows.Scan(&s.SessionID, &s.Model, &s.StartTime, &s.DurationMs,
-				&s.CostUSD, &s.InTokens, &s.OutTokens, &s.ToolCalls, &s.HasError)
+				&s.CostUSD, &s.InTokens, &s.OutTokens, &s.ToolCalls, &s.HasError, &s.IsActive)
 			sessions = append(sessions, s)
 		}
 	}
 
 	data := map[string]any{
-		"ActiveNav":   "sessions",
-		"Sessions":    sessions,
-		"Page":        page,
-		"TotalPages":  totalPages,
-		"TotalCount":  total,
+		"ActiveNav":  "sessions",
+		"Sessions":   sessions,
+		"Page":       page,
+		"TotalPages": totalPages,
+		"TotalCount": total,
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = tmpl.ExecuteTemplate(w, "sessions.html", data)
@@ -305,15 +318,15 @@ type sessionHeader struct {
 }
 
 type spanRow struct {
-	SpanID        string
-	Name          string
-	ToolName      string
-	StartTime     time.Time
-	RelativeMS    float64
-	DurationMs    float64
-	InTokens      sql.NullInt64
-	OutTokens     sql.NullInt64
-	StatusCode    int32
+	SpanID     string
+	Name       string
+	ToolName   string
+	StartTime  time.Time
+	RelativeMS float64
+	DurationMs float64
+	InTokens   sql.NullInt64
+	OutTokens  sql.NullInt64
+	StatusCode int32
 }
 
 func (h *Handler) serveSession(w http.ResponseWriter, r *http.Request, sessionID string) {
@@ -386,4 +399,154 @@ func (h *Handler) serveSession(w http.ResponseWriter, r *http.Request, sessionID
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = tmpl.ExecuteTemplate(w, "session.html", data)
+}
+
+// ---- costs page ----
+
+type costModelRow struct {
+	Model     string
+	TotalCost float64
+	InTokens  int64
+	OutTokens int64
+}
+
+type costSessionRow struct {
+	SessionID string
+	StartTime time.Time
+	CostUSD   float64
+}
+
+type costBarRow struct {
+	Day       string
+	CostUSD   float64
+	HeightPct float64 // normalized 0-100 for CSS bar rendering
+}
+
+func (h *Handler) serveCosts(w http.ResponseWriter, r *http.Request) {
+	since := time.Now().AddDate(0, 0, -30)
+
+	drows, _ := h.db.Query(`
+		SELECT
+			strftime(CAST(start_time AS TIMESTAMP), '%Y-%m-%d') AS day,
+			COALESCE(SUM(cost_usd), 0)
+		FROM spans
+		WHERE start_time >= ? AND name = 'claude_code.session'
+		GROUP BY day
+		ORDER BY day ASC
+	`, since)
+	var rawDaily []dailyCostRow
+	if drows != nil {
+		defer drows.Close()
+		for drows.Next() {
+			var d dailyCostRow
+			_ = drows.Scan(&d.Day, &d.CostUSD)
+			rawDaily = append(rawDaily, d)
+		}
+	}
+
+	// Normalize bar heights relative to max day cost.
+	var maxCost float64
+	for _, d := range rawDaily {
+		if d.CostUSD > maxCost {
+			maxCost = d.CostUSD
+		}
+	}
+	var dailyCosts []costBarRow
+	for _, d := range rawDaily {
+		pct := 0.0
+		if maxCost > 0 {
+			pct = d.CostUSD / maxCost * 100
+		}
+		dailyCosts = append(dailyCosts, costBarRow{d.Day, d.CostUSD, pct})
+	}
+
+	mrows, _ := h.db.Query(`
+		SELECT
+			model,
+			COALESCE(SUM(cost_usd), 0),
+			COALESCE(SUM(input_tokens), 0),
+			COALESCE(SUM(output_tokens), 0)
+		FROM spans
+		WHERE start_time >= ? AND model IS NOT NULL
+		GROUP BY model
+		ORDER BY SUM(cost_usd) DESC
+	`, since)
+	var costModels []costModelRow
+	if mrows != nil {
+		defer mrows.Close()
+		for mrows.Next() {
+			var m costModelRow
+			_ = mrows.Scan(&m.Model, &m.TotalCost, &m.InTokens, &m.OutTokens)
+			costModels = append(costModels, m)
+		}
+	}
+
+	srows, _ := h.db.Query(`
+		SELECT session_id, MIN(start_time), COALESCE(SUM(cost_usd), 0)
+		FROM spans
+		WHERE start_time >= ? AND session_id IS NOT NULL
+		GROUP BY session_id
+		ORDER BY SUM(cost_usd) DESC
+		LIMIT 10
+	`, since)
+	var costSessions []costSessionRow
+	if srows != nil {
+		defer srows.Close()
+		for srows.Next() {
+			var s costSessionRow
+			_ = srows.Scan(&s.SessionID, &s.StartTime, &s.CostUSD)
+			costSessions = append(costSessions, s)
+		}
+	}
+
+	data := map[string]any{
+		"ActiveNav":    "costs",
+		"DailyCosts":   dailyCosts,
+		"CostModels":   costModels,
+		"CostSessions": costSessions,
+		"Since":        since.Format("2006-01-02"),
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_ = tmpl.ExecuteTemplate(w, "costs.html", data)
+}
+
+// ---- tools page ----
+
+type toolStatsRow struct {
+	Tool      string
+	CallCount int64
+	AvgDurMS  float64
+	FailCount int64
+	FailRate  float64
+}
+
+func (h *Handler) serveTools(w http.ResponseWriter, r *http.Request) {
+	rows, _ := h.db.Query(`
+		SELECT
+			tool_name,
+			COUNT(*) AS call_count,
+			AVG(duration_ms) AS avg_dur_ms,
+			COUNT(*) FILTER (WHERE status_code = 2) AS fail_count,
+			100.0 * COUNT(*) FILTER (WHERE status_code = 2) / COUNT(*) AS fail_rate
+		FROM spans
+		WHERE tool_name IS NOT NULL
+		GROUP BY tool_name
+		ORDER BY call_count DESC
+	`)
+	var tools []toolStatsRow
+	if rows != nil {
+		defer rows.Close()
+		for rows.Next() {
+			var t toolStatsRow
+			_ = rows.Scan(&t.Tool, &t.CallCount, &t.AvgDurMS, &t.FailCount, &t.FailRate)
+			tools = append(tools, t)
+		}
+	}
+
+	data := map[string]any{
+		"ActiveNav": "tools",
+		"Tools":     tools,
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_ = tmpl.ExecuteTemplate(w, "tools.html", data)
 }
