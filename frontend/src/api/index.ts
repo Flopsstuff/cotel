@@ -83,13 +83,25 @@ export interface ModelItem {
   total_output_tokens: number
 }
 
-export function useOverview(refreshInterval = 30_000) {
-  return useSWR<OverviewResponse>('/api/v1/overview', fetcher, { refreshInterval })
+function uidParam(userId: string): string {
+  return userId ? `&user_id=${encodeURIComponent(userId)}` : ''
 }
 
-export function useSessions(page = 1, limit = 50, sort = 'start_time', order = 'desc') {
+export function useUsers() {
+  return useSWR<{ items: string[] }>('/api/v1/users', fetcher)
+}
+
+export function useOverview(userId = '', refreshInterval = 30_000) {
+  return useSWR<OverviewResponse>(
+    `/api/v1/overview?_=1${uidParam(userId)}`,
+    fetcher,
+    { refreshInterval },
+  )
+}
+
+export function useSessions(page = 1, limit = 50, sort = 'start_time', order = 'desc', userId = '') {
   return useSWR<SessionsResponse>(
-    `/api/v1/sessions?page=${page}&limit=${limit}&sort=${sort}&order=${order}`,
+    `/api/v1/sessions?page=${page}&limit=${limit}&sort=${sort}&order=${order}${uidParam(userId)}`,
     fetcher,
   )
 }
@@ -98,20 +110,27 @@ export function useSession(id: string) {
   return useSWR<SessionDetailResponse>(id ? `/api/v1/sessions/${id}` : null, fetcher)
 }
 
-export function useCosts(from?: string, to?: string) {
+export function useCosts(from?: string, to?: string, userId = '') {
   const params = new URLSearchParams()
   if (from) params.set('from', from)
   if (to) params.set('to', to)
+  if (userId) params.set('user_id', userId)
   const qs = params.toString()
   return useSWR<CostsResponse>(`/api/v1/costs${qs ? `?${qs}` : ''}`, fetcher)
 }
 
-export function useTools() {
-  return useSWR<{ items: ToolItem[] }>('/api/v1/tools', fetcher)
+export function useTools(userId = '') {
+  return useSWR<{ items: ToolItem[] }>(
+    `/api/v1/tools?_=1${uidParam(userId)}`,
+    fetcher,
+  )
 }
 
-export function useModels() {
-  return useSWR<{ items: ModelItem[] }>('/api/v1/models', fetcher)
+export function useModels(userId = '') {
+  return useSWR<{ items: ModelItem[] }>(
+    `/api/v1/models?_=1${uidParam(userId)}`,
+    fetcher,
+  )
 }
 
 export interface HistoryBucket {
@@ -146,9 +165,10 @@ export interface HistoryResponse {
   heatmap: HeatmapCell[]
 }
 
-export function useHistory(granularity: string, from?: string, to?: string) {
+export function useHistory(granularity: string, from?: string, to?: string, userId = '') {
   const params = new URLSearchParams({ granularity })
   if (from) params.set('from', from)
   if (to) params.set('to', to)
+  if (userId) params.set('user_id', userId)
   return useSWR<HistoryResponse>(`/api/v1/history?${params.toString()}`, fetcher)
 }

@@ -4,6 +4,7 @@ import { BrowserRouter, Route, Routes } from 'react-router-dom'
 import './styles/tokens.css'
 import './styles/global.css'
 import { Layout } from './components'
+import { UserProvider } from './context/UserContext'
 import Overview from './pages/Overview'
 import Sessions from './pages/Sessions'
 import SessionDetail from './pages/SessionDetail'
@@ -15,7 +16,8 @@ import Setup from './pages/Setup'
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <BrowserRouter>
-      <Layout>
+      <UserProvider>
+        <Layout>
         <Routes>
           <Route path="/" element={<Overview />} />
           <Route path="/sessions" element={<Sessions />} />
@@ -26,7 +28,8 @@ createRoot(document.getElementById('root')!).render(
           <Route path="/history" element={<History />} />
           <Route path="/setup" element={<Setup />} />
         </Routes>
-      </Layout>
+        </Layout>
+      </UserProvider>
     </BrowserRouter>
   </StrictMode>,
 )

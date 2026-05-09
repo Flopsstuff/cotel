@@ -55,6 +55,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleModels(w, r)
 	case path == "/history" || path == "/history/":
 		h.handleHistory(w, r)
+	case path == "/users" || path == "/users/":
+		h.handleUsers(w, r)
 	case path == "/health" || path == "/health/":
 		h.handleHealth(w, r)
 	default:
@@ -85,6 +87,42 @@ func queryInt(r *http.Request, key string, fallback int) int {
 		}
 	}
 	return fallback
+}
+
+// userIDClause returns an additional SQL WHERE fragment and its argument when
+// the request contains a non-empty user_id query parameter. The caller appends
+// the clause directly to the end of their existing WHERE and appends arg to
+// their args slice. When no user_id is present both return values are zero.
+func userIDClause(r *http.Request) (clause string, arg string) {
+	if uid := r.URL.Query().Get("user_id"); uid != "" {
+		return " AND user_id = ?", uid
+	}
+	return "", ""
+}
+
+// ---- /api/v1/users ----
+
+type usersResponse struct {
+	Items []string `json:"items"`
+}
+
+func (h *Handler) handleUsers(w http.ResponseWriter, _ *http.Request) {
+	rows, _ := h.db.Query(`
+		SELECT DISTINCT user_id
+		FROM spans
+		WHERE user_id IS NOT NULL AND user_id <> ''
+		ORDER BY user_id ASC
+	`)
+	items := []string{}
+	if rows != nil {
+		defer rows.Close()
+		for rows.Next() {
+			var uid string
+			_ = rows.Scan(&uid)
+			items = append(items, uid)
+		}
+	}
+	jsonOK(w, usersResponse{Items: items})
 }
 
 // ---- /api/v1/health ----
@@ -138,10 +176,15 @@ type topToolRow struct {
 	CallCount int64  `json:"call_count"`
 }
 
-func (h *Handler) handleOverview(w http.ResponseWriter, _ *http.Request) {
+func (h *Handler) handleOverview(w http.ResponseWriter, r *http.Request) {
 	since := time.Now().AddDate(0, 0, -30)
+	uidClause, uid := userIDClause(r)
 
 	var resp overviewResponse
+	args := []any{since}
+	if uid != "" {
+		args = append(args, uid)
+	}
 	_ = h.db.QueryRow(`
 		SELECT
 			COUNT(DISTINCT session_id),
@@ -150,8 +193,9 @@ func (h *Handler) handleOverview(w http.ResponseWriter, _ *http.Request) {
 			COALESCE(SUM(output_tokens), 0),
 			COALESCE(SUM(cache_read_tokens) + SUM(cache_write_tokens), 0)
 		FROM spans
-		WHERE start_time >= ? AND session_id IS NOT NULL
-	`, since).Scan(
+		WHERE start_time >= ? AND session_id IS NOT NULL`+uidClause,
+		args...,
+	).Scan(
 		&resp.SessionsCount,
 		&resp.TotalCostUSD,
 		&resp.TotalInputTokens,
@@ -159,49 +203,61 @@ func (h *Handler) handleOverview(w http.ResponseWriter, _ *http.Request) {
 		&resp.TotalCacheTokens,
 	)
 
+	costArgs := []any{since}
+	if uid != "" {
+		costArgs = append(costArgs, uid)
+	}
 	rows, _ := h.db.Query(`
 		SELECT strftime(CAST(start_time AS TIMESTAMP), '%Y-%m-%d') AS day,
 		       COALESCE(SUM(cost_usd), 0)
 		FROM spans
-		WHERE start_time >= ? AND cost_usd IS NOT NULL
+		WHERE start_time >= ? AND cost_usd IS NOT NULL`+uidClause+`
 		GROUP BY day ORDER BY day ASC
-	`, since)
+	`, costArgs...)
 	if rows != nil {
 		defer rows.Close()
 		for rows.Next() {
-			var r dailyCostRow
-			_ = rows.Scan(&r.Date, &r.CostUSD)
-			resp.DailyCosts = append(resp.DailyCosts, r)
+			var row dailyCostRow
+			_ = rows.Scan(&row.Date, &row.CostUSD)
+			resp.DailyCosts = append(resp.DailyCosts, row)
 		}
 	}
 
+	modelArgs := []any{since}
+	if uid != "" {
+		modelArgs = append(modelArgs, uid)
+	}
 	mrows, _ := h.db.Query(`
 		SELECT model, COUNT(*) AS span_count
 		FROM spans
-		WHERE start_time >= ? AND model IS NOT NULL AND model <> ''
+		WHERE start_time >= ? AND model IS NOT NULL AND model <> ''`+uidClause+`
 		GROUP BY model ORDER BY span_count DESC LIMIT 5
-	`, since)
+	`, modelArgs...)
 	if mrows != nil {
 		defer mrows.Close()
 		for mrows.Next() {
-			var r topModelRow
-			_ = mrows.Scan(&r.Model, &r.SpanCount)
-			resp.TopModels = append(resp.TopModels, r)
+			var row topModelRow
+			_ = mrows.Scan(&row.Model, &row.SpanCount)
+			resp.TopModels = append(resp.TopModels, row)
 		}
 	}
 
+	toolArgs := []any{since}
+	if uid != "" {
+		toolArgs = append(toolArgs, uid)
+	}
 	trows, _ := h.db.Query(`
 		SELECT tool_name, COUNT(*) AS call_count
 		FROM spans
-		WHERE start_time >= ? AND tool_name IS NOT NULL AND tool_name <> ''
+		WHERE start_time >= ? AND tool_name IS NOT NULL AND tool_name <> ''`+uidClause+`
 		GROUP BY tool_name ORDER BY call_count DESC LIMIT 5
-	`, since)
+	`, toolArgs...)
 	if trows != nil {
 		defer trows.Close()
 		for trows.Next() {
-			var r topToolRow
-			_ = trows.Scan(&r.ToolName, &r.CallCount)
-			resp.TopTools = append(resp.TopTools, r)
+			var row topToolRow
+			_ = trows.Scan(&row.ToolName, &row.CallCount)
+			resp.TopTools = append(resp.TopTools, row)
 		}
 	}
 
@@ -261,8 +317,14 @@ func (h *Handler) handleSessions(w http.ResponseWriter, r *http.Request) {
 		sortExpr = "MIN(start_time)"
 	}
 
+	uidClause, uid := userIDClause(r)
+
 	var total int64
-	_ = h.db.QueryRow(`SELECT COUNT(DISTINCT session_id) FROM spans WHERE session_id IS NOT NULL`).Scan(&total)
+	totalArgs := []any{}
+	if uid != "" {
+		totalArgs = append(totalArgs, uid)
+	}
+	_ = h.db.QueryRow(`SELECT COUNT(DISTINCT session_id) FROM spans WHERE session_id IS NOT NULL`+uidClause, totalArgs...).Scan(&total)
 
 	offset := (page - 1) * limit
 	q := fmt.Sprintf(`
@@ -277,13 +339,18 @@ func (h *Handler) handleSessions(w http.ResponseWriter, r *http.Request) {
 			COUNT(*) FILTER (WHERE tool_name IS NOT NULL AND tool_name <> ''),
 			MAX(CASE WHEN status_code = 2 THEN 1 ELSE 0 END)
 		FROM spans
-		WHERE session_id IS NOT NULL
+		WHERE session_id IS NOT NULL%s
 		GROUP BY session_id
 		ORDER BY %s %s
 		LIMIT ? OFFSET ?
-	`, sortExpr, order)
+	`, uidClause, sortExpr, order)
 
-	rows, err := h.db.Query(q, limit, offset)
+	listArgs := []any{}
+	if uid != "" {
+		listArgs = append(listArgs, uid)
+	}
+	listArgs = append(listArgs, limit, offset)
+	rows, err := h.db.Query(q, listArgs...)
 	if err != nil {
 		jsonError(w, "query failed", http.StatusInternalServerError)
 		return
@@ -451,6 +518,12 @@ type costsResponse struct {
 
 func (h *Handler) handleCosts(w http.ResponseWriter, r *http.Request) {
 	from, to := parseDateRange(r)
+	uidClause, uid := userIDClause(r)
+
+	baseArgs := []any{from, to}
+	if uid != "" {
+		baseArgs = append(baseArgs, uid)
+	}
 
 	var resp costsResponse
 
@@ -458,41 +531,41 @@ func (h *Handler) handleCosts(w http.ResponseWriter, r *http.Request) {
 		SELECT strftime(CAST(start_time AS TIMESTAMP), '%Y-%m-%d') AS day,
 		       COALESCE(SUM(cost_usd), 0)
 		FROM spans
-		WHERE start_time >= ? AND start_time <= ? AND cost_usd IS NOT NULL
+		WHERE start_time >= ? AND start_time <= ? AND cost_usd IS NOT NULL`+uidClause+`
 		GROUP BY day ORDER BY day ASC
-	`, from, to)
+	`, baseArgs...)
 	resp.Daily = []costDayRow{}
 	if drows != nil {
 		defer drows.Close()
 		for drows.Next() {
-			var r costDayRow
-			_ = drows.Scan(&r.Date, &r.CostUSD)
-			resp.Daily = append(resp.Daily, r)
+			var row costDayRow
+			_ = drows.Scan(&row.Date, &row.CostUSD)
+			resp.Daily = append(resp.Daily, row)
 		}
 	}
 
 	mrows, _ := h.db.Query(`
 		SELECT model, COALESCE(SUM(cost_usd), 0)
 		FROM spans
-		WHERE start_time >= ? AND start_time <= ? AND model IS NOT NULL AND model <> ''
+		WHERE start_time >= ? AND start_time <= ? AND model IS NOT NULL AND model <> ''`+uidClause+`
 		GROUP BY model ORDER BY SUM(cost_usd) DESC
-	`, from, to)
+	`, baseArgs...)
 	resp.ByModel = []costModelRow{}
 	if mrows != nil {
 		defer mrows.Close()
 		for mrows.Next() {
-			var r costModelRow
-			_ = mrows.Scan(&r.Model, &r.CostUSD)
-			resp.ByModel = append(resp.ByModel, r)
+			var row costModelRow
+			_ = mrows.Scan(&row.Model, &row.CostUSD)
+			resp.ByModel = append(resp.ByModel, row)
 		}
 	}
 
 	srows, _ := h.db.Query(`
 		SELECT session_id, COALESCE(SUM(cost_usd), 0), MIN(start_time)
 		FROM spans
-		WHERE start_time >= ? AND start_time <= ? AND session_id IS NOT NULL
+		WHERE start_time >= ? AND start_time <= ? AND session_id IS NOT NULL`+uidClause+`
 		GROUP BY session_id ORDER BY SUM(cost_usd) DESC LIMIT 10
-	`, from, to)
+	`, baseArgs...)
 	resp.TopSessions = []topSessionRow{}
 	if srows != nil {
 		defer srows.Close()
@@ -539,7 +612,12 @@ type toolsResponse struct {
 	Items []toolItem `json:"items"`
 }
 
-func (h *Handler) handleTools(w http.ResponseWriter, _ *http.Request) {
+func (h *Handler) handleTools(w http.ResponseWriter, r *http.Request) {
+	uidClause, uid := userIDClause(r)
+	args := []any{}
+	if uid != "" {
+		args = append(args, uid)
+	}
 	rows, _ := h.db.Query(`
 		SELECT
 			tool_name,
@@ -548,9 +626,9 @@ func (h *Handler) handleTools(w http.ResponseWriter, _ *http.Request) {
 			COUNT(*) FILTER (WHERE status_code = 2) AS fail_count,
 			100.0 * COUNT(*) FILTER (WHERE status_code = 2) / COUNT(*) AS fail_rate
 		FROM spans
-		WHERE tool_name IS NOT NULL AND tool_name <> ''
+		WHERE tool_name IS NOT NULL AND tool_name <> ''`+uidClause+`
 		GROUP BY tool_name ORDER BY calls DESC
-	`)
+	`, args...)
 
 	items := []toolItem{}
 	if rows != nil {
@@ -579,7 +657,12 @@ type modelsResponse struct {
 	Items []modelItem `json:"items"`
 }
 
-func (h *Handler) handleModels(w http.ResponseWriter, _ *http.Request) {
+func (h *Handler) handleModels(w http.ResponseWriter, r *http.Request) {
+	uidClause, uid := userIDClause(r)
+	args := []any{}
+	if uid != "" {
+		args = append(args, uid)
+	}
 	rows, _ := h.db.Query(`
 		SELECT
 			model,
@@ -588,9 +671,9 @@ func (h *Handler) handleModels(w http.ResponseWriter, _ *http.Request) {
 			COALESCE(SUM(input_tokens), 0),
 			COALESCE(SUM(output_tokens), 0)
 		FROM spans
-		WHERE model IS NOT NULL AND model <> ''
+		WHERE model IS NOT NULL AND model <> ''`+uidClause+`
 		GROUP BY model ORDER BY span_count DESC
-	`)
+	`, args...)
 
 	items := []modelItem{}
 	if rows != nil {
@@ -668,6 +751,12 @@ func (h *Handler) handleHistory(w http.ResponseWriter, r *http.Request) {
 	resp.From = from.Format("2006-01-02")
 	resp.To = to.Format("2006-01-02")
 
+	uidClause, uid := userIDClause(r)
+	baseArgs := []any{from, to}
+	if uid != "" {
+		baseArgs = append(baseArgs, uid)
+	}
+
 	brows, _ := h.db.Query(fmt.Sprintf(`
 		SELECT
 			%s AS bucket,
@@ -677,9 +766,9 @@ func (h *Handler) handleHistory(w http.ResponseWriter, r *http.Request) {
 			COALESCE(SUM(input_tokens), 0) AS input_tokens,
 			COALESCE(SUM(output_tokens), 0) AS output_tokens
 		FROM spans
-		WHERE start_time >= ? AND start_time <= ?
+		WHERE start_time >= ? AND start_time <= ?%s
 		GROUP BY bucket ORDER BY bucket ASC
-	`, bucketExpr), from, to)
+	`, bucketExpr, uidClause), baseArgs...)
 	resp.Buckets = []historyBucket{}
 	if brows != nil {
 		defer brows.Close()
@@ -697,9 +786,9 @@ func (h *Handler) handleHistory(w http.ResponseWriter, r *http.Request) {
 			COALESCE(SUM(cost_usd), 0) AS cost_usd,
 			COUNT(*) AS spans
 		FROM spans
-		WHERE start_time >= ? AND start_time <= ? AND model IS NOT NULL AND model <> ''
+		WHERE start_time >= ? AND start_time <= ? AND model IS NOT NULL AND model <> ''%s
 		GROUP BY bucket, model ORDER BY bucket ASC, SUM(cost_usd) DESC
-	`, bucketExpr), from, to)
+	`, bucketExpr, uidClause), baseArgs...)
 	resp.ByModel = []historyModelRow{}
 	if mrows != nil {
 		defer mrows.Close()
@@ -717,9 +806,9 @@ func (h *Handler) handleHistory(w http.ResponseWriter, r *http.Request) {
 			COUNT(*) AS count,
 			COALESCE(SUM(cost_usd), 0) AS cost_usd
 		FROM spans
-		WHERE start_time >= ? AND start_time <= ?
+		WHERE start_time >= ? AND start_time <= ?`+uidClause+`
 		GROUP BY date, hour ORDER BY date ASC, hour ASC
-	`, from, to)
+	`, baseArgs...)
 	resp.Heatmap = []heatmapCell{}
 	if hrows != nil {
 		defer hrows.Close()

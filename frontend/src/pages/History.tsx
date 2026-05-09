@@ -4,6 +4,7 @@ import {
   ResponsiveContainer, Legend,
 } from 'recharts'
 import { useHistory } from '../api'
+import { useUserContext } from '../context/UserContext'
 import type { HistoryResponse, HeatmapCell } from '../api'
 import {
   Card, KpiCard, EmptyState, ErrorState, KpiSkeleton, ChartSkeleton, ChartTooltip,
@@ -315,8 +316,9 @@ export default function History() {
   const [from, setFrom] = useState(daysAgo(30))
   const [to, setTo] = useState(today())
   const [activePreset, setActivePreset] = useState<string>('30d')
+  const { userId } = useUserContext()
 
-  const { data, error, isLoading } = useHistory(gran, from, to)
+  const { data, error, isLoading } = useHistory(gran, from, to, userId)
 
   const applyPreset = (p: Preset) => {
     setActivePreset(p.label)

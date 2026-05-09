@@ -1,4 +1,4 @@
--- Schema version: 2
+-- Schema version: 3
 -- Versioned; never silently rename columns.
 
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -29,6 +29,9 @@ CREATE TABLE IF NOT EXISTS spans (
     model           VARCHAR,
     tool_name       VARCHAR,
 
+    -- User identifier: set via OTEL_RESOURCE_ATTRIBUTES=user.id=alice (NULL = unset)
+    user_id         VARCHAR,
+
     -- OTLP span status: 0=UNSET, 1=OK, 2=ERROR
     status_code     TINYINT DEFAULT 0,
 
@@ -49,10 +52,14 @@ CREATE TABLE IF NOT EXISTS spans (
 -- Migration v1 → v2: add status_code if upgrading an existing database.
 ALTER TABLE spans ADD COLUMN IF NOT EXISTS status_code TINYINT DEFAULT 0;
 
+-- Migration v2 → v3: add user_id for multi-user telemetry separation.
+ALTER TABLE spans ADD COLUMN IF NOT EXISTS user_id VARCHAR;
+
 -- Indexes for dashboard hot paths (DuckDB ART indexes).
 CREATE INDEX IF NOT EXISTS idx_spans_session_id  ON spans(session_id);
 CREATE INDEX IF NOT EXISTS idx_spans_start_time  ON spans(start_time);
 CREATE INDEX IF NOT EXISTS idx_spans_name        ON spans(name);
+CREATE INDEX IF NOT EXISTS idx_spans_user_id     ON spans(user_id);
 
 -- Daily aggregates for long-term retention (schema version 1)
 CREATE TABLE IF NOT EXISTS daily_usage (
@@ -60,6 +67,7 @@ CREATE TABLE IF NOT EXISTS daily_usage (
     session_id      VARCHAR,
     model           VARCHAR,
     tool_name       VARCHAR,
+    user_id         VARCHAR,
     span_count      BIGINT,
     total_input_tokens  BIGINT,
     total_output_tokens BIGINT,
@@ -67,5 +75,9 @@ CREATE TABLE IF NOT EXISTS daily_usage (
     PRIMARY KEY (day, session_id, model, tool_name)
 );
 
+-- Migration v2 → v3: add user_id to daily_usage.
+ALTER TABLE daily_usage ADD COLUMN IF NOT EXISTS user_id VARCHAR;
+
 INSERT INTO schema_version (version) VALUES (1) ON CONFLICT DO NOTHING;
 INSERT INTO schema_version (version) VALUES (2) ON CONFLICT DO NOTHING;
+INSERT INTO schema_version (version) VALUES (3) ON CONFLICT DO NOTHING;

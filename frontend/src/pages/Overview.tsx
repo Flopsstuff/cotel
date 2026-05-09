@@ -1,9 +1,10 @@
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import useSWR from 'swr'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
-import { fetcher, type OverviewResponse, type SessionItem } from '../api'
+import { useOverview, useSessions } from '../api'
+import { useUserContext } from '../context/UserContext'
 import { Card, KpiCard, DataTable, EmptyState, ErrorState, RefreshIndicator, KpiSkeleton, ChartSkeleton, LoadingSkeleton, sessionStatusBadge, ChartTooltip } from '../components'
+import type { SessionItem } from '../api'
 import styles from './Overview.module.css'
 
 function fmtTokens(n: number): string {
@@ -15,17 +16,10 @@ function fmtTokens(n: number): string {
 export default function Overview() {
   const [paused, setPaused] = useState(false)
   const navigate = useNavigate()
+  const { userId } = useUserContext()
 
-  const { data, error, isLoading, isValidating, mutate } = useSWR<OverviewResponse>(
-    '/api/v1/overview',
-    fetcher,
-    { refreshInterval: paused ? 0 : 30_000 },
-  )
-
-  const { data: recent, isLoading: recentLoading } = useSWR<{ items: SessionItem[]; total: number; page: number; limit: number }>(
-    '/api/v1/sessions?page=1&limit=5&sort=start_time&order=desc',
-    fetcher,
-  )
+  const { data, error, isLoading, isValidating, mutate } = useOverview(userId, paused ? 0 : 30_000)
+  const { data: recent, isLoading: recentLoading } = useSessions(1, 5, 'start_time', 'desc', userId)
 
   return (
     <div>

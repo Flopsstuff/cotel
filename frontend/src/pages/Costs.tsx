@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useCosts } from '../api'
+import { useUserContext } from '../context/UserContext'
 import { Card, DataTable, EmptyState, ErrorState, LoadingSkeleton, ChartSkeleton, DateRangePicker, ChartTooltip } from '../components'
 import type { CostsResponse } from '../api'
 import {
@@ -22,8 +23,9 @@ function daysAgo(n: number) {
 export default function Costs() {
   const [from, setFrom] = useState(daysAgo(30))
   const [to, setTo] = useState(today())
+  const { userId } = useUserContext()
 
-  const { data, error, isLoading } = useCosts(from, to)
+  const { data, error, isLoading } = useCosts(from, to, userId)
 
   const totalCost = data?.by_model.reduce((s, m) => s + m.cost_usd, 0) ?? 0
 

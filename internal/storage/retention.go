@@ -36,11 +36,12 @@ func (db *DB) RollupAndPurge(cfg RetentionConfig) error {
 	rollupCutoff := time.Now().AddDate(0, 0, -cfg.RawDays)
 	_, err := db.rw.Exec(`
 		INSERT OR REPLACE INTO daily_usage
-		  (day, session_id, model, tool_name,
+		  (day, session_id, model, tool_name, user_id,
 		   span_count, total_input_tokens, total_output_tokens, total_cost_usd)
 		SELECT
 		  strftime(CAST(start_time AS TIMESTAMP), '%Y-%m-%d')::DATE AS day,
 		  session_id, model, tool_name,
+		  MAX(user_id) AS user_id,
 		  COUNT(*) AS span_count,
 		  COALESCE(SUM(input_tokens), 0),
 		  COALESCE(SUM(output_tokens), 0),

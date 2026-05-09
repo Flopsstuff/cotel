@@ -9,6 +9,10 @@ import (
 	_ "github.com/marcboeker/go-duckdb"
 )
 
+func nullableStr(s string) sql.NullString {
+	return sql.NullString{String: s, Valid: s != ""}
+}
+
 //go:embed schema.sql
 var schemaFS embed.FS
 
@@ -76,35 +80,37 @@ func (db *DB) Close() error { return db.rw.Close() }
 
 // Span represents a decoded OTLP span ready for storage.
 type Span struct {
-	TraceID           string
-	SpanID            string
-	ParentSpanID      string
-	Name              string
-	StartTime         time.Time
-	EndTime           time.Time
-	ServiceName       string
-	SessionID         string
-	Model             string
-	ToolName          string
+	TraceID          string
+	SpanID           string
+	ParentSpanID     string
+	Name             string
+	StartTime        time.Time
+	EndTime          time.Time
+	ServiceName      string
+	SessionID        string
+	Model            string
+	ToolName         string
+	// UserID identifies the sender; set via OTEL resource attribute user.id (empty = unset → stored as NULL).
+	UserID           string
 	// StatusCode is the OTLP span status: 0=UNSET, 1=OK, 2=ERROR.
-	StatusCode        int32
-	InputTokens       *int64
-	OutputTokens      *int64
-	CacheReadTokens   *int64
-	CacheWriteTokens  *int64
-	CostUSD           *float64
-	Attributes        string // JSON
-	ResourceAttrs     string // JSON
+	StatusCode       int32
+	InputTokens      *int64
+	OutputTokens     *int64
+	CacheReadTokens  *int64
+	CacheWriteTokens *int64
+	CostUSD          *float64
+	Attributes       string // JSON
+	ResourceAttrs    string // JSON
 }
 
 const insertSpan = `
 INSERT OR IGNORE INTO spans (
   trace_id, span_id, parent_span_id, name,
   start_time, end_time, service_name,
-  session_id, model, tool_name, status_code,
+  session_id, model, tool_name, user_id, status_code,
   input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd,
   attributes, resource_attrs
-) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
 
 // Exec runs an arbitrary SQL statement on the write connection. Used by tests
 // for bulk data setup (e.g. INSERT … SELECT FROM range).
@@ -122,7 +128,7 @@ func (db *DB) InsertSpan(s Span) error {
 	_, err := db.rw.Exec(insertSpan,
 		s.TraceID, s.SpanID, s.ParentSpanID, s.Name,
 		s.StartTime, s.EndTime, s.ServiceName,
-		s.SessionID, s.Model, s.ToolName, s.StatusCode,
+		s.SessionID, s.Model, s.ToolName, nullableStr(s.UserID), s.StatusCode,
 		s.InputTokens, s.OutputTokens, s.CacheReadTokens, s.CacheWriteTokens, s.CostUSD,
 		s.Attributes, s.ResourceAttrs,
 	)

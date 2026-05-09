@@ -1,11 +1,13 @@
 import { useTools } from '../api'
+import { useUserContext } from '../context/UserContext'
 import { Card, DataTable, EmptyState, ErrorState, LoadingSkeleton, ChartSkeleton, failRateBadge, ChartTooltip } from '../components'
 import type { ToolItem } from '../api'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
 import styles from './Tools.module.css'
 
 export default function Tools() {
-  const { data, error, isLoading } = useTools()
+  const { userId } = useUserContext()
+  const { data, error, isLoading } = useTools(userId)
 
   const topTools = data?.items.slice().sort((a, b) => b.calls - a.calls).slice(0, 10) ?? []
 

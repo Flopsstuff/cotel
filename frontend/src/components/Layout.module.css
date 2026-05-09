@@ -55,6 +55,41 @@
   white-space: nowrap;
 }
 
+.userSection {
+  margin-top: auto;
+  padding: var(--space-3) var(--space-2) var(--space-4);
+  border-top: 1px solid var(--color-border);
+}
+
+.userLabel {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-2) var(--space-1);
+  color: var(--color-text-3);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.userSelect {
+  width: 100%;
+  padding: 5px var(--space-2);
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-1);
+  font-size: var(--text-sm);
+  cursor: pointer;
+  outline: none;
+  appearance: auto;
+}
+
+.userSelect:focus {
+  border-color: var(--color-accent);
+}
+
 .main {
   flex: 1;
   padding: var(--space-8);
@@ -76,5 +111,9 @@
   .navLink {
     justify-content: center;
     padding: 12px;
+  }
+
+  .userSection {
+    display: none;
   }
 }

@@ -104,6 +104,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // identifier, checked in order of preference.
 var sessionIDKeys = []string{"session.id", "claude.session.id", "cc.session.id"}
 
+// userIDKeys are the attribute key names used to identify the sender.
+// Configure via: OTEL_RESOURCE_ATTRIBUTES=user.id=alice
+var userIDKeys = []string{"user.id", "claude.user", "cc.user.id"}
+
 func decodeSpan(sp *tracepb.Span, svcName string, resAttrs map[string]any, resJSON string) storage.Span {
 	attrs := attrsToMap(sp.Attributes)
 	attrsJSON, _ := json.Marshal(attrs)
@@ -133,6 +137,23 @@ func decodeSpan(sp *tracepb.Span, svcName string, resAttrs map[string]any, resJS
 		for _, key := range sessionIDKeys {
 			if v, ok := resAttrs[key]; ok {
 				s.SessionID = fmt.Sprintf("%v", v)
+				break
+			}
+		}
+	}
+
+	// user.id: resource attribute takes precedence (process-wide identity),
+	// span attribute as fallback. Empty string → stored as NULL (no user set).
+	for _, key := range userIDKeys {
+		if v, ok := resAttrs[key]; ok {
+			s.UserID = fmt.Sprintf("%v", v)
+			break
+		}
+	}
+	if s.UserID == "" {
+		for _, key := range userIDKeys {
+			if v, ok := attrs[key]; ok {
+				s.UserID = fmt.Sprintf("%v", v)
 				break
 			}
 		}
