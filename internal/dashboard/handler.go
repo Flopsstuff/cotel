@@ -88,9 +88,18 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.serveSessions(w, r)
 	case strings.HasPrefix(path, "/sessions/"):
 		h.serveSession(w, r, strings.TrimPrefix(path, "/sessions/"))
+	case path == "/healthz":
+		h.serveHealthz(w, r)
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+func (h *Handler) serveHealthz(w http.ResponseWriter, r *http.Request) {
+	var spans int64
+	_ = h.db.QueryRow("SELECT COUNT(*) FROM spans").Scan(&spans)
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprintf(w, `{"ok":true,"spans":%d}`, spans)
 }
 
 // ---- index ----
