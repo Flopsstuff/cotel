@@ -168,6 +168,69 @@
     box-shadow: 0 1px 2px rgba(0,0,0,.06);
   }
   .chart-canvas { width: 100% !important; height: 200px !important; }
+  /* CSS bar chart */
+  .bar-chart-wrap {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 16px 16px 8px;
+    box-shadow: 0 1px 2px rgba(0,0,0,.06);
+  }
+  .bar-chart {
+    display: flex;
+    align-items: flex-end;
+    gap: 3px;
+    height: 140px;
+    overflow-x: auto;
+    padding-bottom: 2px;
+  }
+  .bar-col {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-end;
+    flex: 1;
+    min-width: 14px;
+    height: 100%;
+    cursor: default;
+  }
+  .bar-col:hover .bar-fill { opacity: 0.8; }
+  .bar-fill {
+    width: 100%;
+    background: var(--accent);
+    border-radius: 2px 2px 0 0;
+    min-height: 2px;
+    transition: opacity .1s;
+  }
+  .bar-labels {
+    display: flex;
+    gap: 3px;
+    overflow-x: hidden;
+    padding-top: 4px;
+  }
+  .bar-label {
+    flex: 1;
+    min-width: 14px;
+    font-size: 9px;
+    color: var(--text-3);
+    text-align: center;
+    overflow: hidden;
+    white-space: nowrap;
+  }
+  /* Badge */
+  .badge {
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: 9999px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: .03em;
+    text-transform: uppercase;
+  }
+  .badge-active { background: #dcfce7; color: #166534; }
+  @media (prefers-color-scheme: dark) {
+    .badge-active { background: #14532d; color: #4ade80; }
+  }
   /* Empty state */
   .empty {
     padding: 32px;
@@ -235,7 +298,7 @@
   <div class="sidebar-brand">cotel</div>
   <a href="/" class="nav-item {{if eq .ActiveNav "overview"}}active{{end}}">Overview</a>
   <a href="/sessions" class="nav-item {{if eq .ActiveNav "sessions"}}active{{end}}">Sessions</a>
-  <a href="#" class="nav-item disabled">Costs</a>
-  <a href="#" class="nav-item disabled">Tools</a>
+  <a href="/costs" class="nav-item {{if eq .ActiveNav "costs"}}active{{end}}">Costs</a>
+  <a href="/tools" class="nav-item {{if eq .ActiveNav "tools"}}active{{end}}">Tools</a>
 </aside>
 {{end}}
