@@ -37,7 +37,11 @@
             <td class="muted">{{fmtTokens .InTokens}}</td>
             <td class="muted">{{fmtTokens .OutTokens}}</td>
             <td class="muted">{{.ToolCalls}}</td>
-            <td class="{{if .HasError}}error{{else}}ok{{end}}">{{if .HasError}}✗{{else}}✓{{end}}</td>
+            <td>
+              {{if .IsActive}}<span class="badge badge-active">active</span>
+              {{else if .HasError}}<span class="error">✗</span>
+              {{else}}<span class="ok">✓</span>{{end}}
+            </td>
           </tr>
           {{end}}
         </tbody>
