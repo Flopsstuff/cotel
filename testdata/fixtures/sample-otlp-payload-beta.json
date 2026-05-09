@@ -25,7 +25,7 @@
                 {"key": "input_tokens",    "value": {"intValue": "2048"}},
                 {"key": "output_tokens",   "value": {"intValue": "768"}},
                 {"key": "cache_read_tokens",  "value": {"intValue": "512"}},
-                {"key": "cache_write_tokens", "value": {"intValue": "256"}},
+                {"key": "cache_creation_tokens","value": {"intValue": "256"}},
                 {"key": "cost_usd",        "value": {"doubleValue": 0.00921}}
               ]
             },
@@ -38,7 +38,7 @@
               "endTimeUnixNano":   "1778327055000000000",
               "status": {"code": 1},
               "attributes": [
-                {"key": "tool.name", "value": {"stringValue": "Read"}}
+                {"key": "tool_name", "value": {"stringValue": "Read"}}
               ]
             },
             {
@@ -50,7 +50,7 @@
               "endTimeUnixNano":   "1778327065000000000",
               "status": {"code": 2, "message": "timeout"},
               "attributes": [
-                {"key": "tool.name", "value": {"stringValue": "Bash"}}
+                {"key": "tool_name", "value": {"stringValue": "Bash"}}
               ]
             }
           ]

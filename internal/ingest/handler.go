@@ -140,7 +140,9 @@ func decodeSpan(sp *tracepb.Span, svcName string, resAttrs map[string]any, resJS
 	if v, ok := attrs["model"]; ok {
 		s.Model = fmt.Sprintf("%v", v)
 	}
-	if v, ok := attrs["tool.name"]; ok {
+	if v, ok := attrs["tool_name"]; ok {
+		s.ToolName = fmt.Sprintf("%v", v)
+	} else if v, ok := attrs["tool.name"]; ok {
 		s.ToolName = fmt.Sprintf("%v", v)
 	}
 	if v, ok := attrs["input_tokens"]; ok {
@@ -155,7 +157,10 @@ func decodeSpan(sp *tracepb.Span, svcName string, resAttrs map[string]any, resJS
 		n := toInt64(v)
 		s.CacheReadTokens = &n
 	}
-	if v, ok := attrs["cache_write_tokens"]; ok {
+	if v, ok := attrs["cache_creation_tokens"]; ok {
+		n := toInt64(v)
+		s.CacheWriteTokens = &n
+	} else if v, ok := attrs["cache_write_tokens"]; ok {
 		n := toInt64(v)
 		s.CacheWriteTokens = &n
 	}
