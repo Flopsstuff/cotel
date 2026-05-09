@@ -338,6 +338,7 @@ func (h *Handler) serveSession(w http.ResponseWriter, r *http.Request, sessionID
 			SUM(CASE WHEN status_code = 2 THEN 1 ELSE 0 END)
 		FROM spans
 		WHERE session_id = ?
+		GROUP BY session_id
 	`, sessionID).Scan(
 		&hdr.SessionID, &hdr.Model,
 		&hdr.StartTime, &hdr.EndTime, &hdr.DurationMs,
