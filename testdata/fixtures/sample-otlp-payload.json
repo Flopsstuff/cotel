@@ -1,0 +1,48 @@
+{
+  "resourceSpans": [
+    {
+      "resource": {
+        "attributes": [
+          {"key": "service.name", "value": {"stringValue": "claude-code"}},
+          {"key": "service.version", "value": {"stringValue": "1.0.0"}}
+        ]
+      },
+      "scopeSpans": [
+        {
+          "scope": {"name": "claude.code", "version": "1.0.0"},
+          "spans": [
+            {
+              "traceId": "aabbccdd00112233aabbccdd00112233",
+              "spanId": "aabbccdd00112233",
+              "parentSpanId": "",
+              "name": "claude_code.session",
+              "startTimeUnixNano": "1746789000000000000",
+              "endTimeUnixNano":   "1746789300000000000",
+              "attributes": [
+                {"key": "session.id",      "value": {"stringValue": "sess_abc123"}},
+                {"key": "model",           "value": {"stringValue": "claude-sonnet-4-6"}},
+                {"key": "input_tokens",    "value": {"intValue": "1024"}},
+                {"key": "output_tokens",   "value": {"intValue": "512"}},
+                {"key": "cache_read_tokens", "value": {"intValue": "256"}},
+                {"key": "cache_write_tokens","value": {"intValue": "128"}},
+                {"key": "cost_usd",        "value": {"doubleValue": 0.00314}}
+              ]
+            },
+            {
+              "traceId": "aabbccdd00112233aabbccdd00112233",
+              "spanId": "bbccdd0011223344",
+              "parentSpanId": "aabbccdd00112233",
+              "name": "claude_code.tool_use",
+              "startTimeUnixNano": "1746789060000000000",
+              "endTimeUnixNano":   "1746789065000000000",
+              "attributes": [
+                {"key": "session.id", "value": {"stringValue": "sess_abc123"}},
+                {"key": "tool.name",  "value": {"stringValue": "Bash"}}
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

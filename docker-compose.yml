@@ -1,0 +1,17 @@
+services:
+  cotel:
+    build: .
+    image: ghcr.io/flopsstuff/cotel:latest
+    ports:
+      - "4318:4318"   # OTLP/HTTP ingest
+      - "8080:8080"   # Dashboard
+    volumes:
+      - cotel-data:/data
+    restart: unless-stopped
+    environment:
+      COTEL_DB_PATH: /data/cotel.duckdb
+      COTEL_INGEST_ADDR: ":4318"
+      COTEL_DASH_ADDR: ":8080"
+
+volumes:
+  cotel-data:

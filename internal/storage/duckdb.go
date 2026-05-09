@@ -1,0 +1,99 @@
+package storage
+
+import (
+	"database/sql"
+	"embed"
+	"fmt"
+	"time"
+
+	_ "github.com/marcboeker/go-duckdb"
+)
+
+//go:embed schema.sql
+var schemaFS embed.FS
+
+type DB struct {
+	rw   *sql.DB // single writer connection
+	path string
+}
+
+// ReadDB is a read-only view over DuckDB used by the dashboard.
+type ReadDB struct {
+	db *sql.DB
+}
+
+func (r *ReadDB) QueryRow(query string, args ...any) *sql.Row {
+	return r.db.QueryRow(query, args...)
+}
+
+func (r *ReadDB) Query(query string, args ...any) (*sql.Rows, error) {
+	return r.db.Query(query, args...)
+}
+
+// ReadOnly opens a separate read-only connection to the same DuckDB file.
+func (d *DB) ReadOnly() *ReadDB {
+	ro, _ := sql.Open("duckdb", d.path+"?access_mode=read_only")
+	ro.SetMaxOpenConns(4)
+	return &ReadDB{db: ro}
+}
+
+func Open(path string) (*DB, error) {
+	rw, err := sql.Open("duckdb", path)
+	if err != nil {
+		return nil, fmt.Errorf("open duckdb %q: %w", path, err)
+	}
+	// DuckDB supports one writer; serialise all writes through this connection.
+	rw.SetMaxOpenConns(1)
+
+	ddl, err := schemaFS.ReadFile("schema.sql")
+	if err != nil {
+		return nil, err
+	}
+	if _, err := rw.Exec(string(ddl)); err != nil {
+		return nil, fmt.Errorf("apply schema: %w", err)
+	}
+	return &DB{rw: rw, path: path}, nil
+}
+
+func (db *DB) Close() error { return db.rw.Close() }
+
+// Span represents a decoded OTLP span ready for storage.
+type Span struct {
+	TraceID           string
+	SpanID            string
+	ParentSpanID      string
+	Name              string
+	StartTime         time.Time
+	EndTime           time.Time
+	ServiceName       string
+	SessionID         string
+	Model             string
+	ToolName          string
+	InputTokens       *int64
+	OutputTokens      *int64
+	CacheReadTokens   *int64
+	CacheWriteTokens  *int64
+	CostUSD           *float64
+	Attributes        string // JSON
+	ResourceAttrs     string // JSON
+}
+
+const insertSpan = `
+INSERT OR IGNORE INTO spans (
+  trace_id, span_id, parent_span_id, name,
+  start_time, end_time, service_name,
+  session_id, model, tool_name,
+  input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd,
+  attributes, resource_attrs
+) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+
+func (db *DB) InsertSpan(s Span) error {
+	_, err := db.rw.Exec(insertSpan,
+		s.TraceID, s.SpanID, s.ParentSpanID, s.Name,
+		s.StartTime, s.EndTime, s.ServiceName,
+		s.SessionID, s.Model, s.ToolName,
+		s.InputTokens, s.OutputTokens, s.CacheReadTokens, s.CacheWriteTokens, s.CostUSD,
+		s.Attributes, s.ResourceAttrs,
+	)
+	return err
+}
