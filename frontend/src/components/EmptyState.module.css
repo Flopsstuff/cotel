@@ -1,0 +1,28 @@
+.container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-8) var(--space-4);
+  text-align: center;
+  color: var(--color-text-3);
+}
+
+.icon {
+  font-size: 32px;
+  margin-bottom: var(--space-3);
+  opacity: 0.5;
+}
+
+.heading {
+  font-size: var(--text-base);
+  font-weight: 600;
+  color: var(--color-text-2);
+  margin: 0 0 var(--space-2);
+}
+
+.subtext {
+  font-size: var(--text-sm);
+  color: var(--color-text-3);
+  margin: 0;
+}

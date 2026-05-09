@@ -1,0 +1,50 @@
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-6);
+}
+
+.title {
+  font-size: var(--text-xl);
+  font-weight: 700;
+  color: var(--color-text-1);
+}
+
+.kpiRow {
+  display: flex;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-6);
+}
+
+.chartCard {
+  margin-bottom: var(--space-4);
+}
+
+.tableRow {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-4);
+}
+
+@media (max-width: 900px) {
+  .tableRow { grid-template-columns: 1fr; }
+}
+
+.sessionLink {
+  font-family: var(--font-mono);
+  font-size: var(--text-mono-sm);
+  color: var(--color-accent);
+}
+
+.viewAll {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: var(--space-3);
+}
+
+.viewAllLink {
+  font-size: var(--text-sm);
+  color: var(--color-accent);
+}

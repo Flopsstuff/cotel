@@ -1,60 +1,149 @@
-import { useOverview } from '../api'
-import { Card, ErrorState, LoadingState } from '../components'
+import { useState } from 'react'
+import { Link } from 'react-router-dom'
+import useSWR from 'swr'
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
+import { fetcher, type OverviewResponse, type SessionItem } from '../api'
+import { Card, KpiCard, DataTable, EmptyState, ErrorState, RefreshIndicator, KpiSkeleton, ChartSkeleton, LoadingSkeleton, sessionStatusBadge } from '../components'
+import styles from './Overview.module.css'
+
+function fmtTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`
+  return String(n)
+}
 
 export default function Overview() {
-  const { data, error, isLoading } = useOverview()
+  const [paused, setPaused] = useState(false)
 
-  if (isLoading) return <LoadingState />
-  if (error) return <ErrorState message={error.message} />
-  if (!data) return null
+  const { data, error, isLoading, isValidating, mutate } = useSWR<OverviewResponse>(
+    '/api/v1/overview',
+    fetcher,
+    { refreshInterval: paused ? 0 : 30_000 },
+  )
+
+  const { data: recent, isLoading: recentLoading } = useSWR<{ items: SessionItem[]; total: number; page: number; limit: number }>(
+    '/api/v1/sessions?page=1&limit=5&sort=start_time&order=desc',
+    fetcher,
+  )
 
   return (
     <div>
-      <h1 style={{ marginTop: 0 }}>Overview</h1>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '1rem', marginBottom: '1.5rem' }}>
-        <Card>
-          <div style={{ fontSize: '0.8rem', color: '#6b7280' }}>Sessions</div>
-          <div style={{ fontSize: '1.8rem', fontWeight: 700 }}>{data.sessions_count}</div>
-        </Card>
-        <Card>
-          <div style={{ fontSize: '0.8rem', color: '#6b7280' }}>Total Cost</div>
-          <div style={{ fontSize: '1.8rem', fontWeight: 700 }}>${data.total_cost_usd.toFixed(4)}</div>
-        </Card>
-        <Card>
-          <div style={{ fontSize: '0.8rem', color: '#6b7280' }}>Input Tokens</div>
-          <div style={{ fontSize: '1.8rem', fontWeight: 700 }}>{(data.total_input_tokens / 1000).toFixed(1)}k</div>
-        </Card>
-        <Card>
-          <div style={{ fontSize: '0.8rem', color: '#6b7280' }}>Output Tokens</div>
-          <div style={{ fontSize: '1.8rem', fontWeight: 700 }}>{(data.total_output_tokens / 1000).toFixed(1)}k</div>
-        </Card>
+      <div className={styles.header}>
+        <h1 className={styles.title}>Overview</h1>
+        <RefreshIndicator
+          isValidating={isValidating}
+          paused={paused}
+          onToggle={() => setPaused((p) => !p)}
+        />
       </div>
-      <Card title="Top Models (last 30 days)">
-        {data.top_models.length === 0 ? (
-          <p style={{ color: '#9ca3af' }}>No data yet.</p>
+
+      {isLoading ? (
+        <>
+          <KpiSkeleton />
+          <div className={styles.chartCard}><ChartSkeleton /></div>
+        </>
+      ) : error ? (
+        <ErrorState message={error.message} onRetry={() => mutate()} />
+      ) : data ? (
+        <>
+          <div className={styles.kpiRow}>
+            <KpiCard label="Sessions" value={String(data.sessions_count)} />
+            <KpiCard label="Total Cost (30d)" value={`$${data.total_cost_usd.toFixed(4)}`} />
+            <KpiCard label="Input Tokens (30d)" value={fmtTokens(data.total_input_tokens)} />
+            <KpiCard label="Output Tokens (30d)" value={fmtTokens(data.total_output_tokens)} />
+          </div>
+
+          <Card title="Daily Cost — last 30 days">
+            {data.daily_costs.length === 0 ? (
+              <EmptyState heading="No cost data yet" subtext="Costs will appear once sessions are recorded." />
+            ) : (
+              <ResponsiveContainer width="100%" height={200}>
+                <BarChart data={data.daily_costs} margin={{ top: 4, right: 8, bottom: 4, left: 0 }}>
+                  <XAxis dataKey="date" tick={{ fontSize: 11, fill: 'var(--color-text-3)' }} tickFormatter={(d) => d.slice(5)} />
+                  <YAxis tick={{ fontSize: 11, fill: 'var(--color-text-3)' }} tickFormatter={(v) => `$${v.toFixed(2)}`} width={52} />
+                  <Tooltip formatter={(v: number) => [`$${v.toFixed(4)}`, 'Cost']} labelStyle={{ color: 'var(--color-text-1)' }} />
+                  <Bar dataKey="cost_usd" fill="var(--color-chart-1)" radius={[2, 2, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            )}
+          </Card>
+
+          <div className={styles.tableRow}>
+            <Card title="Top Models">
+              {data.top_models.length === 0 ? (
+                <EmptyState heading="No model data" />
+              ) : (
+                <DataTable<{ model: string; span_count: number }>
+                  columns={[
+                    { key: 'model', label: 'Model', sortable: true },
+                    { key: 'span_count', label: 'Spans', sortable: true },
+                  ]}
+                  rows={data.top_models}
+                />
+              )}
+            </Card>
+            <Card title="Top Tools">
+              {data.top_tools.length === 0 ? (
+                <EmptyState heading="No tool data" />
+              ) : (
+                <DataTable<{ tool_name: string; call_count: number }>
+                  columns={[
+                    { key: 'tool_name', label: 'Tool', sortable: true },
+                    { key: 'call_count', label: 'Calls', sortable: true },
+                  ]}
+                  rows={data.top_tools}
+                />
+              )}
+            </Card>
+          </div>
+        </>
+      ) : null}
+
+      <Card title="Recent Sessions">
+        {recentLoading ? (
+          <LoadingSkeleton rows={5} height={36} />
+        ) : !recent || recent.items.length === 0 ? (
+          <EmptyState heading="No sessions yet" subtext="Start using cotel to record sessions." />
         ) : (
-          <ul style={{ margin: 0, padding: 0, listStyle: 'none' }}>
-            {data.top_models.map((m) => (
-              <li key={m.model} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.3rem 0', borderBottom: '1px solid #f3f4f6' }}>
-                <span>{m.model}</span>
-                <span style={{ color: '#6b7280' }}>{m.span_count} spans</span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </Card>
-      <Card title="Top Tools (last 30 days)">
-        {data.top_tools.length === 0 ? (
-          <p style={{ color: '#9ca3af' }}>No data yet.</p>
-        ) : (
-          <ul style={{ margin: 0, padding: 0, listStyle: 'none' }}>
-            {data.top_tools.map((t) => (
-              <li key={t.tool_name} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.3rem 0', borderBottom: '1px solid #f3f4f6' }}>
-                <span>{t.tool_name}</span>
-                <span style={{ color: '#6b7280' }}>{t.call_count} calls</span>
-              </li>
-            ))}
-          </ul>
+          <>
+            <DataTable<SessionItem>
+              columns={[
+                {
+                  key: 'session_id',
+                  label: 'Session',
+                  render: (v) => (
+                    <Link to={`/sessions/${v}`} className={styles.sessionLink}>
+                      {String(v).slice(0, 16)}…
+                    </Link>
+                  ),
+                },
+                {
+                  key: 'first_seen',
+                  label: 'Started',
+                  render: (v) => new Date(String(v)).toLocaleString(),
+                },
+                {
+                  key: 'model',
+                  label: 'Model',
+                },
+                {
+                  key: 'cost_usd',
+                  label: 'Cost',
+                  render: (v) => `$${Number(v).toFixed(4)}`,
+                },
+                {
+                  key: 'status',
+                  label: 'Status',
+                  render: (v) => sessionStatusBadge(String(v)),
+                },
+              ]}
+              rows={recent.items}
+              onRowClick={(row) => { window.location.href = `/sessions/${row.session_id}` }}
+            />
+            <div className={styles.viewAll}>
+              <Link to="/sessions" className={styles.viewAllLink}>View all sessions →</Link>
+            </div>
+          </>
         )}
       </Card>
     </div>

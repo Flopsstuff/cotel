@@ -1,0 +1,46 @@
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.4; }
+}
+
+.container {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-full);
+  background: var(--color-accent);
+  flex-shrink: 0;
+}
+
+.dotPaused {
+  background: var(--color-text-3);
+}
+
+.dotPulsing {
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+.label {
+  font-size: var(--text-xs);
+  color: var(--color-text-2);
+}
+
+.toggleBtn {
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text-2);
+  font-size: var(--text-xs);
+  transition: border-color var(--duration-fast) var(--easing-default);
+}
+
+.toggleBtn:hover {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
