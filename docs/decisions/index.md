@@ -10,3 +10,4 @@ New ADRs go in this directory as `NNNN-short-title.md`, numbered sequentially.
 |---|-------|--------|
 | [ADR-0001](./0001-storage) | Storage Engine — DuckDB | Accepted |
 | [ADR-0003](./0003-release-policy) | Release Policy and Versioning | Accepted |
+| [ADR-0004](./0004-multi-user-separation) | Multi-User Telemetry Separation via `user.id` | Accepted |
