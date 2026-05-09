@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 
 	tracepb "go.opentelemetry.io/proto/otlp/trace/v1"
@@ -70,7 +71,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ct := r.Header.Get("Content-Type")
 	switch ct {
 	case "application/json", "":
-		if err := json.Unmarshal(body, &req); err != nil {
+		if err := protojson.Unmarshal(body, &req); err != nil {
 			http.Error(w, fmt.Sprintf("json decode: %v", err), http.StatusBadRequest)
 			return
 		}

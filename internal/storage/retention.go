@@ -39,7 +39,7 @@ func (db *DB) RollupAndPurge(cfg RetentionConfig) error {
 		  (day, session_id, model, tool_name,
 		   span_count, total_input_tokens, total_output_tokens, total_cost_usd)
 		SELECT
-		  CAST(start_time AS DATE) AS day,
+		  strftime(CAST(start_time AS TIMESTAMP), '%Y-%m-%d')::DATE AS day,
 		  session_id, model, tool_name,
 		  COUNT(*) AS span_count,
 		  COALESCE(SUM(input_tokens), 0),

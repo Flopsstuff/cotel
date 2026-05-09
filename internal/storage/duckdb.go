@@ -51,7 +51,11 @@ func OpenReadOnly(path string) (*ReadDB, error) {
 func (r *ReadDB) Close() error { return r.db.Close() }
 
 func Open(path string) (*DB, error) {
-	rw, err := sql.Open("duckdb", path)
+	dsn := path
+	if path == ":memory:" {
+		dsn = "" // go-duckdb uses "" for in-memory, not ":memory:"
+	}
+	rw, err := sql.Open("duckdb", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open duckdb %q: %w", path, err)
 	}
@@ -103,6 +107,12 @@ INSERT OR IGNORE INTO spans (
 ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
 
 func (db *DB) InsertSpan(s Span) error {
+	if s.Attributes == "" {
+		s.Attributes = "{}"
+	}
+	if s.ResourceAttrs == "" {
+		s.ResourceAttrs = "{}"
+	}
 	_, err := db.rw.Exec(insertSpan,
 		s.TraceID, s.SpanID, s.ParentSpanID, s.Name,
 		s.StartTime, s.EndTime, s.ServiceName,
