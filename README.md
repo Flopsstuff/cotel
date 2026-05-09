@@ -53,7 +53,13 @@ docker run --rm -v cotel-data:/data ubuntu \
 | Raw spans | 30 days | `spans` table |
 | Daily aggregates | 90 days | `daily_usage` table |
 
-Adjust via environment variables (not yet wired — see [retention worker issue](https://github.com/Flopsstuff/cotel/issues)).
+Override with environment variables:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `COTEL_RETENTION_RAW_DAYS` | `30` | Delete raw spans older than this many days |
+| `COTEL_RETENTION_AGGREGATE_DAYS` | `90` | Delete daily aggregate rows older than this many days |
+| `COTEL_RETENTION_INTERVAL` | `6h` | How often the retention worker runs (Go duration string, e.g. `1h`, `30m`) |
 
 ## Development
 
@@ -75,6 +81,9 @@ go test ./...
 | `COTEL_DB_PATH` | `/data/cotel.duckdb` | DuckDB file path |
 | `COTEL_INGEST_ADDR` | `:4318` | Ingest listener address |
 | `COTEL_DASH_ADDR` | `:8080` | Dashboard listener address |
+| `COTEL_RETENTION_RAW_DAYS` | `30` | Raw span retention in days |
+| `COTEL_RETENTION_AGGREGATE_DAYS` | `90` | Daily aggregate retention in days |
+| `COTEL_RETENTION_INTERVAL` | `6h` | Retention worker tick interval (Go duration) |
 
 ## Architecture
 

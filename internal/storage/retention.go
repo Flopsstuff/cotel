@@ -22,14 +22,16 @@ var DefaultRetention = RetentionConfig{
 // Idempotent: safe to re-run after a crash mid-roll-up.
 func (db *DB) RunRetentionWorker(cfg RetentionConfig, interval time.Duration) {
 	for {
-		if err := db.rollupAndPurge(cfg); err != nil {
+		if err := db.RollupAndPurge(cfg); err != nil {
 			log.Printf("retention worker error: %v", err)
 		}
 		time.Sleep(interval)
 	}
 }
 
-func (db *DB) rollupAndPurge(cfg RetentionConfig) error {
+// RollupAndPurge rolls up raw spans older than cfg.RawDays into daily_usage,
+// then deletes the raw rows and any aggregate rows older than cfg.AggregateDays.
+func (db *DB) RollupAndPurge(cfg RetentionConfig) error {
 	// Roll raw spans older than RawDays into daily_usage before deleting.
 	rollupCutoff := time.Now().AddDate(0, 0, -cfg.RawDays)
 	_, err := db.rw.Exec(`

@@ -1,4 +1,4 @@
--- Schema version: 1
+-- Schema version: 2
 -- Versioned; never silently rename columns.
 
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS spans (
     end_time        TIMESTAMPTZ NOT NULL,
     duration_ms     DOUBLE GENERATED ALWAYS AS (
                         epoch_ms(end_time) - epoch_ms(start_time)
-                    ) STORED,
+                    ),
 
     -- Service metadata
     service_name    VARCHAR,
@@ -28,6 +28,9 @@ CREATE TABLE IF NOT EXISTS spans (
     session_id      VARCHAR,
     model           VARCHAR,
     tool_name       VARCHAR,
+
+    -- OTLP span status: 0=UNSET, 1=OK, 2=ERROR
+    status_code     TINYINT DEFAULT 0,
 
     -- Token / cost counters
     input_tokens    INTEGER,
@@ -43,6 +46,9 @@ CREATE TABLE IF NOT EXISTS spans (
     ingested_at     TIMESTAMPTZ DEFAULT now()
 );
 
+-- Migration v1 → v2: add status_code if upgrading an existing database.
+ALTER TABLE spans ADD COLUMN IF NOT EXISTS status_code TINYINT DEFAULT 0;
+
 -- Daily aggregates for long-term retention (schema version 1)
 CREATE TABLE IF NOT EXISTS daily_usage (
     day             DATE NOT NULL,
@@ -57,3 +63,4 @@ CREATE TABLE IF NOT EXISTS daily_usage (
 );
 
 INSERT INTO schema_version (version) VALUES (1) ON CONFLICT DO NOTHING;
+INSERT INTO schema_version (version) VALUES (2) ON CONFLICT DO NOTHING;

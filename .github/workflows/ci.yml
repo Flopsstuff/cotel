@@ -32,10 +32,51 @@ jobs:
       - name: go test
         run: CGO_ENABLED=1 go test ./...
 
+  smoke:
+    name: Smoke test
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker compose build
+
+      - name: Start services
+        run: docker compose up -d
+
+      - name: Wait for ingest (max 30 s)
+        run: |
+          timeout 30 bash -c \
+            'until curl -s -o /dev/null http://localhost:4318/; do sleep 1; done'
+
+      - name: POST sample OTLP payload
+        run: |
+          curl -sf -X POST http://localhost:4318/v1/traces \
+            -H 'Content-Type: application/json' \
+            -d @testdata/fixtures/sample-otlp-payload.json
+
+      - name: Wait for async DB write
+        run: sleep 2
+
+      - name: Verify span count in DB
+        run: |
+          COUNT=$(docker compose exec -T cotel \
+            /usr/local/bin/cotel --db-query "SELECT COUNT(*) FROM spans")
+          echo "Span count: $COUNT"
+          [ "$COUNT" = "3" ]
+
+      - name: Dashboard health check
+        run: curl -sf http://localhost:8080/
+
+      - name: Tear down
+        if: always()
+        run: docker compose down
+
   docker:
     name: Docker build & publish
     runs-on: ubuntu-latest
-    needs: test
+    needs: smoke
     permissions:
       contents: read
       packages: write

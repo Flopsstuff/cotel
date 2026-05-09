@@ -1,9 +1,12 @@
 package main
 
 import (
+	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/Flopsstuff/cotel/internal/dashboard"
@@ -12,7 +15,24 @@ import (
 )
 
 func main() {
+	dbQuery := flag.String("db-query", "", "run SQL query against DuckDB, print first column of first row, and exit")
+	flag.Parse()
+
 	dbPath := env("COTEL_DB_PATH", "/data/cotel.duckdb")
+
+	if *dbQuery != "" {
+		ro, err := storage.OpenReadOnly(dbPath)
+		if err != nil {
+			log.Fatalf("open storage: %v", err)
+		}
+		defer ro.Close()
+		var val interface{}
+		if err := ro.QueryRow(*dbQuery).Scan(&val); err != nil {
+			log.Fatalf("db-query: %v", err)
+		}
+		fmt.Println(val)
+		return
+	}
 
 	db, err := storage.Open(dbPath)
 	if err != nil {
@@ -20,8 +40,12 @@ func main() {
 	}
 	defer db.Close()
 
-	// Retention worker: roll up + purge every 6 hours.
-	go db.RunRetentionWorker(storage.DefaultRetention, 6*time.Hour)
+	retentionCfg := storage.RetentionConfig{
+		RawDays:       envInt("COTEL_RETENTION_RAW_DAYS", storage.DefaultRetention.RawDays),
+		AggregateDays: envInt("COTEL_RETENTION_AGGREGATE_DAYS", storage.DefaultRetention.AggregateDays),
+	}
+	retentionInterval := envDuration("COTEL_RETENTION_INTERVAL", 6*time.Hour)
+	go db.RunRetentionWorker(retentionCfg, retentionInterval)
 
 	ingestMux := http.NewServeMux()
 	ingestMux.Handle("/v1/traces", ingest.New(db))
@@ -48,6 +72,26 @@ func main() {
 func env(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
+	}
+	return fallback
+}
+
+func envInt(key string, fallback int) int {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+		log.Printf("warning: invalid %s=%q, using default %d", key, v, fallback)
+	}
+	return fallback
+}
+
+func envDuration(key string, fallback time.Duration) time.Duration {
+	if v := os.Getenv(key); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			return d
+		}
+		log.Printf("warning: invalid %s=%q, using default %s", key, v, fallback)
 	}
 	return fallback
 }

@@ -45,8 +45,8 @@ func TestGoldenPayload(t *testing.T) {
 	// Flush drains the async write queue and waits for all spans to be stored.
 	h.Flush()
 
-	if len(store.spans) < 2 {
-		t.Fatalf("expected ≥2 spans, got %d", len(store.spans))
+	if len(store.spans) < 3 {
+		t.Fatalf("expected ≥3 spans, got %d", len(store.spans))
 	}
 
 	// Verify session span extraction.
@@ -70,19 +70,42 @@ func TestGoldenPayload(t *testing.T) {
 		t.Errorf("cost_usd: got %v, want ≥0.003", sessionSpan.CostUSD)
 	}
 
-	// Verify tool span.
+	// Verify tool span (successful).
 	var toolSpan *storage.Span
 	for i := range store.spans {
-		if store.spans[i].Name == "claude_code.tool_use" {
+		if store.spans[i].Name == "claude_code.tool_use" && store.spans[i].StatusCode == 1 {
 			toolSpan = &store.spans[i]
 			break
 		}
 	}
 	if toolSpan == nil {
-		t.Fatal("no tool span found")
+		t.Fatal("no successful tool span found")
 	}
 	if toolSpan.ToolName != "Bash" {
 		t.Errorf("tool_name: got %q, want %q", toolSpan.ToolName, "Bash")
+	}
+	if toolSpan.SessionID != "sess_abc123" {
+		t.Errorf("tool span session_id: got %q, want sess_abc123 (must be present on child spans)", toolSpan.SessionID)
+	}
+
+	// Verify error span (status_code = 2 = STATUS_CODE_ERROR).
+	var errSpan *storage.Span
+	for i := range store.spans {
+		if store.spans[i].StatusCode == 2 {
+			errSpan = &store.spans[i]
+			break
+		}
+	}
+	if errSpan == nil {
+		t.Fatal("no error span found (status_code=2)")
+	}
+	if errSpan.ToolName != "Bash" {
+		t.Errorf("error span tool_name: got %q, want %q", errSpan.ToolName, "Bash")
+	}
+
+	// Verify session span status_code is OK (1).
+	if sessionSpan.StatusCode != 1 {
+		t.Errorf("session span status_code: got %d, want 1 (STATUS_CODE_OK)", sessionSpan.StatusCode)
 	}
 
 	// Response must be valid JSON.

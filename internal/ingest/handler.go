@@ -109,6 +109,7 @@ func decodeSpan(sp *tracepb.Span, svcName, resJSON string) storage.Span {
 		StartTime:     time.Unix(0, int64(sp.StartTimeUnixNano)),
 		EndTime:       time.Unix(0, int64(sp.EndTimeUnixNano)),
 		ServiceName:   svcName,
+		StatusCode:    int32(sp.GetStatus().GetCode()),
 		Attributes:    string(attrsJSON),
 		ResourceAttrs: resJSON,
 	}

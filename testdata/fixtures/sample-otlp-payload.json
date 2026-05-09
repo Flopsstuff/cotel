@@ -18,6 +18,7 @@
               "name": "claude_code.session",
               "startTimeUnixNano": "1746789000000000000",
               "endTimeUnixNano":   "1746789300000000000",
+              "status": {"code": 1},
               "attributes": [
                 {"key": "session.id",      "value": {"stringValue": "sess_abc123"}},
                 {"key": "model",           "value": {"stringValue": "claude-sonnet-4-6"}},
@@ -35,6 +36,20 @@
               "name": "claude_code.tool_use",
               "startTimeUnixNano": "1746789060000000000",
               "endTimeUnixNano":   "1746789065000000000",
+              "status": {"code": 1},
+              "attributes": [
+                {"key": "session.id", "value": {"stringValue": "sess_abc123"}},
+                {"key": "tool.name",  "value": {"stringValue": "Bash"}}
+              ]
+            },
+            {
+              "traceId": "aabbccdd00112233aabbccdd00112233",
+              "spanId": "ccdd001122334455",
+              "parentSpanId": "aabbccdd00112233",
+              "name": "claude_code.tool_use",
+              "startTimeUnixNano": "1746789070000000000",
+              "endTimeUnixNano":   "1746789072000000000",
+              "status": {"code": 2, "message": "command exited with code 1"},
               "attributes": [
                 {"key": "session.id", "value": {"stringValue": "sess_abc123"}},
                 {"key": "tool.name",  "value": {"stringValue": "Bash"}}
