@@ -7,3 +7,6 @@
 !.env.example
 frontend/node_modules/
 internal/dashboard/static/assets/
+docs/node_modules/
+docs/.vitepress/dist/
+docs/.vitepress/cache/
