@@ -61,6 +61,8 @@ export default function SessionDetail() {
         <KpiCard label="Total Cost" value={`$${data.cost_usd.toFixed(4)}`} />
         <KpiCard label="Input Tokens" value={data.input_tokens.toLocaleString()} />
         <KpiCard label="Output Tokens" value={data.output_tokens.toLocaleString()} />
+        <KpiCard label="Cache Read" value={data.cache_read_tokens.toLocaleString()} />
+        <KpiCard label="Cache Write" value={data.cache_write_tokens.toLocaleString()} />
         <KpiCard label="Errors" value={String(errorCount)} />
       </div>
 
