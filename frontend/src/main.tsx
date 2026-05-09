@@ -11,6 +11,7 @@ import Costs from './pages/Costs'
 import Tools from './pages/Tools'
 import Models from './pages/Models'
 import History from './pages/History'
+import Setup from './pages/Setup'
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <BrowserRouter>
@@ -23,6 +24,7 @@ createRoot(document.getElementById('root')!).render(
           <Route path="/tools" element={<Tools />} />
           <Route path="/models" element={<Models />} />
           <Route path="/history" element={<History />} />
+          <Route path="/setup" element={<Setup />} />
         </Routes>
       </Layout>
     </BrowserRouter>
