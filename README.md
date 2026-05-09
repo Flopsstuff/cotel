@@ -10,8 +10,10 @@ docker run -d \
   -p 4318:4318 \
   -p 8080:8080 \
   -v cotel-data:/data \
-  ghcr.io/flopsstuff/cotel:latest
+  ghcr.io/flopsstuff/cotel:main
 ```
+
+> **Available tags:** `:main` (latest main branch), `:0.x` (semver releases), `:sha-…` (per-commit). There is no `:latest` tag.
 
 Open **http://localhost:8080** for the dashboard.
 
@@ -22,8 +24,10 @@ Add to your `~/.claude/settings.json`:
 ```json
 {
   "env": {
-    "OTEL_EXPORTER_OTLP_ENDPOINT": "http://localhost:4318",
-    "OTEL_EXPORTER_OTLP_PROTOCOL": "http/json"
+    "CLAUDE_CODE_ENABLE_TELEMETRY": "1",
+    "CLAUDE_CODE_ENHANCED_TELEMETRY_BETA": "1",
+    "OTEL_TRACES_EXPORTER": "otlp",
+    "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "http://localhost:4318/v1/traces"
   }
 }
 ```
