@@ -1,0 +1,61 @@
+{
+  "resourceSpans": [
+    {
+      "resource": {
+        "attributes": [
+          {"key": "service.name",    "value": {"stringValue": "claude-code"}},
+          {"key": "service.version", "value": {"stringValue": "1.2.0"}},
+          {"key": "session.id",      "value": {"stringValue": "sess_beta_456"}}
+        ]
+      },
+      "scopeSpans": [
+        {
+          "scope": {"name": "claude.code", "version": "1.2.0"},
+          "spans": [
+            {
+              "traceId": "beef000011223344beef000011223344",
+              "spanId": "beef000011223344",
+              "parentSpanId": "",
+              "name": "claude_code.model_invocation",
+              "startTimeUnixNano": "1778327029000000000",
+              "endTimeUnixNano":   "1778327129000000000",
+              "status": {"code": 1},
+              "attributes": [
+                {"key": "model",           "value": {"stringValue": "claude-opus-4-7"}},
+                {"key": "input_tokens",    "value": {"intValue": "2048"}},
+                {"key": "output_tokens",   "value": {"intValue": "768"}},
+                {"key": "cache_read_tokens",  "value": {"intValue": "512"}},
+                {"key": "cache_write_tokens", "value": {"intValue": "256"}},
+                {"key": "cost_usd",        "value": {"doubleValue": 0.00921}}
+              ]
+            },
+            {
+              "traceId": "beef000011223344beef000011223344",
+              "spanId": "cafe000011223344",
+              "parentSpanId": "beef000011223344",
+              "name": "claude_code.tool_use",
+              "startTimeUnixNano": "1778327050000000000",
+              "endTimeUnixNano":   "1778327055000000000",
+              "status": {"code": 1},
+              "attributes": [
+                {"key": "tool.name", "value": {"stringValue": "Read"}}
+              ]
+            },
+            {
+              "traceId": "beef000011223344beef000011223344",
+              "spanId": "dead000011223344",
+              "parentSpanId": "beef000011223344",
+              "name": "claude_code.tool_use",
+              "startTimeUnixNano": "1778327060000000000",
+              "endTimeUnixNano":   "1778327065000000000",
+              "status": {"code": 2, "message": "timeout"},
+              "attributes": [
+                {"key": "tool.name", "value": {"stringValue": "Bash"}}
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
