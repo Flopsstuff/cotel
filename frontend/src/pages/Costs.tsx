@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useCosts } from '../api'
-import { Card, DataTable, EmptyState, ErrorState, LoadingSkeleton, ChartSkeleton, DateRangePicker } from '../components'
+import { Card, DataTable, EmptyState, ErrorState, LoadingSkeleton, ChartSkeleton, DateRangePicker, ChartTooltip } from '../components'
 import type { CostsResponse } from '../api'
 import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend,
@@ -51,7 +51,7 @@ export default function Costs() {
                 <LineChart data={data.daily} margin={{ top: 4, right: 8, bottom: 4, left: 0 }}>
                   <XAxis dataKey="date" tick={{ fontSize: 11, fill: 'var(--color-text-3)' }} tickFormatter={(d) => d.slice(5)} />
                   <YAxis tick={{ fontSize: 11, fill: 'var(--color-text-3)' }} tickFormatter={(v) => `$${v.toFixed(2)}`} width={52} />
-                  <Tooltip formatter={(v: number) => [`$${v.toFixed(4)}`, 'Cost']} />
+                  <Tooltip content={<ChartTooltip formatter={(v) => [`$${v.toFixed(4)}`, 'Cost']} />} />
                   <Line type="monotone" dataKey="cost_usd" stroke="var(--color-chart-1)" strokeWidth={2} dot={false} />
                 </LineChart>
               </ResponsiveContainer>
@@ -66,7 +66,7 @@ export default function Costs() {
                 <BarChart data={data.by_model} layout="vertical" margin={{ top: 4, right: 8, bottom: 4, left: 0 }}>
                   <XAxis type="number" tick={{ fontSize: 11, fill: 'var(--color-text-3)' }} tickFormatter={(v) => `$${v.toFixed(2)}`} />
                   <YAxis type="category" dataKey="model" tick={{ fontSize: 11, fill: 'var(--color-text-3)' }} width={160} />
-                  <Tooltip formatter={(v: number) => [`$${v.toFixed(4)}`, 'Cost']} />
+                  <Tooltip content={<ChartTooltip formatter={(v) => [`$${v.toFixed(4)}`, 'Cost']} />} />
                   <Bar dataKey="cost_usd" fill="var(--color-chart-1)" radius={[0, 2, 2, 0]} />
                 </BarChart>
               </ResponsiveContainer>
