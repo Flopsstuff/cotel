@@ -164,4 +164,23 @@ func TestBetaPayload(t *testing.T) {
 	if modelSpan.CostUSD == nil || *modelSpan.CostUSD < 0.009 {
 		t.Errorf("cost_usd: got %v, want ≥0.009", modelSpan.CostUSD)
 	}
+	// cache_creation_tokens is the real Claude Code beta key; must map to CacheWriteTokens.
+	if modelSpan.CacheWriteTokens == nil || *modelSpan.CacheWriteTokens != 256 {
+		t.Errorf("cache_write_tokens: got %v, want 256", modelSpan.CacheWriteTokens)
+	}
+
+	// tool_name is the real Claude Code beta key; tool spans must have ToolName set.
+	var toolSpan *storage.Span
+	for i := range store.spans {
+		if store.spans[i].Name == "claude_code.tool_use" && store.spans[i].StatusCode == 1 {
+			toolSpan = &store.spans[i]
+			break
+		}
+	}
+	if toolSpan == nil {
+		t.Fatal("no successful tool_use span found")
+	}
+	if toolSpan.ToolName != "Read" {
+		t.Errorf("tool_name: got %q, want %q", toolSpan.ToolName, "Read")
+	}
 }
