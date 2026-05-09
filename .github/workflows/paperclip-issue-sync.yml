@@ -1,0 +1,151 @@
+name: Paperclip Issue Sync
+
+on:
+  issues:
+    types: [opened, closed, reopened, labeled]
+
+# Routing table — add rows here when the table grows past ~5 entries,
+# at which point factoring into a separate config file is worth it.
+env:
+  PC_PROJECT_ID: de8c64a6-61e4-4d1c-bd95-0c1c8b9667f0
+  PC_GOAL_ID: defcc9c2-ba75-4af6-b675-f96fa4501237
+  AGENT_CODER: 709c0db6-7e36-42ae-89df-ef06d7f1acad   # bug
+  AGENT_UX: 73831453-1567-472f-a44f-f85a91354372       # design, ux
+  AGENT_CTO: 386b876d-eeba-4bf9-bc10-0dec7b09ee8a      # default / no match
+
+jobs:
+  sync:
+    name: Sync to Paperclip
+    runs-on: ubuntu-latest
+    env:
+      PC_API_URL: ${{ secrets.PAPERCLIP_API_URL }}
+      PC_API_TOKEN: ${{ secrets.PAPERCLIP_API_TOKEN }}
+      PC_COMPANY_ID: ${{ secrets.PAPERCLIP_COMPANY_ID }}
+      CF_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+      CF_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+
+    steps:
+      - name: Resolve assignee from labels
+        id: route
+        env:
+          LABELS_JSON: ${{ toJSON(github.event.issue.labels) }}
+        run: |
+          ASSIGNEE="$AGENT_CTO"
+          if echo "$LABELS_JSON" | jq -e '.[] | select(.name == "bug")' > /dev/null 2>&1; then
+            ASSIGNEE="$AGENT_CODER"
+          elif echo "$LABELS_JSON" | jq -e '.[] | select(.name == "design" or .name == "ux")' > /dev/null 2>&1; then
+            ASSIGNEE="$AGENT_UX"
+          fi
+          echo "assignee=$ASSIGNEE" >> "$GITHUB_OUTPUT"
+
+      # Handles opened, reopened, labeled — creates or updates the linked Paperclip issue.
+      - name: Open / reopen / re-label
+        if: github.event.action != 'closed'
+        env:
+          GH_TITLE: ${{ github.event.issue.title }}
+          GH_BODY: ${{ github.event.issue.body }}
+          GH_HTML_URL: ${{ github.event.issue.html_url }}
+          GH_REPO: ${{ github.repository }}
+          GH_NUMBER: ${{ github.event.issue.number }}
+          GH_ACTION: ${{ github.event.action }}
+          ASSIGNEE: ${{ steps.route.outputs.assignee }}
+        run: |
+          ORIGIN_ID="github-issue:${GH_REPO}#${GH_NUMBER}"
+          ENCODED_URL=$(python3 -c "import urllib.parse, os; print(urllib.parse.quote(os.environ['GH_HTML_URL']))")
+
+          # Search for an existing Paperclip issue by GitHub URL embedded in description.
+          # cf-access headers required — Cloudflare Access blocks unauthenticated traffic.
+          RESP=$(curl -sf \
+            -H "Authorization: Bearer $PC_API_TOKEN" \
+            -H "CF-Access-Client-Id: $CF_CLIENT_ID" \
+            -H "CF-Access-Client-Secret: $CF_CLIENT_SECRET" \
+            "$PC_API_URL/api/companies/$PC_COMPANY_ID/issues?q=$ENCODED_URL" \
+            || echo '{"issues":[]}')
+
+          PC_ID=$(echo "$RESP" | jq -r \
+            --arg oid "$ORIGIN_ID" \
+            --arg url "$GH_HTML_URL" \
+            '(.issues // []) | map(select(.originId == $oid or (.description // "" | contains($url)))) | first | .id // ""')
+
+          if [ -n "$PC_ID" ]; then
+            echo "Updating existing Paperclip issue $PC_ID (action=$GH_ACTION)"
+            STATUS_OBJ='{}'
+            [ "$GH_ACTION" = "reopened" ] && STATUS_OBJ='{"status":"todo"}'
+            PATCH=$(jq -n \
+              --arg a "$ASSIGNEE" \
+              --argjson extra "$STATUS_OBJ" \
+              '{assigneeAgentId: $a} + $extra')
+            curl -sf -X PATCH \
+              -H "Authorization: Bearer $PC_API_TOKEN" \
+              -H "CF-Access-Client-Id: $CF_CLIENT_ID" \
+              -H "CF-Access-Client-Secret: $CF_CLIENT_SECRET" \
+              -H "Content-Type: application/json" \
+              "$PC_API_URL/api/issues/$PC_ID" \
+              -d "$PATCH"
+          else
+            echo "Creating new Paperclip issue for $ORIGIN_ID"
+            DESCRIPTION=$(printf '%s\n\n---\nSource: %s' "${GH_BODY:-}" "$GH_HTML_URL")
+            PAYLOAD=$(jq -n \
+              --arg title "$GH_TITLE" \
+              --arg description "$DESCRIPTION" \
+              --arg assigneeAgentId "$ASSIGNEE" \
+              --arg originId "$ORIGIN_ID" \
+              --arg projectId "$PC_PROJECT_ID" \
+              --arg goalId "$PC_GOAL_ID" \
+              '{
+                title: $title,
+                description: $description,
+                projectId: $projectId,
+                goalId: $goalId,
+                priority: "medium",
+                assigneeAgentId: $assigneeAgentId,
+                originKind: "github",
+                originId: $originId
+              }')
+            curl -sf -X POST \
+              -H "Authorization: Bearer $PC_API_TOKEN" \
+              -H "CF-Access-Client-Id: $CF_CLIENT_ID" \
+              -H "CF-Access-Client-Secret: $CF_CLIENT_SECRET" \
+              -H "Content-Type: application/json" \
+              "$PC_API_URL/api/companies/$PC_COMPANY_ID/issues" \
+              -d "$PAYLOAD"
+          fi
+
+      - name: Close → mark Paperclip issue done
+        if: github.event.action == 'closed'
+        env:
+          GH_HTML_URL: ${{ github.event.issue.html_url }}
+          GH_REPO: ${{ github.repository }}
+          GH_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          ORIGIN_ID="github-issue:${GH_REPO}#${GH_NUMBER}"
+          ENCODED_URL=$(python3 -c "import urllib.parse, os; print(urllib.parse.quote(os.environ['GH_HTML_URL']))")
+
+          RESP=$(curl -sf \
+            -H "Authorization: Bearer $PC_API_TOKEN" \
+            -H "CF-Access-Client-Id: $CF_CLIENT_ID" \
+            -H "CF-Access-Client-Secret: $CF_CLIENT_SECRET" \
+            "$PC_API_URL/api/companies/$PC_COMPANY_ID/issues?q=$ENCODED_URL" \
+            || echo '{"issues":[]}')
+
+          PC_ID=$(echo "$RESP" | jq -r \
+            --arg oid "$ORIGIN_ID" \
+            --arg url "$GH_HTML_URL" \
+            '(.issues // []) | map(select(.originId == $oid or (.description // "" | contains($url)))) | first | .id // ""')
+
+          if [ -z "$PC_ID" ]; then
+            echo "No matching Paperclip issue found for $ORIGIN_ID — nothing to close."
+            exit 0
+          fi
+
+          echo "Marking Paperclip issue $PC_ID as done"
+          PATCH=$(jq -n \
+            --arg comment "Closed via GitHub: $GH_HTML_URL" \
+            '{status: "done", comment: $comment}')
+          curl -sf -X PATCH \
+            -H "Authorization: Bearer $PC_API_TOKEN" \
+            -H "CF-Access-Client-Id: $CF_CLIENT_ID" \
+            -H "CF-Access-Client-Secret: $CF_CLIENT_SECRET" \
+            -H "Content-Type: application/json" \
+            "$PC_API_URL/api/issues/$PC_ID" \
+            -d "$PATCH"

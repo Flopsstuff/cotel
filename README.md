@@ -89,6 +89,20 @@ go test ./...
 | `COTEL_RETENTION_AGGREGATE_DAYS` | `90` | Daily aggregate retention in days |
 | `COTEL_RETENTION_INTERVAL` | `6h` | Retention worker tick interval (Go duration) |
 
+## GitHub → Paperclip issue routing
+
+Opening a GitHub issue on this repo automatically creates a linked issue in the cotel Paperclip project. Closing it marks the Paperclip issue done.
+
+Labels determine the assignee:
+
+| Label | Assignee |
+|-------|----------|
+| `bug` | Coder |
+| `design`, `ux` | UXDesigner |
+| _(none / other)_ | CTO |
+
+Routing is defined in `.github/workflows/paperclip-issue-sync.yml`.
+
 ## Architecture
 
 ```
