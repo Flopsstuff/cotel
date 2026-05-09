@@ -143,6 +143,9 @@ type dailyCostRow struct {
 func (h *Handler) serveIndex(w http.ResponseWriter, r *http.Request) {
 	since := time.Now().AddDate(0, 0, -30)
 
+	// Sessions are defined by distinct session_id across all spans.
+	// Claude Code beta does not emit a wrapping claude_code.session root span,
+	// so we group by session_id rather than filtering on span name.
 	var sum summaryRow
 	_ = h.db.QueryRow(`
 		SELECT
@@ -151,7 +154,7 @@ func (h *Handler) serveIndex(w http.ResponseWriter, r *http.Request) {
 			COALESCE(SUM(input_tokens), 0),
 			COALESCE(SUM(output_tokens), 0)
 		FROM spans
-		WHERE start_time >= ? AND name = 'claude_code.session'
+		WHERE start_time >= ? AND session_id IS NOT NULL
 	`, since).Scan(&sum.Sessions, &sum.TotalCost, &sum.InTokens, &sum.OutTokens)
 
 	rows, _ := h.db.Query(`
@@ -189,13 +192,13 @@ func (h *Handler) serveIndex(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Daily cost for bar chart: last 30 days, one row per day.
+	// Daily cost bar chart: all spans with cost data (no span-name filter).
 	drows, _ := h.db.Query(`
 		SELECT
 			strftime(CAST(start_time AS TIMESTAMP), '%Y-%m-%d') AS day,
 			COALESCE(SUM(cost_usd), 0)
 		FROM spans
-		WHERE start_time >= ? AND name = 'claude_code.session'
+		WHERE start_time >= ? AND cost_usd IS NOT NULL
 		GROUP BY day
 		ORDER BY day ASC
 	`, since)
@@ -243,39 +246,32 @@ func (h *Handler) serveSessions(w http.ResponseWriter, r *http.Request) {
 	}
 	offset := (page - 1) * pageSize
 
+	// Count distinct sessions, not individual spans.
 	var total int64
-	_ = h.db.QueryRow(`SELECT COUNT(*) FROM spans WHERE name = 'claude_code.session'`).Scan(&total)
+	_ = h.db.QueryRow(`SELECT COUNT(DISTINCT session_id) FROM spans WHERE session_id IS NOT NULL`).Scan(&total)
 
 	totalPages := int(math.Ceil(float64(total) / pageSize))
 	if totalPages == 0 {
 		totalPages = 1
 	}
 
+	// One row per session, aggregated across all spans for that session.
 	rows, _ := h.db.Query(`
 		SELECT
-			s.session_id,
-			COALESCE(s.model, ''),
-			s.start_time,
-			s.duration_ms,
-			COALESCE(s.cost_usd, 0),
-			COALESCE(s.input_tokens, 0),
-			COALESCE(s.output_tokens, 0),
-			COALESCE(t.tool_calls, 0),
-			COALESCE(e.errors, 0) > 0 AS has_error,
-			s.end_time >= NOW() - INTERVAL '10 minutes' AS is_active
-		FROM spans s
-		LEFT JOIN (
-			SELECT session_id, COUNT(*) AS tool_calls
-			FROM spans WHERE name = 'claude_code.tool_use'
-			GROUP BY session_id
-		) t ON t.session_id = s.session_id
-		LEFT JOIN (
-			SELECT session_id, SUM(CASE WHEN status_code = 2 THEN 1 ELSE 0 END) AS errors
-			FROM spans
-			GROUP BY session_id
-		) e ON e.session_id = s.session_id
-		WHERE s.name = 'claude_code.session'
-		ORDER BY s.start_time DESC
+			session_id,
+			COALESCE(MAX(model), ''),
+			MIN(start_time),
+			epoch_ms(MAX(end_time)) - epoch_ms(MIN(start_time)),
+			COALESCE(SUM(cost_usd), 0),
+			COALESCE(SUM(input_tokens), 0),
+			COALESCE(SUM(output_tokens), 0),
+			COUNT(*) FILTER (WHERE tool_name IS NOT NULL),
+			MAX(CASE WHEN status_code = 2 THEN 1 ELSE 0 END) > 0,
+			MAX(end_time) >= NOW() - INTERVAL '10 minutes'
+		FROM spans
+		WHERE session_id IS NOT NULL
+		GROUP BY session_id
+		ORDER BY MIN(start_time) DESC
 		LIMIT ? OFFSET ?
 	`, pageSize, offset)
 
@@ -430,7 +426,7 @@ func (h *Handler) serveCosts(w http.ResponseWriter, r *http.Request) {
 			strftime(CAST(start_time AS TIMESTAMP), '%Y-%m-%d') AS day,
 			COALESCE(SUM(cost_usd), 0)
 		FROM spans
-		WHERE start_time >= ? AND name = 'claude_code.session'
+		WHERE start_time >= ? AND cost_usd IS NOT NULL
 		GROUP BY day
 		ORDER BY day ASC
 	`, since)

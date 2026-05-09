@@ -114,3 +114,54 @@ func TestGoldenPayload(t *testing.T) {
 		t.Errorf("response not valid JSON: %v", err)
 	}
 }
+
+// TestBetaPayload verifies the real Claude Code beta telemetry format:
+// no claude_code.session root span; session.id lives in resource attributes.
+func TestBetaPayload(t *testing.T) {
+	payload, err := os.ReadFile("../../testdata/fixtures/sample-otlp-payload-beta.json")
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+
+	store := &memStore{}
+	h := ingest.New(store)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/traces", bytes.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	h.Flush()
+
+	if len(store.spans) < 3 {
+		t.Fatalf("expected ≥3 spans, got %d", len(store.spans))
+	}
+
+	// All spans must inherit session_id from resource attributes.
+	for i, s := range store.spans {
+		if s.SessionID != "sess_beta_456" {
+			t.Errorf("span[%d] %q: session_id got %q, want %q", i, s.Name, s.SessionID, "sess_beta_456")
+		}
+	}
+
+	// Model invocation span must have cost and token data.
+	var modelSpan *storage.Span
+	for i := range store.spans {
+		if store.spans[i].Name == "claude_code.model_invocation" {
+			modelSpan = &store.spans[i]
+			break
+		}
+	}
+	if modelSpan == nil {
+		t.Fatal("model_invocation span not found")
+	}
+	if modelSpan.Model != "claude-opus-4-7" {
+		t.Errorf("model: got %q, want claude-opus-4-7", modelSpan.Model)
+	}
+	if modelSpan.CostUSD == nil || *modelSpan.CostUSD < 0.009 {
+		t.Errorf("cost_usd: got %v, want ≥0.009", modelSpan.CostUSD)
+	}
+}

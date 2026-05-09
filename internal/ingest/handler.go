@@ -84,11 +84,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	for _, rs := range req.ResourceSpans {
 		svcName := attrStr(rs.GetResource().GetAttributes(), "service.name")
-		resJSON, _ := json.Marshal(attrsToMap(rs.GetResource().GetAttributes()))
+		resAttrs := attrsToMap(rs.GetResource().GetAttributes())
+		resJSON, _ := json.Marshal(resAttrs)
 
 		for _, ss := range rs.ScopeSpans {
 			for _, sp := range ss.Spans {
-				h.queue <- decodeSpan(sp, svcName, string(resJSON))
+				h.queue <- decodeSpan(sp, svcName, resAttrs, string(resJSON))
 			}
 		}
 	}
@@ -98,7 +99,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte(`{}`))
 }
 
-func decodeSpan(sp *tracepb.Span, svcName, resJSON string) storage.Span {
+// sessionIDKeys are the attribute key names Claude Code may use for the session
+// identifier, checked in order of preference.
+var sessionIDKeys = []string{"session.id", "claude.session.id", "cc.session.id"}
+
+func decodeSpan(sp *tracepb.Span, svcName string, resAttrs map[string]any, resJSON string) storage.Span {
 	attrs := attrsToMap(sp.Attributes)
 	attrsJSON, _ := json.Marshal(attrs)
 
@@ -115,9 +120,23 @@ func decodeSpan(sp *tracepb.Span, svcName, resJSON string) storage.Span {
 		ResourceAttrs: resJSON,
 	}
 
-	if v, ok := attrs["session.id"]; ok {
-		s.SessionID = fmt.Sprintf("%v", v)
+	// session.id: check span attributes first, fall back to resource attributes
+	// (OpenTelemetry convention places process/session identity on the resource).
+	for _, key := range sessionIDKeys {
+		if v, ok := attrs[key]; ok {
+			s.SessionID = fmt.Sprintf("%v", v)
+			break
+		}
 	}
+	if s.SessionID == "" {
+		for _, key := range sessionIDKeys {
+			if v, ok := resAttrs[key]; ok {
+				s.SessionID = fmt.Sprintf("%v", v)
+				break
+			}
+		}
+	}
+
 	if v, ok := attrs["model"]; ok {
 		s.Model = fmt.Sprintf("%v", v)
 	}
