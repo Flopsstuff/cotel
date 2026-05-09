@@ -49,6 +49,11 @@ CREATE TABLE IF NOT EXISTS spans (
 -- Migration v1 → v2: add status_code if upgrading an existing database.
 ALTER TABLE spans ADD COLUMN IF NOT EXISTS status_code TINYINT DEFAULT 0;
 
+-- Indexes for dashboard hot paths (DuckDB ART indexes).
+CREATE INDEX IF NOT EXISTS idx_spans_session_id  ON spans(session_id);
+CREATE INDEX IF NOT EXISTS idx_spans_start_time  ON spans(start_time);
+CREATE INDEX IF NOT EXISTS idx_spans_name        ON spans(name);
+
 -- Daily aggregates for long-term retention (schema version 1)
 CREATE TABLE IF NOT EXISTS daily_usage (
     day             DATE NOT NULL,

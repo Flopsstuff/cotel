@@ -59,12 +59,11 @@ jobs:
       - name: Wait for async DB write
         run: sleep 2
 
-      - name: Verify span count in DB
+      - name: Verify span count via healthz
         run: |
-          COUNT=$(docker compose exec -T cotel \
-            /usr/local/bin/cotel --db-query "SELECT COUNT(*) FROM spans")
-          echo "Span count: $COUNT"
-          [ "$COUNT" = "3" ]
+          RESP=$(curl -sf http://localhost:8080/healthz)
+          echo "healthz: $RESP"
+          echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); assert d['spans'] == 3, f'expected 3 spans, got {d[\"spans\"]}'"
 
       - name: Dashboard health check
         run: curl -sf http://localhost:8080/

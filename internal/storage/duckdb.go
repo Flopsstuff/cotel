@@ -30,11 +30,11 @@ func (r *ReadDB) Query(query string, args ...any) (*sql.Rows, error) {
 	return r.db.Query(query, args...)
 }
 
-// ReadOnly opens a separate read-only connection to the same DuckDB file.
+// ReadOnly returns a dashboard-safe view sharing the writer's pool.
+// A separate read-only connection to the same file misses WAL-buffered writes;
+// sharing rw ensures dashboard queries always see committed data.
 func (d *DB) ReadOnly() *ReadDB {
-	ro, _ := sql.Open("duckdb", d.path+"?access_mode=read_only")
-	ro.SetMaxOpenConns(4)
-	return &ReadDB{db: ro}
+	return &ReadDB{db: d.rw}
 }
 
 // OpenReadOnly opens a read-only connection to a DuckDB file. Safe to call
@@ -51,7 +51,11 @@ func OpenReadOnly(path string) (*ReadDB, error) {
 func (r *ReadDB) Close() error { return r.db.Close() }
 
 func Open(path string) (*DB, error) {
-	rw, err := sql.Open("duckdb", path)
+	dsn := path
+	if path == ":memory:" {
+		dsn = "" // go-duckdb uses "" for in-memory, not ":memory:"
+	}
+	rw, err := sql.Open("duckdb", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open duckdb %q: %w", path, err)
 	}
@@ -102,7 +106,19 @@ INSERT OR IGNORE INTO spans (
   attributes, resource_attrs
 ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
 
+// Exec runs an arbitrary SQL statement on the write connection. Used by tests
+// for bulk data setup (e.g. INSERT … SELECT FROM range).
+func (db *DB) Exec(query string, args ...any) (sql.Result, error) {
+	return db.rw.Exec(query, args...)
+}
+
 func (db *DB) InsertSpan(s Span) error {
+	if s.Attributes == "" {
+		s.Attributes = "{}"
+	}
+	if s.ResourceAttrs == "" {
+		s.ResourceAttrs = "{}"
+	}
 	_, err := db.rw.Exec(insertSpan,
 		s.TraceID, s.SpanID, s.ParentSpanID, s.Name,
 		s.StartTime, s.EndTime, s.ServiceName,

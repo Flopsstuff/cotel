@@ -1,81 +1,136 @@
+{{define "index.html"}}
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>cotel — Claude Code Telemetry</title>
-  <style>
-    body { font-family: system-ui, sans-serif; margin: 2rem; background: #f8f9fa; color: #212529; }
-    h1 { font-size: 1.5rem; margin-bottom: 0.25rem; }
-    .subtitle { color: #6c757d; font-size: 0.9rem; margin-bottom: 2rem; }
-    .cards { display: flex; gap: 1rem; flex-wrap: wrap; margin-bottom: 2rem; }
-    .card { background: white; border-radius: 8px; padding: 1.25rem 1.5rem; box-shadow: 0 1px 3px rgba(0,0,0,.1); min-width: 160px; }
-    .card h3 { margin: 0 0 .25rem; font-size: 0.8rem; color: #6c757d; text-transform: uppercase; letter-spacing: .05em; }
-    .card .value { font-size: 2rem; font-weight: 600; }
-    table { width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
-    th, td { padding: .6rem 1rem; text-align: left; border-bottom: 1px solid #dee2e6; }
-    th { background: #f1f3f5; font-size: 0.8rem; text-transform: uppercase; color: #495057; }
-    tr:last-child td { border-bottom: none; }
-    section { margin-bottom: 2rem; }
-    section h2 { font-size: 1rem; margin-bottom: .75rem; }
-    .empty { color: #adb5bd; font-style: italic; padding: 1rem; }
-  </style>
+  {{template "head" .}}
+  <title>cotel — Overview</title>
 </head>
 <body>
-  <h1>cotel</h1>
-  <p class="subtitle">Claude Code telemetry · last 30 days (since {{.Since}})</p>
+  {{template "nav" .}}
+  <main class="main">
+    <h1 class="page-title">Overview</h1>
 
-  <div class="cards">
-    <div class="card">
-      <h3>Sessions</h3>
-      <div class="value">{{.Summary.Sessions}}</div>
+    <div class="cards">
+      <div class="card">
+        <div class="card-label">Sessions</div>
+        <div class="card-value">{{.Summary.Sessions}}</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Total cost</div>
+        <div class="card-value">{{fmtCost .Summary.TotalCost}}</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Input tokens</div>
+        <div class="card-value">{{fmtTokens .Summary.InTokens}}</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Output tokens</div>
+        <div class="card-value">{{fmtTokens .Summary.OutTokens}}</div>
+      </div>
     </div>
-    <div class="card">
-      <h3>Total Cost</h3>
-      <div class="value">${{printf "%.4f" .Summary.TotalCost}}</div>
-    </div>
-    <div class="card">
-      <h3>Input tokens</h3>
-      <div class="value">{{.Summary.InTokens}}</div>
-    </div>
-    <div class="card">
-      <h3>Output tokens</h3>
-      <div class="value">{{.Summary.OutTokens}}</div>
-    </div>
-  </div>
 
-  <section>
-    <h2>By model</h2>
-    {{if .Models}}
-    <table>
-      <thead><tr><th>Model</th><th>Spans</th><th>Input tokens</th><th>Output tokens</th><th>Cost (USD)</th></tr></thead>
-      <tbody>
-        {{range .Models}}
-        <tr>
-          <td>{{.Model}}</td>
-          <td>{{.Spans}}</td>
-          <td>{{.InTokens}}</td>
-          <td>{{.OutTokens}}</td>
-          <td>${{printf "%.4f" .CostUSD}}</td>
-        </tr>
-        {{end}}
-      </tbody>
-    </table>
-    {{else}}<p class="empty">No data yet.</p>{{end}}
-  </section>
+    <div class="section">
+      <div class="section-title">Daily cost — last 30 days (since {{.Since}})</div>
+      {{if .DailyCosts}}
+      <div class="chart-wrap">
+        <canvas id="costChart" class="chart-canvas"></canvas>
+      </div>
+      {{else}}
+      <div class="empty">No data yet · Point Claude Code at this endpoint to start ingesting telemetry.</div>
+      {{end}}
+    </div>
 
-  <section>
-    <h2>Tool usage</h2>
-    {{if .Tools}}
-    <table>
-      <thead><tr><th>Tool</th><th>Calls</th></tr></thead>
-      <tbody>
-        {{range .Tools}}
-        <tr><td>{{.Tool}}</td><td>{{.Calls}}</td></tr>
-        {{end}}
-      </tbody>
-    </table>
-    {{else}}<p class="empty">No data yet.</p>{{end}}
-  </section>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px">
+      <div class="section">
+        <div class="section-title">Top tools</div>
+        {{if .Tools}}
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Tool</th><th>Calls</th></tr></thead>
+            <tbody>
+              {{range .Tools}}
+              <tr><td>{{.Tool}}</td><td>{{.Calls}}</td></tr>
+              {{end}}
+            </tbody>
+          </table>
+        </div>
+        {{else}}<div class="empty">No tool data yet.</div>{{end}}
+      </div>
+
+      <div class="section">
+        <div class="section-title">By model</div>
+        {{if .Models}}
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Model</th><th>Spans</th><th>Cost</th></tr></thead>
+            <tbody>
+              {{range .Models}}
+              <tr>
+                <td>{{.Model}}</td>
+                <td>{{.Spans}}</td>
+                <td>{{fmtCost .CostUSD}}</td>
+              </tr>
+              {{end}}
+            </tbody>
+          </table>
+        </div>
+        {{else}}<div class="empty">No model data yet.</div>{{end}}
+      </div>
+    </div>
+  </main>
+
+  {{if .DailyCosts}}
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script>
+    (function() {
+      var rows = {{json .DailyCosts}};
+      var labels = rows.map(function(r) { return r.Day; });
+      var values = rows.map(function(r) { return r.CostUSD; });
+      var isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+      var gridColor = isDark ? '#334155' : '#e2e8f0';
+      var textColor = isDark ? '#94a3b8' : '#475569';
+      new Chart(document.getElementById('costChart'), {
+        type: 'bar',
+        data: {
+          labels: labels,
+          datasets: [{
+            data: values,
+            backgroundColor: isDark ? '#3b82f6' : '#2563eb',
+            borderRadius: 3,
+            borderSkipped: false,
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              callbacks: {
+                label: function(ctx) { return '$' + ctx.parsed.y.toFixed(4); }
+              }
+            }
+          },
+          scales: {
+            x: {
+              ticks: { color: textColor, font: { size: 11 }, maxRotation: 45 },
+              grid: { color: gridColor }
+            },
+            y: {
+              beginAtZero: true,
+              ticks: {
+                color: textColor,
+                font: { size: 11 },
+                callback: function(v) { return '$' + v.toFixed(3); }
+              },
+              grid: { color: gridColor }
+            }
+          }
+        }
+      });
+    })();
+  </script>
+  {{end}}
 </body>
 </html>
+{{end}}
