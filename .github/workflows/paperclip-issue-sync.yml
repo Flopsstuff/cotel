@@ -4,6 +4,14 @@ on:
   issues:
     types: [opened, closed, reopened, labeled]
 
+# Serialize runs per issue to prevent duplicate PC issues when `opened` and
+# `labeled` fire simultaneously (they share the same issue number key).
+# cancel-in-progress: false ensures the second event still runs and PATCHes
+# the already-created issue rather than being silently dropped.
+concurrency:
+  group: paperclip-sync-issue-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
 # Routing table — add rows here when the table grows past ~5 entries,
 # at which point factoring into a separate config file is worth it.
 env:
@@ -85,6 +93,10 @@ jobs:
           else
             echo "Creating new Paperclip issue for $ORIGIN_ID"
             DESCRIPTION=$(printf '%s\n\n---\nSource: %s' "${GH_BODY:-}" "$GH_HTML_URL")
+            # originKind/originId are sent but may not be persisted server-side;
+            # dedup falls back to URL-in-description (already embedded above).
+            # status: "todo" ensures the issue appears in the agent's inbox
+            # (default is "backlog" which agents don't pick up automatically).
             PAYLOAD=$(jq -n \
               --arg title "$GH_TITLE" \
               --arg description "$DESCRIPTION" \
@@ -97,6 +109,7 @@ jobs:
                 description: $description,
                 projectId: $projectId,
                 goalId: $goalId,
+                status: "todo",
                 priority: "medium",
                 assigneeAgentId: $assigneeAgentId,
                 originKind: "github",
