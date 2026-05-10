@@ -33,7 +33,7 @@ export function DropZone({ onFile, accept = '.zip' }: DropZoneProps) {
       onClick={() => inputRef.current?.click()}
       role="button"
       tabIndex={0}
-      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') inputRef.current?.click() }}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); inputRef.current?.click() } }}
     >
       <input
         ref={inputRef}

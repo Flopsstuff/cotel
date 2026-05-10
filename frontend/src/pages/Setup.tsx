@@ -157,7 +157,10 @@ const PERIOD_OPTIONS = [
 function getYesterday(): string {
   const d = new Date()
   d.setDate(d.getDate() - 1)
-  return d.toISOString().slice(0, 10)
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
 }
 
 type ExportState =
@@ -173,8 +176,10 @@ function ExportTab() {
 
   const handleExport = async () => {
     setState({ kind: 'loading' })
+    const ac = new AbortController()
+    const timer = setTimeout(() => ac.abort(), 30_000)
     try {
-      const res = await fetch(`/api/v1/export?period=${period}&date=${date}`)
+      const res = await fetch(`/api/v1/export?period=${period}&date=${date}`, { signal: ac.signal })
       if (!res.ok) {
         const text = await res.text().catch(() => res.statusText)
         throw new Error(text || `${res.status} ${res.statusText}`)
@@ -190,7 +195,13 @@ function ExportTab() {
       URL.revokeObjectURL(a.href)
       setState({ kind: 'success', filename, sizeKb: Math.round(blob.size / 1024) })
     } catch (err) {
-      setState({ kind: 'error', message: err instanceof Error ? err.message : 'Export failed' })
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        setState({ kind: 'error', message: 'Request timed out' })
+      } else {
+        setState({ kind: 'error', message: err instanceof Error ? err.message : 'Export failed' })
+      }
+    } finally {
+      clearTimeout(timer)
     }
   }
 
@@ -282,10 +293,12 @@ function ImportTab() {
     if (state.kind !== 'ready') return
     const { file } = state
     setState({ kind: 'loading' })
+    const ac = new AbortController()
+    const timer = setTimeout(() => ac.abort(), 60_000)
     try {
       const formData = new FormData()
       formData.append('file', file)
-      const res = await fetch('/api/v1/import', { method: 'POST', body: formData })
+      const res = await fetch('/api/v1/import', { method: 'POST', body: formData, signal: ac.signal })
       if (!res.ok) {
         const text = await res.text().catch(() => res.statusText)
         throw new Error(text || `${res.status} ${res.statusText}`)
@@ -295,7 +308,13 @@ function ImportTab() {
       const daily = (data.daily_usage_imported ?? 0).toLocaleString()
       setState({ kind: 'success', message: `Imported ${spans} spans, ${daily} daily rows` })
     } catch (err) {
-      setState({ kind: 'error', message: err instanceof Error ? err.message : 'Import failed' })
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        setState({ kind: 'error', message: 'Request timed out' })
+      } else {
+        setState({ kind: 'error', message: err instanceof Error ? err.message : 'Import failed' })
+      }
+    } finally {
+      clearTimeout(timer)
     }
   }
 
@@ -390,9 +409,21 @@ export default function Setup() {
 
       <TabBar tabs={TABS} activeTab={activeTab} onChange={(id) => setActiveTab(id as TabId)} />
 
-      {activeTab === 'getting-started' && <GettingStartedTab />}
-      {activeTab === 'export' && <ExportTab />}
-      {activeTab === 'import' && <ImportTab />}
+      {activeTab === 'getting-started' && (
+        <div id="panel-getting-started" role="tabpanel" aria-labelledby="tab-getting-started">
+          <GettingStartedTab />
+        </div>
+      )}
+      {activeTab === 'export' && (
+        <div id="panel-export" role="tabpanel" aria-labelledby="tab-export">
+          <ExportTab />
+        </div>
+      )}
+      {activeTab === 'import' && (
+        <div id="panel-import" role="tabpanel" aria-labelledby="tab-import">
+          <ImportTab />
+        </div>
+      )}
     </div>
   )
 }

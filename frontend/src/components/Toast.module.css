@@ -12,10 +12,10 @@
   font-weight: 500;
   z-index: var(--z-toast);
   max-width: 360px;
-  animation: slideIn var(--duration-base) var(--easing-in-out);
+  animation: slide-in var(--duration-base) var(--easing-in-out);
 }
 
-@keyframes slideIn {
+@keyframes slide-in {
   from { transform: translateY(calc(100% + var(--space-6))); opacity: 0; }
   to   { transform: translateY(0); opacity: 1; }
 }

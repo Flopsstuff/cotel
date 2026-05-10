@@ -28,6 +28,8 @@ export function ManifestCard({ manifest, filename }: ManifestCardProps) {
   const dailyCount = manifest.tables.daily_usage?.row_count ?? 0
   const periodStart = manifest.period_start.slice(0, 10)
   const periodEnd = manifest.period_end.slice(0, 10)
+  const exportDate = new Date(manifest.export_at)
+  const exportDateStr = isNaN(exportDate.getTime()) ? '—' : exportDate.toLocaleString()
 
   return (
     <div className={styles.card}>
@@ -58,7 +60,7 @@ export function ManifestCard({ manifest, filename }: ManifestCardProps) {
         </div>
         <div className={styles.item}>
           <dt className={styles.key}>Exported at</dt>
-          <dd className={styles.val}>{new Date(manifest.export_at).toLocaleString()}</dd>
+          <dd className={styles.val}>{exportDateStr}</dd>
         </div>
       </dl>
     </div>
