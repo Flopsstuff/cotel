@@ -1,6 +1,6 @@
 import { ReactNode } from 'react'
-import { NavLink } from 'react-router-dom'
-import { Activity, DollarSign, Layers, Cpu, Wrench, CalendarDays, Settings, Users, SlidersHorizontal } from 'lucide-react'
+import { NavLink, Link } from 'react-router-dom'
+import { Activity, DollarSign, Layers, Cpu, Wrench, CalendarDays, Settings, Users, SlidersHorizontal, Github } from 'lucide-react'
 import { LogoMark } from './Logo'
 import styles from './Layout.module.css'
 
@@ -20,15 +20,20 @@ export function Layout({ children }: { children: ReactNode }) {
   return (
     <div className={styles.shell}>
       <nav className={styles.sidebar}>
-        <a
-          href="https://github.com/Flopsstuff/cotel"
-          target="_blank"
-          rel="noopener noreferrer"
-          className={styles.brand}
-        >
-          <LogoMark size={20} />
-          <span className={styles.brandName}>cotel</span>
-        </a>
+        <div className={styles.brand}>
+          <Link to="/" className={styles.brandLink}>
+            <LogoMark size={20} />
+            <span className={styles.brandName}>cotel</span>
+          </Link>
+          <a
+            href="https://github.com/Flopsstuff/cotel"
+            target="_blank"
+            rel="noopener noreferrer"
+            className={styles.githubLink}
+          >
+            <Github size={15} />
+          </a>
+        </div>
         {navItems.map(({ to, label, icon, end }) => (
           <NavLink
             key={to}
