@@ -1,4 +1,5 @@
 export { Layout } from './Layout'
+export { LogoMark } from './Logo'
 export { TabBar } from './TabBar'
 export type { TabItem } from './TabBar'
 export { SegmentedControl } from './SegmentedControl'
