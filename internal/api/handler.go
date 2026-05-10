@@ -20,12 +20,19 @@ type DB interface {
 
 // Handler is the root JSON API handler, mounted under /api/v1/.
 type Handler struct {
-	db DB
+	db      DB
+	tokenDB TokenStore
 }
 
 // New returns an API Handler backed by db.
 func New(db DB) *Handler {
 	return &Handler{db: db}
+}
+
+// SetTokenStore attaches a writable token store for the /tokens endpoints.
+func (h *Handler) SetTokenStore(ts TokenStore) *Handler {
+	h.tokenDB = ts
+	return h
 }
 
 // ServeHTTP routes all /api/v1/ requests.
@@ -61,6 +68,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleUsers(w, r)
 	case path == "/health" || path == "/health/":
 		h.handleHealth(w, r)
+	case path == "/tokens" || path == "/tokens/":
+		h.handleTokens(w, r)
+	case strings.HasPrefix(path, "/tokens/"):
+		rest := strings.TrimPrefix(path, "/tokens/")
+		if strings.HasSuffix(rest, "/rotate") {
+			h.handleTokenRotate(w, r, strings.TrimSuffix(rest, "/rotate"))
+		} else {
+			h.handleTokenByID(w, r, rest)
+		}
 	default:
 		jsonError(w, "not found", http.StatusNotFound)
 	}

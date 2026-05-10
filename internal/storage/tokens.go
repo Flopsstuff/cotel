@@ -50,6 +50,13 @@ func (db *DB) DeleteToken(id string) error {
 	return err
 }
 
+// CountTokens returns the total number of active tokens.
+func (db *DB) CountTokens() (int, error) {
+	var n int
+	err := db.rw.QueryRow(`SELECT COUNT(*) FROM api_tokens`).Scan(&n)
+	return n, err
+}
+
 // ValidateToken checks whether a SHA-256 hash matches a stored token.
 // Returns true on match and updates last_used_at.
 func (db *DB) ValidateToken(hash string) bool {
