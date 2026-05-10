@@ -1,6 +1,21 @@
 # cotel — Claude Code Telemetry
 
-One Docker container. OTLP ingest + interactive analytics dashboard.
+One Docker container. OTLP ingest on `:4318`, interactive analytics dashboard on `:8080`. No cloud dependencies, no sign-up.
+
+![cotel dashboard](docs/assets/dashboard-screenshot.png)
+
+## What you get
+
+- **Overview dashboard** — KPI cards for sessions, unique users, total cost, and token counts (30-day window), with per-user filter across all charts
+- **Sessions** — live table of every Claude Code session with model, duration, cost, and status (OK / ERROR)
+- **History** — time-series and daily-activity heatmaps for sessions and token spend over time
+- **Costs** — cumulative spend chart + breakdown table by model
+- **Tools** — call counts, average duration, and error rate per tool (`Bash`, `Read`, `Edit`, …)
+- **Models** — token and cost breakdown across all Claude model variants
+- **Users** — named users, API tokens, search, pagination, and click-through to per-user analytics
+- **Setup** — step-by-step onboarding guide with copy-paste `settings.json` snippets pre-filled with your ingest URL and token
+- **Export / Import** — download all data as a versioned ZIP/CSV archive; restore it on a fresh instance
+- **Cloudflare Tunnel** — publish cotel over HTTPS with a single env var; bearer-token auth for OTLP, Zero Trust for the dashboard
 
 ## Quick start
 
@@ -10,12 +25,12 @@ docker run -d \
   -p 4318:4318 \
   -p 8080:8080 \
   -v cotel-data:/data \
-  ghcr.io/flopsstuff/cotel:main
+  ghcr.io/flopsstuff/cotel:latest
 ```
 
-> **Available tags:** `:main` (latest main branch), `:0.x` (semver releases), `:sha-…` (per-commit). There is no `:latest` tag.
+> **Available tags:** `:latest` and `:0.2` (current release), `:0.x.y` (patch), `:main` (tip of main branch).
 
-Open **http://localhost:8080** for the dashboard.
+Open **http://localhost:8080** → **Setup** for the guided onboarding.
 
 ## Point Claude Code at cotel
 
@@ -87,14 +102,14 @@ docker run -d \
   --name cotel \
   -v cotel-data:/data \
   -e CLOUDFLARE_TUNNEL_TOKEN=<your-tunnel-token> \
-  ghcr.io/flopsstuff/cotel:main
+  ghcr.io/flopsstuff/cotel:latest
 ```
 
 No `-p` flags are needed — Cloudflare Tunnel uses outbound connections only.
 
 ### 5. Create an agent token
 
-Open your dashboard URL (e.g. `https://cotel.yourdomain.com`), go to **Tokens** (the key icon in the sidebar), and click **New token**. Give it a name (e.g. the agent's hostname or machine name) and copy the token — it is shown only once.
+Open your dashboard URL (e.g. `https://cotel.yourdomain.com`), go to **Users** in the sidebar, and click **Add user**. Give it a name (e.g. the agent's hostname or machine name) and copy the token.
 
 ### 6. Configure Claude Code
 
@@ -115,7 +130,7 @@ Add to your `~/.claude/settings.json`:
 
 Replace `cotel-ingest.yourdomain.com` with your actual OTLP hostname, and `cotel_<your-token>` with the token you copied above. Restart Claude Code to apply the changes.
 
-> **Token enforcement:** cotel runs in local (no-auth) mode until the first token is created. Once any token exists, every OTLP request must carry a valid `Authorization: Bearer cotel_...` header.
+> **Token enforcement:** cotel accepts anonymous spans until the first user with a token is created. Once any token exists, every OTLP request must carry a valid `Authorization: Bearer cotel_...` header — unless you explicitly re-enable Allow anonymous OTLP in Setup → Settings.
 
 ## Ports
 
