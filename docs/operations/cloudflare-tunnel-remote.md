@@ -41,24 +41,30 @@ Still in the tunnel configuration wizard (or later via **Edit tunnel**):
 
 Replace `example.com` with your domain. Cloudflare automatically creates CNAME records in your DNS.
 
-### 3. Set the token in your deployment
+### 3. Set the token and public ingest URL in your deployment
 
-In `docker-compose.yml`, uncomment and fill in `CLOUDFLARE_TUNNEL_TOKEN`:
+In `docker-compose.yml`, fill in `CLOUDFLARE_TUNNEL_TOKEN` and `COTEL_PUBLIC_INGEST_URL`:
 
 ```yaml
 environment:
   COTEL_DB_PATH: /data/cotel.duckdb
   COTEL_INGEST_ADDR: ":4318"
   COTEL_DASH_ADDR: ":8080"
-  CLOUDFLARE_TUNNEL_TOKEN: "eyJhIjoiM…"   # paste your token here
+  CLOUDFLARE_TUNNEL_TOKEN: "eyJhIjoiM…"          # paste your tunnel token
+  COTEL_PUBLIC_INGEST_URL: "https://ingest.example.com"  # public OTLP endpoint
 ```
 
-Or pass it at `docker run` time:
+`COTEL_PUBLIC_INGEST_URL` tells cotel what URL to show on the Setup page so
+operators copy the correct endpoint into their `~/.claude/settings.json`. Without
+it the Setup page defaults to `http://localhost:4318`.
+
+Or pass both at `docker run` time:
 
 ```sh
 docker run -d \
   -v cotel-data:/data \
   -e CLOUDFLARE_TUNNEL_TOKEN="eyJhIjoiM…" \
+  -e COTEL_PUBLIC_INGEST_URL="https://ingest.example.com" \
   ghcr.io/flopsstuff/cotel:latest
 ```
 

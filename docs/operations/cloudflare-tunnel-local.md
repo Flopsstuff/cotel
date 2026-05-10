@@ -83,15 +83,23 @@ Replace `<UUID>` with your actual tunnel UUID and `example.com` with your domain
 
 > **Note:** the `credentials-file` path is the in-container path (`/etc/cloudflared/`), not the host path. This is correct — the container reads the file from the mount point.
 
-### 5. Mount `~/.cloudflared` into the container
+### 5. Mount `~/.cloudflared` into the container and set the public ingest URL
 
-In `docker-compose.yml`, uncomment the volume line:
+In `docker-compose.yml`, uncomment the volume line and set `COTEL_PUBLIC_INGEST_URL`:
 
 ```yaml
 volumes:
   - cotel-data:/data
   - ~/.cloudflared:/etc/cloudflared:ro   # ← uncomment this line
+
+environment:
+  # ...
+  COTEL_PUBLIC_INGEST_URL: "https://ingest.example.com"  # public OTLP endpoint
 ```
+
+`COTEL_PUBLIC_INGEST_URL` tells cotel what URL to show on the Setup page so
+operators copy the correct endpoint into their `~/.claude/settings.json`. Without
+it the Setup page defaults to `http://localhost:4318`.
 
 Do **not** set `CLOUDFLARE_TUNNEL_TOKEN`. If both are present, token mode takes precedence and the config file is ignored.
 
