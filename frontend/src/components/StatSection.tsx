@@ -1,4 +1,4 @@
-import { useState, Children, type ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { ChevronDown, ChevronUp } from 'lucide-react'
 import styles from './StatSection.module.css'
@@ -12,7 +12,6 @@ interface StatSectionProps {
 
 export function StatSection({ title, children, viewAllHref, defaultExpanded = true }: StatSectionProps) {
   const [expanded, setExpanded] = useState(defaultExpanded)
-  const childArray = Children.toArray(children)
 
   return (
     <div className={styles.card}>
@@ -32,7 +31,7 @@ export function StatSection({ title, children, viewAllHref, defaultExpanded = tr
         )}
       </div>
       <div className={styles.content}>
-        {expanded ? childArray : childArray[0]}
+        {expanded && children}
       </div>
     </div>
   )
