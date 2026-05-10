@@ -85,7 +85,7 @@ See the [Cloudflare Tunnel guide](./cloudflare-tunnel-remote.md) for end-to-end 
 
 ## Allow-anonymous mode
 
-The **Allow anonymous OTLP** toggle lives in **Settings** (gear icon in the sidebar).
+The **Allow anonymous OTLP** toggle lives in **Setup** → **Settings** tab.
 
 | State | Behaviour |
 |---|---|
@@ -108,7 +108,7 @@ The **Allow anonymous OTLP** toggle lives in **Settings** (gear icon in the side
 
 1. Create at least one user (see above) so at least one valid token exists.
 2. Configure all senders with their token before flipping the toggle.
-3. Open **Settings** → disable **Allow anonymous OTLP**.
+3. Open **Setup** → **Settings** tab → disable **Allow anonymous OTLP**.
 4. Verify with `curl`:
 
 ```sh
@@ -128,7 +128,7 @@ curl -s -w "\n%{http_code}" \
 
 ### Re-enabling allow-anonymous
 
-Open **Settings** → enable **Allow anonymous OTLP**. Takes effect immediately with no restart.
+Open **Setup** → **Settings** tab → enable **Allow anonymous OTLP**. Takes effect immediately with no restart.
 
 ## What happens on 401
 

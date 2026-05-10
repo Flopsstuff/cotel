@@ -1,6 +1,6 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
-import { BrowserRouter, Route, Routes } from 'react-router-dom'
+import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import './styles/tokens.css'
 import './styles/global.css'
 import { Layout } from './components'
@@ -13,7 +13,6 @@ import Models from './pages/Models'
 import History from './pages/History'
 import Users from './pages/Users'
 import Setup from './pages/Setup'
-import AppSettings from './pages/Settings'
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <BrowserRouter>
@@ -27,7 +26,7 @@ createRoot(document.getElementById('root')!).render(
           <Route path="/tools" element={<Tools />} />
           <Route path="/models" element={<Models />} />
           <Route path="/history" element={<History />} />
-          <Route path="/settings" element={<AppSettings />} />
+          <Route path="/settings" element={<Navigate to="/setup" replace />} />
           <Route path="/setup" element={<Setup />} />
         </Routes>
       </Layout>

@@ -41,7 +41,7 @@ cotel ships with token-based authentication for OTLP ingest. Tokens are tied to 
 
 Open the dashboard → **Users** (people icon in the sidebar) → **Add user**. Give the user a name (e.g. the machine or agent name sending telemetry). Copy the token — it is always accessible from the Users table. Rotating or deleting a user revokes its token immediately.
 
-By default, cotel accepts spans without an `Authorization` header (allow-anonymous mode). To enforce strict auth: **Settings** → disable **Allow anonymous OTLP**. Requests without a valid token then receive `401 Unauthorized`.
+By default, cotel accepts spans without an `Authorization` header (allow-anonymous mode). To enforce strict auth: open **Setup** → **Settings** tab → disable **Allow anonymous OTLP**. Requests without a valid token then receive `401 Unauthorized`.
 
 See **[docs/operations/users-and-auth.md](docs/operations/users-and-auth.md)** for the full guide: multi-user setup, token rotation, and security considerations.
 
@@ -174,6 +174,7 @@ go test ./...
 | `COTEL_RETENTION_AGGREGATE_DAYS` | `90` | Daily aggregate retention in days |
 | `COTEL_RETENTION_INTERVAL` | `6h` | Retention worker tick interval (Go duration) |
 | `CLOUDFLARE_TUNNEL_TOKEN` | _(unset)_ | When set, starts `cloudflared tunnel run` before cotel; enables public HTTPS access via Cloudflare Tunnel |
+| `COTEL_PUBLIC_INGEST_URL` | _(unset)_ | Absolute `http`/`https` URL of the public OTLP ingest endpoint (e.g. `https://cotel-ingest.yourdomain.com`). When set, the Setup page substitutes this URL into the copy-paste Claude Code snippets. |
 
 ## GitHub → Paperclip issue routing
 
