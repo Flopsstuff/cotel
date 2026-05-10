@@ -23,6 +23,5 @@ export { ChartTooltip } from './ChartTooltip'
 
 // Alias for pages still importing LoadingState
 export { LoadingSkeleton as LoadingState } from './LoadingSkeleton'
-export { UserPicker } from './UserPicker'
 export { UserSearch } from './UserSearch'
 export { StatSection } from './StatSection'
