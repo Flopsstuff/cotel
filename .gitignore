@@ -5,6 +5,7 @@
 .env
 .env.*
 !.env.example
+.claude/settings.local.json
 frontend/node_modules/
 internal/dashboard/static/assets/
 docs/node_modules/

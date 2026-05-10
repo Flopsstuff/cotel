@@ -5,6 +5,12 @@
   margin-bottom: var(--space-6);
 }
 
+.headerRight {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
 .title {
   font-size: var(--text-xl);
   font-weight: 700;
@@ -47,4 +53,20 @@
 .viewAllLink {
   font-size: var(--text-sm);
   color: var(--color-accent);
+}
+
+.barContainer {
+  width: 100%;
+  max-width: 120px;
+  height: 6px;
+  background: var(--color-surface-2);
+  border-radius: var(--radius-full);
+  overflow: hidden;
+}
+
+.bar {
+  height: 100%;
+  background: var(--color-chart-1);
+  border-radius: var(--radius-full);
+  min-width: 2px;
 }
