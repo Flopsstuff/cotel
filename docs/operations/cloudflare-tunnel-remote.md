@@ -43,22 +43,26 @@ Replace `example.com` with your domain. Cloudflare automatically creates CNAME r
 
 ### 3. Set the token in your deployment
 
-In `docker-compose.yml`, uncomment and fill in `CLOUDFLARE_TUNNEL_TOKEN`:
+In `docker-compose.yml`, uncomment and fill in `CLOUDFLARE_TUNNEL_TOKEN` and `COTEL_PUBLIC_INGEST_URL`:
 
 ```yaml
 environment:
   COTEL_DB_PATH: /data/cotel.duckdb
   COTEL_INGEST_ADDR: ":4318"
   COTEL_DASH_ADDR: ":8080"
-  CLOUDFLARE_TUNNEL_TOKEN: "eyJhIjoiM…"   # paste your token here
+  CLOUDFLARE_TUNNEL_TOKEN: "eyJhIjoiM…"       # paste your token here
+  COTEL_PUBLIC_INGEST_URL: "https://ingest.example.com"  # public OTLP URL
 ```
 
-Or pass it at `docker run` time:
+`COTEL_PUBLIC_INGEST_URL` tells the Setup page what endpoint operators should paste into their Claude Code settings. When set, the snippet on the Setup → Getting Started tab substitutes `http://localhost:4318` with the public URL and shows an info banner so operators know the snippet is production-ready. Leave it unset for local dev.
+
+Or pass both at `docker run` time:
 
 ```sh
 docker run -d \
   -v cotel-data:/data \
   -e CLOUDFLARE_TUNNEL_TOKEN="eyJhIjoiM…" \
+  -e COTEL_PUBLIC_INGEST_URL="https://ingest.example.com" \
   ghcr.io/flopsstuff/cotel:latest
 ```
 

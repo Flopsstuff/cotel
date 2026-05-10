@@ -53,10 +53,12 @@ func getJSON(t *testing.T, h http.Handler, path string) (int, map[string]any) {
 
 func TestHealth(t *testing.T) {
 	cases := []struct {
-		name   string
-		seed   func(*testing.T, *storage.DB)
-		wantOK bool
-		wantSpans float64
+		name          string
+		seed          func(*testing.T, *storage.DB)
+		publicURL     string
+		wantOK        bool
+		wantSpans     float64
+		wantPublicURL string
 	}{
 		{
 			name:      "empty db",
@@ -76,12 +78,28 @@ func TestHealth(t *testing.T) {
 			wantOK:    true,
 			wantSpans: 1,
 		},
+		{
+			name:          "public ingest URL set",
+			seed:          func(*testing.T, *storage.DB) {},
+			publicURL:     "https://otlp.example.com",
+			wantOK:        true,
+			wantSpans:     0,
+			wantPublicURL: "https://otlp.example.com",
+		},
+		{
+			name:          "public ingest URL unset returns no field",
+			seed:          func(*testing.T, *storage.DB) {},
+			publicURL:     "",
+			wantOK:        true,
+			wantSpans:     0,
+			wantPublicURL: "",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			db, ro := openTestDB(t)
 			tc.seed(t, db)
-			h := api.New(ro)
+			h := api.New(ro).SetPublicIngestURL(tc.publicURL)
 			code, body := getJSON(t, h, "/api/v1/health")
 			if code != http.StatusOK {
 				t.Fatalf("want 200, got %d", code)
@@ -91,6 +109,10 @@ func TestHealth(t *testing.T) {
 			}
 			if body["span_count"] != tc.wantSpans {
 				t.Errorf("want span_count=%v, got %v", tc.wantSpans, body["span_count"])
+			}
+			got, _ := body["public_ingest_url"].(string)
+			if got != tc.wantPublicURL {
+				t.Errorf("want public_ingest_url=%q, got %q", tc.wantPublicURL, got)
 			}
 		})
 	}

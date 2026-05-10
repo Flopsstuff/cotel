@@ -20,9 +20,10 @@ type DB interface {
 
 // Handler is the root JSON API handler, mounted under /api/v1/.
 type Handler struct {
-	db        DB
-	tokenDB   TokenStore
-	userStore UserStore
+	db              DB
+	tokenDB         TokenStore
+	userStore       UserStore
+	publicIngestURL string
 }
 
 // New returns an API Handler backed by db.
@@ -39,6 +40,12 @@ func (h *Handler) SetTokenStore(ts TokenStore) *Handler {
 // SetUserStore attaches a writable store for the /users and /settings endpoints.
 func (h *Handler) SetUserStore(us UserStore) *Handler {
 	h.userStore = us
+	return h
+}
+
+// SetPublicIngestURL configures the public-facing OTLP ingest URL returned by /health.
+func (h *Handler) SetPublicIngestURL(u string) *Handler {
+	h.publicIngestURL = u
 	return h
 }
 
@@ -139,9 +146,10 @@ func userIDClause(r *http.Request) (clause string, arg string) {
 // ---- /api/v1/health ----
 
 type healthResponse struct {
-	Status     string `json:"status"`
-	SpanCount  int64  `json:"span_count"`
-	DBSizeBytes int64 `json:"db_size_bytes"`
+	Status          string `json:"status"`
+	SpanCount       int64  `json:"span_count"`
+	DBSizeBytes     int64  `json:"db_size_bytes"`
+	PublicIngestURL string `json:"public_ingest_url,omitempty"`
 }
 
 func (h *Handler) handleHealth(w http.ResponseWriter, _ *http.Request) {
@@ -153,9 +161,10 @@ func (h *Handler) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	_ = h.db.QueryRow("SELECT total_blocks * block_size FROM pragma_database_size()").Scan(&dbSize)
 
 	jsonOK(w, healthResponse{
-		Status:      "ok",
-		SpanCount:   spans,
-		DBSizeBytes: dbSize,
+		Status:          "ok",
+		SpanCount:       spans,
+		DBSizeBytes:     dbSize,
+		PublicIngestURL: h.publicIngestURL,
 	})
 }
 

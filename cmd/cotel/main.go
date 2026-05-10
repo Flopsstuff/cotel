@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Flopsstuff/cotel/internal/api"
@@ -55,7 +57,7 @@ func main() {
 	ingestMux.Handle("/v1/traces", auth.Middleware(db, ingest.New(db)))
 
 	ro := db.ReadOnly()
-	apiHandler := api.New(ro).SetUserStore(db)
+	apiHandler := api.New(ro).SetPublicIngestURL(parsePublicIngestURL(os.Getenv("COTEL_PUBLIC_INGEST_URL"))).SetUserStore(db)
 	dashMux := http.NewServeMux()
 	dashMux.Handle("/api/v1/export", auth.Middleware(db, export.NewHandler(db)))
 	dashMux.Handle("/api/v1/import", auth.Middleware(db, importpkg.NewHandler(db)))
@@ -103,4 +105,18 @@ func envDuration(key string, fallback time.Duration) time.Duration {
 		log.Printf("warning: invalid %s=%q, using default %s", key, v, fallback)
 	}
 	return fallback
+}
+
+// parsePublicIngestURL validates raw as an absolute http/https URL.
+// Returns the trimmed URL on success, or "" with a logged warning if invalid.
+func parsePublicIngestURL(raw string) string {
+	if raw == "" {
+		return ""
+	}
+	u, err := url.Parse(raw)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		log.Printf("warning: COTEL_PUBLIC_INGEST_URL=%q is not a valid URL, falling back to localhost", raw)
+		return ""
+	}
+	return strings.TrimRight(raw, "/")
 }
