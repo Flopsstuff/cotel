@@ -52,7 +52,7 @@ export default function Models() {
                 key: 'total_cost_usd',
                 label: 'Total Cost',
                 sortable: true,
-                render: (v) => `$${Number(v).toFixed(4)}`,
+                render: (v) => `$${Number(v).toFixed(2)}`,
               },
               {
                 key: '_costBar',

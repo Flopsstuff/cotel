@@ -58,7 +58,7 @@ export default function SessionDetail() {
       <div className={styles.kpiRow}>
         <KpiCard label="First Seen" value={new Date(data.first_seen).toLocaleString()} />
         <KpiCard label="Last Seen" value={new Date(data.last_seen).toLocaleString()} />
-        <KpiCard label="Total Cost" value={`$${data.cost_usd.toFixed(4)}`} />
+        <KpiCard label="Total Cost" value={`$${data.cost_usd.toFixed(2)}`} />
         <KpiCard label="Input Tokens" value={data.input_tokens.toLocaleString()} />
         <KpiCard label="Output Tokens" value={data.output_tokens.toLocaleString()} />
         <KpiCard label="Cache Read" value={data.cache_read_tokens.toLocaleString()} />

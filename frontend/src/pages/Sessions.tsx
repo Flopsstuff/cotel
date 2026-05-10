@@ -105,7 +105,7 @@ export default function Sessions() {
                 key: 'cost_usd',
                 label: 'Cost',
                 sortable: true,
-                render: (v) => `$${Number(v).toFixed(4)}`,
+                render: (v) => `$${Number(v).toFixed(2)}`,
               },
               {
                 key: 'input_tokens',

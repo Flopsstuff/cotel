@@ -58,7 +58,7 @@ function SessionsSection({ userId }: { userId?: string }) {
         {
           key: 'cost_usd',
           label: 'Cost',
-          render: (v) => `$${Number(v).toFixed(4)}`,
+          render: (v) => `$${Number(v).toFixed(2)}`,
         },
         {
           key: 'status',
@@ -137,7 +137,7 @@ function CostsSection({ userId }: { userId?: string }) {
             tickFormatter={(v) => `$${Number(v).toFixed(2)}`}
             width={52}
           />
-          <Tooltip content={<ChartTooltip formatter={(v) => [`$${Number(v).toFixed(4)}`, 'Cost']} />} />
+          <Tooltip content={<ChartTooltip formatter={(v) => [`$${Number(v).toFixed(2)}`, 'Cost']} />} />
           <Line type="monotone" dataKey="cost_usd" stroke="var(--color-chart-1)" strokeWidth={2} dot={false} />
         </LineChart>
       </ResponsiveContainer>
@@ -149,7 +149,7 @@ function CostsSection({ userId }: { userId?: string }) {
               key: 'cost_usd',
               label: 'Cost',
               sortable: true,
-              render: (v) => `$${Number(v).toFixed(4)}`,
+              render: (v) => `$${Number(v).toFixed(2)}`,
             },
           ]}
           rows={topModels}
@@ -216,7 +216,7 @@ function ModelsSection({ userId }: { userId?: string }) {
           key: 'total_cost_usd',
           label: 'Total Cost',
           sortable: true,
-          render: (v) => `$${Number(v).toFixed(4)}`,
+          render: (v) => `$${Number(v).toFixed(2)}`,
         },
         {
           key: '_costBar',
@@ -285,7 +285,7 @@ export default function Overview() {
         <div className={styles.kpiRow}>
           <KpiCard label="Sessions (30d)" value={String(data.sessions_count)} />
           <KpiCard label="Users" value={String(data.users_count)} />
-          <KpiCard label="Total Cost (30d)" value={`$${data.total_cost_usd.toFixed(4)}`} />
+          <KpiCard label="Total Cost (30d)" value={`$${data.total_cost_usd.toFixed(2)}`} />
           <KpiCard label="Input Tokens (30d)" value={fmtTokens(data.total_input_tokens)} />
           <KpiCard label="Output Tokens (30d)" value={fmtTokens(data.total_output_tokens)} />
         </div>
