@@ -27,6 +27,7 @@ function buildSettingsJson(ingestBase: string): string {
     "CLAUDE_CODE_ENABLE_TELEMETRY": "1",
     "CLAUDE_CODE_ENHANCED_TELEMETRY_BETA": "1",
     "OTEL_TRACES_EXPORTER": "otlp",
+    "OTEL_EXPORTER_OTLP_PROTOCOL": "http/json",
     "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "${ingestBase}/v1/traces"
   }
 }`
@@ -41,6 +42,7 @@ Edit the file ~/.claude/settings.json and merge in the following JSON — create
     "CLAUDE_CODE_ENABLE_TELEMETRY": "1",
     "CLAUDE_CODE_ENHANCED_TELEMETRY_BETA": "1",
     "OTEL_TRACES_EXPORTER": "otlp",
+    "OTEL_EXPORTER_OTLP_PROTOCOL": "http/json",
     "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "${ingestBase}/v1/traces"
   }
 }
