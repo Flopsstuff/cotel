@@ -1,0 +1,16 @@
+<svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background: brand blue rounded square -->
+  <rect width="32" height="32" rx="7" fill="#2563eb"/>
+  <!-- Three telemetry arcs radiating from bottom-left (origin 7,25) -->
+  <!-- Small arc r=5 -->
+  <path d="M 7,20 A 5,5 0 0 1 12,25"
+        stroke="white" stroke-width="2.2" fill="none" stroke-linecap="round"/>
+  <!-- Medium arc r=9 -->
+  <path d="M 7,16 A 9,9 0 0 1 16,25"
+        stroke="white" stroke-width="2.2" fill="none" stroke-linecap="round"/>
+  <!-- Large arc r=14 -->
+  <path d="M 7,11 A 14,14 0 0 1 21,25"
+        stroke="white" stroke-width="2.2" fill="none" stroke-linecap="round"/>
+  <!-- Origin dot -->
+  <circle cx="7" cy="25" r="2.4" fill="white"/>
+</svg>
