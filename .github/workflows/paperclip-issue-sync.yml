@@ -6,24 +6,21 @@ on:
 
 # Serialize runs per issue to prevent duplicate PC issues when `opened` and
 # `labeled` fire simultaneously (they share the same issue number key).
-# cancel-in-progress: false ensures the second event still runs and PATCHes
-# the already-created issue rather than being silently dropped.
+# cancel-in-progress: false ensures the second event still runs and finds
+# the already-created intake issue rather than creating a duplicate.
 concurrency:
   group: paperclip-sync-issue-${{ github.event.issue.number }}
   cancel-in-progress: false
 
-# Routing table — add rows here when the table grows past ~5 entries,
-# at which point factoring into a separate config file is worth it.
 env:
   PC_PROJECT_ID: de8c64a6-61e4-4d1c-bd95-0c1c8b9667f0
   PC_GOAL_ID: defcc9c2-ba75-4af6-b675-f96fa4501237
-  AGENT_CODER: 709c0db6-7e36-42ae-89df-ef06d7f1acad   # bug
-  AGENT_UX: 73831453-1567-472f-a44f-f85a91354372       # design, ux
-  AGENT_CTO: 386b876d-eeba-4bf9-bc10-0dec7b09ee8a      # default / no match
+  AGENT_LYRA: 61b890c9-50a6-4fea-9d90-dd21d143279a
 
 jobs:
   sync:
     name: Sync to Paperclip
+    if: vars.PAPERCLIP_INTAKE_ENABLED == 'true'
     runs-on: ubuntu-latest
     env:
       PC_API_URL: ${{ secrets.PAPERCLIP_API_URL }}
@@ -33,21 +30,9 @@ jobs:
       CF_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
 
     steps:
-      - name: Resolve assignee from labels
-        id: route
-        env:
-          LABELS_JSON: ${{ toJSON(github.event.issue.labels) }}
-        run: |
-          ASSIGNEE="$AGENT_CTO"
-          if echo "$LABELS_JSON" | jq -e '.[] | select(.name == "bug")' > /dev/null 2>&1; then
-            ASSIGNEE="$AGENT_CODER"
-          elif echo "$LABELS_JSON" | jq -e '.[] | select(.name == "design" or .name == "ux")' > /dev/null 2>&1; then
-            ASSIGNEE="$AGENT_UX"
-          fi
-          echo "assignee=$ASSIGNEE" >> "$GITHUB_OUTPUT"
-
-      # Handles opened, reopened, labeled — creates or updates the linked Paperclip issue.
-      - name: Open / reopen / re-label
+      # Handles opened, reopened, labeled — creates a single intake issue assigned to Lyra.
+      # Lyra safety-screens and triages the content before assigning to operational agents.
+      - name: Create intake issue for Lyra
         if: github.event.action != 'closed'
         env:
           GH_TITLE: ${{ github.event.issue.title }}
@@ -56,13 +41,12 @@ jobs:
           GH_REPO: ${{ github.repository }}
           GH_NUMBER: ${{ github.event.issue.number }}
           GH_ACTION: ${{ github.event.action }}
-          ASSIGNEE: ${{ steps.route.outputs.assignee }}
+          GH_LABELS: ${{ toJSON(github.event.issue.labels) }}
         run: |
           ORIGIN_ID="github-issue:${GH_REPO}#${GH_NUMBER}"
           ENCODED_URL=$(python3 -c "import urllib.parse, os; print(urllib.parse.quote(os.environ['GH_HTML_URL']))")
 
-          # Search for an existing Paperclip issue by GitHub URL embedded in description.
-          # cf-access headers required — Cloudflare Access blocks unauthenticated traffic.
+          # Check for an existing intake issue for this GitHub issue (dedup for labeled/reopened).
           RESP=$(curl -sf \
             -H "Authorization: Bearer $PC_API_TOKEN" \
             -H "CF-Access-Client-Id: $CF_CLIENT_ID" \
@@ -76,41 +60,38 @@ jobs:
             '(if type == "array" then . else (.issues // []) end) | map(select(.originId == $oid or (.description // "" | contains($url)))) | first | .id // ""')
 
           if [ -n "$PC_ID" ]; then
-            echo "Updating existing Paperclip issue $PC_ID (action=$GH_ACTION)"
-            STATUS_OBJ='{}'
-            [ "$GH_ACTION" = "reopened" ] && STATUS_OBJ='{"status":"todo"}'
-            PATCH=$(jq -n \
-              --arg a "$ASSIGNEE" \
-              --argjson extra "$STATUS_OBJ" \
-              '{assigneeAgentId: $a} + $extra')
-            curl -sf -X PATCH \
-              -H "Authorization: Bearer $PC_API_TOKEN" \
-              -H "CF-Access-Client-Id: $CF_CLIENT_ID" \
-              -H "CF-Access-Client-Secret: $CF_CLIENT_SECRET" \
-              -H "Content-Type: application/json" \
-              "$PC_API_URL/api/issues/$PC_ID" \
-              -d "$PATCH"
+            echo "Intake issue $PC_ID already exists for $ORIGIN_ID (action=$GH_ACTION)"
+            if [ "$GH_ACTION" = "reopened" ]; then
+              echo "Reopening intake issue $PC_ID"
+              curl -sf -X PATCH \
+                -H "Authorization: Bearer $PC_API_TOKEN" \
+                -H "CF-Access-Client-Id: $CF_CLIENT_ID" \
+                -H "CF-Access-Client-Secret: $CF_CLIENT_SECRET" \
+                -H "Content-Type: application/json" \
+                "$PC_API_URL/api/issues/$PC_ID" \
+                -d '{"status":"todo"}'
+            fi
           else
-            echo "Creating new Paperclip issue for $ORIGIN_ID"
-            DESCRIPTION=$(printf '%s\n\n---\nSource: %s' "${GH_BODY:-}" "$GH_HTML_URL")
-            # originKind/originId are sent but may not be persisted server-side;
-            # dedup falls back to URL-in-description (already embedded above).
-            # status: "todo" ensures the issue appears in the agent's inbox
-            # (default is "backlog" which agents don't pick up automatically).
+            echo "Creating intake issue for $ORIGIN_ID"
+            LABEL_NAMES=$(echo "$GH_LABELS" | jq -r '[.[].name] | join(", ")')
             PAYLOAD=$(jq -n \
               --arg title "$GH_TITLE" \
-              --arg description "$DESCRIPTION" \
-              --arg assigneeAgentId "$ASSIGNEE" \
+              --arg body "${GH_BODY:-}" \
+              --arg url "$GH_HTML_URL" \
+              --arg repo "$GH_REPO" \
+              --arg number "$GH_NUMBER" \
+              --arg labels "$LABEL_NAMES" \
+              --arg assigneeAgentId "$AGENT_LYRA" \
               --arg originId "$ORIGIN_ID" \
               --arg projectId "$PC_PROJECT_ID" \
               --arg goalId "$PC_GOAL_ID" \
               '{
-                title: $title,
-                description: $description,
+                title: ("[INTAKE] " + $title),
+                description: ("## GitHub Issue Intake\n\n**Title:** " + $title + "\n**Repository:** " + $repo + "\n**Issue number:** #" + $number + "\n**Labels:** " + $labels + "\n**URL:** " + $url + "\n\n---\n\n## Original body\n\n" + $body + "\n\n---\n\nSource: " + $url),
                 projectId: $projectId,
                 goalId: $goalId,
                 status: "todo",
-                priority: "medium",
+                priority: "high",
                 assigneeAgentId: $assigneeAgentId,
                 originKind: "github",
                 originId: $originId
