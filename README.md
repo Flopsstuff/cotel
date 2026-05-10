@@ -39,53 +39,15 @@ Restart Claude Code. Telemetry starts flowing immediately.
 
 cotel ships with token-based authentication for OTLP ingest. Tokens are tied to named users.
 
-### Creating users and tokens
+Open the dashboard → **Users** (people icon in the sidebar) → **Add user**. Give the user a name (e.g. the machine or agent name sending telemetry). Copy the token — it is always accessible from the Users table. Rotating or deleting a user revokes its token immediately.
 
-Open the dashboard → **Users** (people icon in the sidebar) → **Add user**. Give the user a name (e.g. the machine or agent name sending telemetry). The token is shown once on creation — copy and store it. Rotating or deleting a user revokes its token immediately.
+By default, cotel accepts spans without an `Authorization` header (allow-anonymous mode). To enforce strict auth: open **Setup** → **Settings** tab → disable **Allow anonymous OTLP**. Requests without a valid token then receive `401 Unauthorized`.
 
-Users appear as a dimension in the dashboard; spans ingested with a specific token are attributed to that user.
-
-### Allow-anonymous mode
-
-By default, cotel accepts spans without an `Authorization` header and attributes them to no user. Once you have created at least one token, you can enforce strict authentication:
-
-Open **Settings** (gear icon in the sidebar) → disable **Allow anonymous OTLP**.
-
-When disabled, every OTLP request must carry `Authorization: Bearer cotel_<token>`. Requests without a valid token receive a `401 Unauthorized`. Re-enable the toggle at any time to allow unauthenticated spans again.
-
-### Token format
-
-All tokens start with `cotel_` and are stored as SHA-256 hashes in the database — the plaintext is never persisted after creation.
-
-## Export and import
-
-cotel can export the full dataset as a ZIP archive and reimport it into a different instance. Use this for:
-- Migrating to a new host (backup + restore).
-- Copying a production dataset to a dev container for debugging.
-- Keeping an offline archive before the retention window erases raw spans.
-
-### From the dashboard
-
-Open the **Setup** page → scroll to the **Export / Import** panel. Click **Export** to download a ZIP archive containing `spans.csv`, `daily_usage.csv`, and a `manifest.json`. Drag a previously exported ZIP onto the **Import** target to restore it.
-
-### Via API
-
-```bash
-# Export
-curl -s http://localhost:8080/api/v1/export -o cotel-backup.zip
-
-# Import
-curl -s -X POST http://localhost:8080/api/v1/import \
-  -F "file=@cotel-backup.zip"
-```
-
-Both endpoints require a valid `Authorization: Bearer cotel_<token>` header when anonymous mode is disabled.
-
-Import is **idempotent**: re-importing the same archive inserts 0 rows.
+See **[docs/operations/users-and-auth.md](docs/operations/users-and-auth.md)** for the full guide: multi-user setup, token rotation, and security considerations.
 
 ## Publishing with Cloudflare
 
-Use [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) to expose cotel over HTTPS without opening inbound ports. The dashboard is protected by Cloudflare Zero Trust; OTLP ingest is protected by a bearer token you create in the cotel Tokens page.
+Use [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) to expose cotel over HTTPS without opening inbound ports. The dashboard is protected by Cloudflare Zero Trust; OTLP ingest is protected by a bearer token you create in the cotel Users page.
 
 ### Prerequisites
 
