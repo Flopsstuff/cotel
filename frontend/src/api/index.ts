@@ -107,8 +107,74 @@ export interface UsersResponse {
   items: UserRow[]
 }
 
+// New user management types
+export interface User {
+  id: string
+  name: string
+  token: string
+  created_at: string
+  cost: number
+  sessions: number
+  last_seen: string | null
+}
+
+export interface UsersListResponse {
+  users: User[]
+}
+
+export interface SettingsResponse {
+  allow_anonymous: boolean
+}
+
 export function useUsers() {
-  return useSWR<UsersResponse>('/api/v1/users', fetcher)
+  return useSWR<UsersListResponse>('/api/v1/users', fetcher)
+}
+
+export function useSettings() {
+  return useSWR<SettingsResponse>('/api/v1/settings', fetcher)
+}
+
+export async function createUser(name: string): Promise<User> {
+  const res = await fetch('/api/v1/users', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => res.statusText)
+    throw new Error(text || `${res.status}`)
+  }
+  return res.json()
+}
+
+export async function rotateUserToken(id: string): Promise<User> {
+  const res = await fetch(`/api/v1/users/${id}/rotate-token`, { method: 'POST' })
+  if (!res.ok) {
+    const text = await res.text().catch(() => res.statusText)
+    throw new Error(text || `${res.status}`)
+  }
+  return res.json()
+}
+
+export async function deleteUser(id: string): Promise<void> {
+  const res = await fetch(`/api/v1/users/${id}`, { method: 'DELETE' })
+  if (!res.ok && res.status !== 204) {
+    const text = await res.text().catch(() => res.statusText)
+    throw new Error(text || `${res.status}`)
+  }
+}
+
+export async function updateSettings(settings: Partial<SettingsResponse>): Promise<SettingsResponse> {
+  const res = await fetch('/api/v1/settings', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(settings),
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => res.statusText)
+    throw new Error(text || `${res.status}`)
+  }
+  return res.json()
 }
 
 export function useOverview(refreshInterval = 30_000) {

@@ -1,8 +1,6 @@
 package main
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"flag"
 	"fmt"
 	"log"
@@ -56,7 +54,7 @@ func main() {
 	ingestMux.Handle("/v1/traces", otlpAuth(db, ingest.New(db)))
 
 	ro := db.ReadOnly()
-	apiHandler := api.New(ro).SetTokenStore(db)
+	apiHandler := api.New(ro).SetUserStore(db)
 	dashMux := http.NewServeMux()
 	dashMux.Handle("/api/v1/export", export.NewHandler(db))
 	dashMux.Handle("/api/v1/", apiHandler)
@@ -79,21 +77,26 @@ func main() {
 }
 
 // otlpAuth guards the OTLP ingest endpoint.
-// When no tokens are stored (local mode) all requests pass through.
-// Once any token exists, requests must supply a valid Bearer cotel_... token.
+// A valid cotel_ bearer token identifies the user and injects their name into the request context.
+// Requests without a token are allowed when allow_anonymous=true (the default).
 func otlpAuth(db *storage.DB, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		bearer := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 		if strings.HasPrefix(bearer, "cotel_") {
-			h := sha256.Sum256([]byte(bearer))
-			if db.ValidateToken(hex.EncodeToString(h[:])) {
-				next.ServeHTTP(w, r)
+			user, err := db.GetUserByToken(bearer)
+			if err == nil && user != nil {
+				ctx := ingest.WithUserName(r.Context(), user.Name)
+				next.ServeHTTP(w, r.WithContext(ctx))
 				return
 			}
+			// token present but unknown
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"error":"unauthorized"}`))
+			return
 		}
-		// No valid token presented — pass through only in local mode (0 tokens configured).
-		n, _ := db.CountTokens()
-		if n == 0 {
+		// No token — pass through only when anonymous access is enabled.
+		if db.GetSettingBool("allow_anonymous", true) {
 			next.ServeHTTP(w, r)
 			return
 		}

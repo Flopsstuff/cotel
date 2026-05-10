@@ -7,11 +7,21 @@ services:
       - "8080:8080"   # Dashboard
     volumes:
       - cotel-data:/data
+      # Locally-managed Cloudflare tunnel (optional).
+      # Uncomment and adjust the host path if you prefer file-based tunnel config
+      # over the CLOUDFLARE_TUNNEL_TOKEN env var. Mount your ~/.cloudflared/
+      # directory (containing <UUID>.json and config.yml) read-only.
+      # See docs/operations/cloudflare-tunnel-local.md for setup instructions.
+      # - ~/.cloudflared:/etc/cloudflared:ro
     restart: unless-stopped
     environment:
       COTEL_DB_PATH: /data/cotel.duckdb
       COTEL_INGEST_ADDR: ":4318"
       COTEL_DASH_ADDR: ":8080"
+      # Token-mode Cloudflare tunnel (optional). Takes precedence over a mounted
+      # config.yml if both are present. Obtain the token from the Cloudflare
+      # Zero Trust dashboard after creating a tunnel.
+      # CLOUDFLARE_TUNNEL_TOKEN: ""
 
 volumes:
   cotel-data:

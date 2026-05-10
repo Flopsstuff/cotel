@@ -20,8 +20,9 @@ type DB interface {
 
 // Handler is the root JSON API handler, mounted under /api/v1/.
 type Handler struct {
-	db      DB
-	tokenDB TokenStore
+	db        DB
+	tokenDB   TokenStore
+	userStore UserStore
 }
 
 // New returns an API Handler backed by db.
@@ -32,6 +33,12 @@ func New(db DB) *Handler {
 // SetTokenStore attaches a writable token store for the /tokens endpoints.
 func (h *Handler) SetTokenStore(ts TokenStore) *Handler {
 	h.tokenDB = ts
+	return h
+}
+
+// SetUserStore attaches a writable store for the /users and /settings endpoints.
+func (h *Handler) SetUserStore(us UserStore) *Handler {
+	h.userStore = us
 	return h
 }
 
@@ -66,6 +73,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleHistory(w, r)
 	case path == "/users" || path == "/users/":
 		h.handleUsers(w, r)
+	case strings.HasPrefix(path, "/users/"):
+		rest := strings.TrimPrefix(path, "/users/")
+		if strings.HasSuffix(rest, "/rotate-token") {
+			h.handleUserRotateToken(w, r, strings.TrimSuffix(rest, "/rotate-token"))
+		} else {
+			h.handleUserByID(w, r, rest)
+		}
+	case path == "/settings" || path == "/settings/":
+		h.handleSettings(w, r)
 	case path == "/health" || path == "/health/":
 		h.handleHealth(w, r)
 	case path == "/tokens" || path == "/tokens/":
@@ -118,55 +134,7 @@ func userIDClause(r *http.Request) (clause string, arg string) {
 	return "", ""
 }
 
-// ---- /api/v1/users ----
-
-type userRow struct {
-	UserID            string  `json:"user_id"`
-	IsDefault         bool    `json:"is_default"`
-	Sessions          int64   `json:"sessions"`
-	TotalCostUSD      float64 `json:"total_cost_usd"`
-	TotalInputTokens  int64   `json:"total_input_tokens"`
-	TotalOutputTokens int64   `json:"total_output_tokens"`
-	SpanCount         int64   `json:"span_count"`
-	LastSeen          string  `json:"last_seen"`
-}
-
-type usersResponse struct {
-	Items []userRow `json:"items"`
-}
-
-func (h *Handler) handleUsers(w http.ResponseWriter, _ *http.Request) {
-	rows, _ := h.db.Query(`
-		SELECT
-			COALESCE(user_id, '') AS user_id,
-			user_id IS NULL       AS is_default,
-			COUNT(DISTINCT session_id) AS sessions,
-			COALESCE(SUM(cost_usd), 0) AS total_cost_usd,
-			COALESCE(SUM(input_tokens), 0) AS total_input_tokens,
-			COALESCE(SUM(output_tokens), 0) AS total_output_tokens,
-			COUNT(*) AS span_count,
-			MAX(end_time) AS last_seen
-		FROM spans
-		GROUP BY user_id
-		ORDER BY total_cost_usd DESC
-	`)
-	items := []userRow{}
-	if rows != nil {
-		defer rows.Close()
-		for rows.Next() {
-			var u userRow
-			var lastSeen time.Time
-			var isDefault bool
-			_ = rows.Scan(&u.UserID, &isDefault, &u.Sessions,
-				&u.TotalCostUSD, &u.TotalInputTokens, &u.TotalOutputTokens,
-				&u.SpanCount, &lastSeen)
-			u.IsDefault = isDefault
-			u.LastSeen = lastSeen.UTC().Format(time.RFC3339)
-			items = append(items, u)
-		}
-	}
-	jsonOK(w, usersResponse{Items: items})
-}
+// ---- /api/v1/users — delegated to users.go ----
 
 // ---- /api/v1/health ----
 

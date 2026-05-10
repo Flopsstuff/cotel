@@ -83,6 +83,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// User identity comes from the auth middleware context, not OTEL attributes.
+	userName := UserNameFromContext(r.Context())
+
 	for _, rs := range req.ResourceSpans {
 		svcName := attrStr(rs.GetResource().GetAttributes(), "service.name")
 		resAttrs := attrsToMap(rs.GetResource().GetAttributes())
@@ -90,7 +93,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 		for _, ss := range rs.ScopeSpans {
 			for _, sp := range ss.Spans {
-				h.queue <- decodeSpan(sp, svcName, resAttrs, string(resJSON))
+				h.queue <- decodeSpan(sp, svcName, resAttrs, string(resJSON), userName)
 			}
 		}
 	}
@@ -104,11 +107,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // identifier, checked in order of preference.
 var sessionIDKeys = []string{"session.id", "claude.session.id", "cc.session.id"}
 
-// userIDKeys are the attribute key names used to identify the sender.
-// Configure via: OTEL_RESOURCE_ATTRIBUTES=user.id=alice
-var userIDKeys = []string{"user.id", "claude.user", "cc.user.id"}
-
-func decodeSpan(sp *tracepb.Span, svcName string, resAttrs map[string]any, resJSON string) storage.Span {
+func decodeSpan(sp *tracepb.Span, svcName string, resAttrs map[string]any, resJSON string, userName string) storage.Span {
 	attrs := attrsToMap(sp.Attributes)
 	attrsJSON, _ := json.Marshal(attrs)
 
@@ -142,22 +141,8 @@ func decodeSpan(sp *tracepb.Span, svcName string, resAttrs map[string]any, resJS
 		}
 	}
 
-	// user.id: resource attribute takes precedence (process-wide identity),
-	// span attribute as fallback. Empty string → stored as NULL (no user set).
-	for _, key := range userIDKeys {
-		if v, ok := resAttrs[key]; ok {
-			s.UserID = fmt.Sprintf("%v", v)
-			break
-		}
-	}
-	if s.UserID == "" {
-		for _, key := range userIDKeys {
-			if v, ok := attrs[key]; ok {
-				s.UserID = fmt.Sprintf("%v", v)
-				break
-			}
-		}
-	}
+	// User identity is injected by auth middleware; empty = anonymous (stored as NULL).
+	s.UserID = userName
 
 	if v, ok := attrs["model"]; ok {
 		s.Model = fmt.Sprintf("%v", v)
