@@ -22,7 +22,7 @@
 .zone:hover,
 .dragOver {
   border-color: var(--color-accent);
-  background: var(--color-accent-10);
+  background: var(--color-accent-bg);
 }
 
 .input {

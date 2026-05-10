@@ -368,9 +368,9 @@ function ImportTab() {
 type TabId = 'getting-started' | 'export' | 'import'
 
 const TABS = [
+  { id: 'getting-started', label: 'Getting Started' },
   { id: 'export', label: 'Export' },
   { id: 'import', label: 'Import' },
-  { id: 'getting-started', label: 'Getting Started' },
 ]
 
 export default function Setup() {
