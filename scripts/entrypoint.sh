@@ -25,4 +25,6 @@ fi
 /usr/local/bin/cotel "$@" &
 COTEL_PID=$!
 wait "${COTEL_PID}"
+STATUS=$?
 cleanup
+exit $STATUS
