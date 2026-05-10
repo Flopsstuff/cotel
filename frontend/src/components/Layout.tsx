@@ -19,7 +19,14 @@ export function Layout({ children }: { children: ReactNode }) {
   return (
     <div className={styles.shell}>
       <nav className={styles.sidebar}>
-        <div className={styles.brand}>cotel</div>
+        <a
+          href="https://github.com/Flopsstuff/cotel"
+          target="_blank"
+          rel="noopener noreferrer"
+          className={styles.brand}
+        >
+          cotel
+        </a>
         {navItems.map(({ to, label, icon, end }) => (
           <NavLink
             key={to}
