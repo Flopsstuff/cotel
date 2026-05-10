@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { Check, Copy, Settings, Download } from 'lucide-react'
 import { unzipSync } from 'fflate'
 import { TabBar } from '../components/TabBar'
@@ -19,16 +19,21 @@ const DOCKER_CMD = `docker run -d \\
   -v cotel-data:/data \\
   ghcr.io/flopsstuff/cotel:main`
 
-const SETTINGS_JSON = `{
+const DEFAULT_INGEST = 'http://localhost:4318'
+
+function buildSettingsJson(ingestBase: string): string {
+  return `{
   "env": {
     "CLAUDE_CODE_ENABLE_TELEMETRY": "1",
     "CLAUDE_CODE_ENHANCED_TELEMETRY_BETA": "1",
     "OTEL_TRACES_EXPORTER": "otlp",
-    "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "http://localhost:4318/v1/traces"
+    "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "${ingestBase}/v1/traces"
   }
 }`
+}
 
-const AGENT_PROMPT = `Enable Claude Code telemetry so my sessions are tracked locally. \
+function buildAgentPrompt(ingestBase: string): string {
+  return `Enable Claude Code telemetry so my sessions are tracked locally. \
 Edit the file ~/.claude/settings.json and merge in the following JSON — create the file if it doesn't exist:
 
 {
@@ -36,11 +41,12 @@ Edit the file ~/.claude/settings.json and merge in the following JSON — create
     "CLAUDE_CODE_ENABLE_TELEMETRY": "1",
     "CLAUDE_CODE_ENHANCED_TELEMETRY_BETA": "1",
     "OTEL_TRACES_EXPORTER": "otlp",
-    "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "http://localhost:4318/v1/traces"
+    "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "${ingestBase}/v1/traces"
   }
 }
 
 After saving, tell me to restart Claude Code so the changes take effect.`
+}
 
 const OTLP_HEADERS_SNIPPET = `{
   "env": {
@@ -88,8 +94,32 @@ function Step({ number, title, description, children }: StepProps) {
 }
 
 function GettingStartedTab() {
+  const [ingestBase, setIngestBase] = useState(DEFAULT_INGEST)
+  const [publicURL, setPublicURL] = useState('')
+
+  useEffect(() => {
+    fetch('/api/v1/health')
+      .then(r => r.ok ? r.json() : null)
+      .then((data: { public_ingest_url?: string } | null) => {
+        if (data?.public_ingest_url) {
+          const u = data.public_ingest_url.replace(/\/+$/, '')
+          setPublicURL(u)
+          setIngestBase(u)
+        }
+      })
+      .catch(() => {})
+  }, [])
+
+  const settingsJson = buildSettingsJson(ingestBase)
+  const agentPrompt = buildAgentPrompt(ingestBase)
+
   return (
     <>
+      {publicURL && (
+        <div className={styles.alertWrap} style={{ marginBottom: 'var(--space-4)' }}>
+          <InlineAlert kind="info" message={`Public ingest URL active — snippets use ${publicURL}`} />
+        </div>
+      )}
       <div className={styles.steps}>
         <Step
           number={1}
@@ -114,8 +144,8 @@ function GettingStartedTab() {
             Open <code className={styles.code}>~/.claude/settings.json</code> and merge in:
           </p>
           <div className={styles.codeBlock}>
-            <CopyButton text={SETTINGS_JSON} />
-            <pre className={styles.pre}>{SETTINGS_JSON}</pre>
+            <CopyButton text={settingsJson} />
+            <pre className={styles.pre}>{settingsJson}</pre>
           </div>
         </Step>
 
@@ -166,8 +196,8 @@ function GettingStartedTab() {
           </div>
         </div>
         <div className={styles.codeBlock}>
-          <CopyButton text={AGENT_PROMPT} />
-          <pre className={styles.pre}>{AGENT_PROMPT}</pre>
+          <CopyButton text={agentPrompt} />
+          <pre className={styles.pre}>{agentPrompt}</pre>
         </div>
       </div>
 

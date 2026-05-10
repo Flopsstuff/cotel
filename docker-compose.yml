@@ -22,6 +22,11 @@ services:
       # config.yml if both are present. Obtain the token from the Cloudflare
       # Zero Trust dashboard after creating a tunnel.
       CLOUDFLARE_TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
+      # Public-facing OTLP ingest URL surfaced in the Setup page snippets.
+      # Set when cotel is behind a reverse proxy or Cloudflare Tunnel so operators
+      # get the correct endpoint to paste into ~/.claude/settings.json.
+      # Example: COTEL_PUBLIC_INGEST_URL=https://otlp.example.com
+      COTEL_PUBLIC_INGEST_URL: ${COTEL_PUBLIC_INGEST_URL:-}
 
 volumes:
   cotel-data:

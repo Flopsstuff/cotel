@@ -85,13 +85,17 @@ Replace `<UUID>` with your actual tunnel UUID and `example.com` with your domain
 
 ### 5. Mount `~/.cloudflared` into the container
 
-In `docker-compose.yml`, uncomment the volume line:
+In `docker-compose.yml`, uncomment the volume line and set `COTEL_PUBLIC_INGEST_URL`:
 
 ```yaml
 volumes:
   - cotel-data:/data
   - ~/.cloudflared:/etc/cloudflared:ro   # ← uncomment this line
+environment:
+  COTEL_PUBLIC_INGEST_URL: "https://ingest.example.com"  # public OTLP URL
 ```
+
+`COTEL_PUBLIC_INGEST_URL` tells the Setup page what endpoint operators should paste into their Claude Code settings. When set, the snippet on the Setup → Getting Started tab substitutes `http://localhost:4318` with the public URL. Leave it unset for local dev.
 
 Do **not** set `CLOUDFLARE_TUNNEL_TOKEN`. If both are present, token mode takes precedence and the config file is ignored.
 
