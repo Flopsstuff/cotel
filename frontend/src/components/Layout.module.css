@@ -17,11 +17,10 @@
 }
 
 .brand {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
   padding: var(--space-4) var(--space-4) var(--space-3);
-  font-size: var(--text-base);
-  font-weight: 700;
-  color: var(--color-text-1);
   border-bottom: 1px solid var(--color-border);
   text-decoration: none;
 }
@@ -29,6 +28,14 @@
 .brand:hover {
   color: var(--color-accent);
   text-decoration: none;
+}
+
+.brandName {
+  font-size: var(--text-base);
+  font-weight: 700;
+  color: var(--color-text-1);
+  font-family: var(--font-mono);
+  letter-spacing: -0.02em;
 }
 
 .navLink {
@@ -76,9 +83,13 @@
     width: 48px;
   }
 
-  .brand,
+  .brandName,
   .navLabel {
     display: none;
+  }
+
+  .brand {
+    justify-content: center;
   }
 
   .navLink {

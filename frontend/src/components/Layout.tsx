@@ -1,6 +1,7 @@
 import { ReactNode } from 'react'
 import { NavLink } from 'react-router-dom'
 import { Activity, DollarSign, Layers, Cpu, Wrench, CalendarDays, Settings, Users, SlidersHorizontal } from 'lucide-react'
+import { LogoMark } from './Logo'
 import styles from './Layout.module.css'
 
 const navItems = [
@@ -25,7 +26,8 @@ export function Layout({ children }: { children: ReactNode }) {
           rel="noopener noreferrer"
           className={styles.brand}
         >
-          cotel
+          <LogoMark size={20} />
+          <span className={styles.brandName}>cotel</span>
         </a>
         {navItems.map(({ to, label, icon, end }) => (
           <NavLink
