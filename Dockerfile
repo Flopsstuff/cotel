@@ -1,6 +1,22 @@
 # syntax=docker/dockerfile:1
 # Multi-stage build — Node frontend first, then CGo Go build.
 
+ARG CLOUDFLARED_VERSION=2024.11.1
+
+##############################################################################
+# cloudflared binary (multi-arch: TARGETARCH = amd64 | arm64)
+##############################################################################
+FROM debian:bookworm-slim AS cloudflared-dl
+ARG TARGETARCH
+ARG CLOUDFLARED_VERSION
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates curl \
+    && rm -rf /var/lib/apt/lists/*
+RUN curl -fsSL \
+    "https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/cloudflared-linux-${TARGETARCH}" \
+    -o /usr/local/bin/cloudflared \
+    && chmod +x /usr/local/bin/cloudflared
+
 ##############################################################################
 # Frontend build
 ##############################################################################
@@ -36,6 +52,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /cotel /usr/local/bin/cotel
+COPY --from=cloudflared-dl /usr/local/bin/cloudflared /usr/local/bin/cloudflared
+COPY scripts/entrypoint.sh /usr/local/bin/entrypoint.sh
 
 # Data directory — mount a named volume here.
 VOLUME /data
@@ -46,4 +64,4 @@ ENV COTEL_DB_PATH=/data/cotel.duckdb \
     COTEL_INGEST_ADDR=:4318 \
     COTEL_DASH_ADDR=:8080
 
-ENTRYPOINT ["/usr/local/bin/cotel"]
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
