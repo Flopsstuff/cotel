@@ -21,7 +21,7 @@ services:
       # Token-mode Cloudflare tunnel (optional). Takes precedence over a mounted
       # config.yml if both are present. Obtain the token from the Cloudflare
       # Zero Trust dashboard after creating a tunnel.
-      # CLOUDFLARE_TUNNEL_TOKEN: ""
+      CLOUDFLARE_TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
 
 volumes:
   cotel-data:
