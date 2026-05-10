@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -14,7 +15,9 @@ type UserStore interface {
 	CreateUser(name string) (storage.User, error)
 	ListUsersWithStats() ([]storage.UserWithStats, error)
 	RotateToken(userID string) (storage.User, error)
-	DeleteUser(userID string) error
+	SoftDeleteUser(userID string) error
+	DeleteUserWithHistory(userID string) error
+	DeleteAnonymousData() error
 	GetSetting(key string) (string, error)
 	SetSetting(key, value string) error
 }
@@ -38,9 +41,11 @@ func toUserItem(u storage.UserWithStats) userItem {
 		ID:           u.ID,
 		Name:         u.Name,
 		Token:        u.Token,
-		CreatedAt:    u.CreatedAt.UTC().Format(time.RFC3339),
 		TotalCostUSD: u.TotalCostUSD,
 		Sessions:     u.Sessions,
+	}
+	if u.ID != storage.AnonymousUserID {
+		item.CreatedAt = u.CreatedAt.UTC().Format(time.RFC3339)
 	}
 	if u.LastSeen != nil {
 		s := u.LastSeen.UTC().Format(time.RFC3339)
@@ -75,6 +80,8 @@ func (h *Handler) handleUsers(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleUserByID dispatches DELETE on /api/v1/users/{id}.
+// The special id "__anonymous__" purges all spans with no user_id.
+// For named users: ?mode=user_only (default) soft-deletes; ?mode=user_and_history anonymizes spans then hard-deletes.
 func (h *Handler) handleUserByID(w http.ResponseWriter, r *http.Request, id string) {
 	if h.userStore == nil || id == "" {
 		jsonError(w, "not found", http.StatusNotFound)
@@ -84,7 +91,37 @@ func (h *Handler) handleUserByID(w http.ResponseWriter, r *http.Request, id stri
 		jsonError(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if err := h.userStore.DeleteUser(id); err != nil {
+
+	if id == storage.AnonymousUserID {
+		if err := h.userStore.DeleteAnonymousData(); err != nil {
+			jsonError(w, "delete failed", http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	mode := r.URL.Query().Get("mode")
+	if mode == "" {
+		mode = "user_only"
+	}
+
+	var err error
+	switch mode {
+	case "user_only":
+		err = h.userStore.SoftDeleteUser(id)
+	case "user_and_history":
+		err = h.userStore.DeleteUserWithHistory(id)
+	default:
+		jsonError(w, "invalid mode: must be user_only or user_and_history", http.StatusBadRequest)
+		return
+	}
+
+	if errors.Is(err, storage.ErrNotFound) {
+		jsonError(w, "not found", http.StatusNotFound)
+		return
+	}
+	if err != nil {
 		jsonError(w, "delete failed", http.StatusInternalServerError)
 		return
 	}

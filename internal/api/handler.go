@@ -133,12 +133,19 @@ func queryInt(r *http.Request, key string, fallback int) int {
 // userIDClause returns an additional SQL WHERE fragment and its argument when
 // the request contains a non-empty user_id query parameter. The caller appends
 // the clause directly to the end of their existing WHERE and appends arg to
-// their args slice. When no user_id is present both return values are zero.
+// their args slice (only when arg is non-empty). When no user_id is present
+// both return values are empty strings.
+//
+// The special value "__anonymous__" maps to user_id IS NULL (spans with no user_id).
 func userIDClause(r *http.Request) (clause string, arg string) {
-	if uid := r.URL.Query().Get("user_id"); uid != "" {
-		return " AND user_id = ?", uid
+	uid := r.URL.Query().Get("user_id")
+	if uid == "" {
+		return "", ""
 	}
-	return "", ""
+	if uid == "__anonymous__" {
+		return " AND user_id IS NULL", ""
+	}
+	return " AND user_id = ?", uid
 }
 
 // ---- /api/v1/users — delegated to users.go ----

@@ -156,8 +156,11 @@ export async function rotateUserToken(id: string): Promise<User> {
   return res.json()
 }
 
-export async function deleteUser(id: string): Promise<void> {
-  const res = await fetch(`/api/v1/users/${id}`, { method: 'DELETE' })
+export type DeleteMode = 'user_only' | 'user_and_history'
+
+export async function deleteUser(id: string, mode?: DeleteMode): Promise<void> {
+  const url = mode ? `/api/v1/users/${id}?mode=${mode}` : `/api/v1/users/${id}`
+  const res = await fetch(url, { method: 'DELETE' })
   if (!res.ok && res.status !== 204) {
     const text = await res.text().catch(() => res.statusText)
     throw new Error(text || `${res.status}`)
