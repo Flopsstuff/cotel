@@ -13,6 +13,7 @@ import (
 	"github.com/Flopsstuff/cotel/internal/api/auth"
 	"github.com/Flopsstuff/cotel/internal/dashboard"
 	"github.com/Flopsstuff/cotel/internal/export"
+	"github.com/Flopsstuff/cotel/internal/importpkg"
 	"github.com/Flopsstuff/cotel/internal/ingest"
 	"github.com/Flopsstuff/cotel/internal/storage"
 )
@@ -57,6 +58,7 @@ func main() {
 	apiHandler := api.New(ro).SetUserStore(db)
 	dashMux := http.NewServeMux()
 	dashMux.Handle("/api/v1/export", auth.Middleware(db, export.NewHandler(db)))
+	dashMux.Handle("/api/v1/import", auth.Middleware(db, importpkg.NewHandler(db)))
 	dashMux.Handle("/api/v1/", apiHandler)
 	dashMux.Handle("/", dashboard.New(ro))
 
