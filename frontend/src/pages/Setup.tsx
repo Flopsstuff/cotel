@@ -170,6 +170,26 @@ function GettingStartedTab() {
           <pre className={styles.pre}>{AGENT_PROMPT}</pre>
         </div>
       </div>
+
+      <div className={styles.linksRow}>
+        <a
+          href="https://github.com/Flopsstuff/cotel"
+          target="_blank"
+          rel="noopener noreferrer"
+          className={styles.link}
+        >
+          GitHub
+        </a>
+        <span className={styles.linksSep}>·</span>
+        <a
+          href="https://flopsstuff.github.io/cotel"
+          target="_blank"
+          rel="noopener noreferrer"
+          className={styles.link}
+        >
+          Documentation
+        </a>
+      </div>
     </>
   )
 }
