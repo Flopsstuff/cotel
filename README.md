@@ -34,6 +34,77 @@ Add to your `~/.claude/settings.json`:
 
 Restart Claude Code. Telemetry starts flowing immediately.
 
+## Publishing with Cloudflare
+
+Use [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) to expose cotel over HTTPS without opening inbound ports. The dashboard is protected by Cloudflare Zero Trust; OTLP ingest is protected by a bearer token you create in the cotel Tokens page.
+
+### Prerequisites
+
+- A Cloudflare account (free tier is sufficient)
+- A domain managed by Cloudflare DNS
+- [Cloudflare Zero Trust](https://one.dash.cloudflare.com/) enabled on your account (free for up to 50 users)
+
+### 1. Create a tunnel
+
+1. Go to **Cloudflare Zero Trust → Networks → Tunnels → Add a tunnel**.
+2. Choose **Cloudflared**, name the tunnel (e.g. `cotel`), and click **Save tunnel**.
+3. Copy the tunnel token shown on the next screen — you will use it as `CLOUDFLARE_TUNNEL_TOKEN`.
+
+### 2. Configure public hostnames
+
+In the tunnel's **Public Hostnames** tab, add two entries:
+
+| Subdomain | Domain | Service |
+|-----------|--------|---------|
+| `cotel` | `yourdomain.com` | `http://localhost:8080` |
+| `cotel-ingest` | `yourdomain.com` | `http://localhost:4318` |
+
+Replace the subdomains and domain with your own values.
+
+### 3. Protect the dashboard with Zero Trust
+
+In **Zero Trust → Access → Applications**, create a **Self-hosted** application for your dashboard hostname (e.g. `https://cotel.yourdomain.com`). Add an access policy — for example "Allow email ending in `@yourcompany.com`".
+
+Leave the OTLP ingest hostname (`cotel-ingest.yourdomain.com`) unprotected in Zero Trust. Authentication for ingest is handled by the cotel bearer token instead.
+
+### 4. Start cotel with the tunnel token
+
+Pass `CLOUDFLARE_TUNNEL_TOKEN` when running the container:
+
+```bash
+docker run -d \
+  --name cotel \
+  -v cotel-data:/data \
+  -e CLOUDFLARE_TUNNEL_TOKEN=<your-tunnel-token> \
+  ghcr.io/flopsstuff/cotel:main
+```
+
+No `-p` flags are needed — Cloudflare Tunnel uses outbound connections only.
+
+### 5. Create an agent token
+
+Open your dashboard URL (e.g. `https://cotel.yourdomain.com`), go to **Tokens** (the key icon in the sidebar), and click **New token**. Give it a name (e.g. the agent's hostname or machine name) and copy the token — it is shown only once.
+
+### 6. Configure Claude Code
+
+Add to your `~/.claude/settings.json`:
+
+```json
+{
+  "env": {
+    "CLAUDE_CODE_ENABLE_TELEMETRY": "1",
+    "CLAUDE_CODE_ENHANCED_TELEMETRY_BETA": "1",
+    "OTEL_TRACES_EXPORTER": "otlp",
+    "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "https://cotel-ingest.yourdomain.com/v1/traces",
+    "OTEL_EXPORTER_OTLP_HEADERS": "Authorization=Bearer cotel_<your-token>"
+  }
+}
+```
+
+Replace `cotel-ingest.yourdomain.com` with your actual OTLP hostname, and `cotel_<your-token>` with the token you copied above. Restart Claude Code to apply the changes.
+
+> **Token enforcement:** cotel runs in local (no-auth) mode until the first token is created. Once any token exists, every OTLP request must carry a valid `Authorization: Bearer cotel_...` header.
+
 ## Ports
 
 | Port | Purpose |
@@ -88,6 +159,7 @@ go test ./...
 | `COTEL_RETENTION_RAW_DAYS` | `30` | Raw span retention in days |
 | `COTEL_RETENTION_AGGREGATE_DAYS` | `90` | Daily aggregate retention in days |
 | `COTEL_RETENTION_INTERVAL` | `6h` | Retention worker tick interval (Go duration) |
+| `CLOUDFLARE_TUNNEL_TOKEN` | _(unset)_ | When set, starts `cloudflared tunnel run` before cotel; enables public HTTPS access via Cloudflare Tunnel |
 
 ## GitHub → Paperclip issue routing
 
