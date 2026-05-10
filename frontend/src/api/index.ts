@@ -177,39 +177,42 @@ export async function updateSettings(settings: Partial<SettingsResponse>): Promi
   return res.json()
 }
 
-export function useOverview(refreshInterval = 30_000) {
-  return useSWR<OverviewResponse>('/api/v1/overview', fetcher, { refreshInterval })
+export function useOverview(refreshInterval = 30_000, userId?: string) {
+  const qs = userId ? `?user_id=${encodeURIComponent(userId)}` : ''
+  return useSWR<OverviewResponse>(`/api/v1/overview${qs}`, fetcher, { refreshInterval })
 }
 
-export function useSessions(page = 1, limit = 50, sort = 'start_time', order = 'desc') {
-  return useSWR<SessionsResponse>(
-    `/api/v1/sessions?page=${page}&limit=${limit}&sort=${sort}&order=${order}`,
-    fetcher,
-  )
+export function useSessions(page = 1, limit = 50, sort = 'start_time', order = 'desc', userId?: string) {
+  const params = new URLSearchParams({ page: String(page), limit: String(limit), sort, order })
+  if (userId) params.set('user_id', userId)
+  return useSWR<SessionsResponse>(`/api/v1/sessions?${params.toString()}`, fetcher)
 }
 
 export function useSession(id: string) {
   return useSWR<SessionDetailResponse>(id ? `/api/v1/sessions/${id}` : null, fetcher)
 }
 
-export function useCosts(from?: string, to?: string) {
+export function useCosts(from?: string, to?: string, userId?: string) {
   const params = new URLSearchParams()
   if (from) params.set('from', from)
   if (to) params.set('to', to)
+  if (userId) params.set('user_id', userId)
   const qs = params.toString()
   return useSWR<CostsResponse>(`/api/v1/costs${qs ? `?${qs}` : ''}`, fetcher)
 }
 
-export function useTools() {
-  return useSWR<{ items: ToolItem[] }>('/api/v1/tools', fetcher)
+export function useTools(userId?: string) {
+  const qs = userId ? `?user_id=${encodeURIComponent(userId)}` : ''
+  return useSWR<{ items: ToolItem[] }>(`/api/v1/tools${qs}`, fetcher)
 }
 
 export function useBashCommands() {
   return useSWR<{ items: BashCommandItem[] }>('/api/v1/bash-commands', fetcher)
 }
 
-export function useModels() {
-  return useSWR<{ items: ModelItem[] }>('/api/v1/models', fetcher)
+export function useModels(userId?: string) {
+  const qs = userId ? `?user_id=${encodeURIComponent(userId)}` : ''
+  return useSWR<{ items: ModelItem[] }>(`/api/v1/models${qs}`, fetcher)
 }
 
 export interface HistoryBucket {
@@ -244,10 +247,11 @@ export interface HistoryResponse {
   heatmap: HeatmapCell[]
 }
 
-export function useHistory(granularity: string, from?: string, to?: string) {
+export function useHistory(granularity: string, from?: string, to?: string, userId?: string) {
   const params = new URLSearchParams({ granularity })
   if (from) params.set('from', from)
   if (to) params.set('to', to)
+  if (userId) params.set('user_id', userId)
   return useSWR<HistoryResponse>(`/api/v1/history?${params.toString()}`, fetcher)
 }
 

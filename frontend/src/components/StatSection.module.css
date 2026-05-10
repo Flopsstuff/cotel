@@ -1,0 +1,55 @@
+.card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  margin-bottom: var(--space-4);
+  overflow: hidden;
+  box-shadow: var(--shadow-1);
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+
+.titleBtn {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  color: var(--color-text-1);
+  font-weight: 600;
+  font-size: var(--text-base);
+  font-family: var(--font-sans);
+}
+
+.titleBtn:hover {
+  color: var(--color-accent);
+}
+
+.title {
+  font-size: var(--text-base);
+  font-weight: 600;
+}
+
+.viewAll {
+  font-size: var(--text-sm);
+  color: var(--color-accent);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.viewAll:hover {
+  text-decoration: underline;
+}
+
+.content {
+  padding: var(--space-4);
+}
