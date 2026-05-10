@@ -184,3 +184,57 @@ export function useHistory(granularity: string, from?: string, to?: string) {
   if (to) params.set('to', to)
   return useSWR<HistoryResponse>(`/api/v1/history?${params.toString()}`, fetcher)
 }
+
+export interface TokenItem {
+  id: string
+  name: string
+  prefix: string
+  created_at: string
+  last_used_at: string | null
+}
+
+export interface TokensResponse {
+  items: TokenItem[]
+}
+
+export interface CreateTokenResponse {
+  id: string
+  name: string
+  prefix: string
+  token: string
+  created_at: string
+}
+
+export function useTokens() {
+  return useSWR<TokensResponse>('/api/v1/tokens', fetcher)
+}
+
+export async function createToken(name: string): Promise<CreateTokenResponse> {
+  const res = await fetch('/api/v1/tokens', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => res.statusText)
+    throw new Error(text || `${res.status}`)
+  }
+  return res.json()
+}
+
+export async function rotateToken(id: string): Promise<CreateTokenResponse> {
+  const res = await fetch(`/api/v1/tokens/${id}/rotate`, { method: 'POST' })
+  if (!res.ok) {
+    const text = await res.text().catch(() => res.statusText)
+    throw new Error(text || `${res.status}`)
+  }
+  return res.json()
+}
+
+export async function revokeToken(id: string): Promise<void> {
+  const res = await fetch(`/api/v1/tokens/${id}`, { method: 'DELETE' })
+  if (!res.ok && res.status !== 204) {
+    const text = await res.text().catch(() => res.statusText)
+    throw new Error(text || `${res.status}`)
+  }
+}

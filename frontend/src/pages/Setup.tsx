@@ -42,6 +42,12 @@ Edit the file ~/.claude/settings.json and merge in the following JSON — create
 
 After saving, tell me to restart Claude Code so the changes take effect.`
 
+const OTLP_HEADERS_SNIPPET = `{
+  "env": {
+    "OTEL_EXPORTER_OTLP_HEADERS": "Authorization=Bearer YOUR_TOKEN_HERE"
+  }
+}`
+
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false)
 
@@ -125,6 +131,24 @@ function GettingStartedTab() {
               Open <a href="/" className={styles.link}>Overview</a> — the session appears within 30 seconds.
             </li>
           </ul>
+        </Step>
+
+        <Step
+          number={4}
+          title="Create your first agent token (optional)"
+          description="If you're exposing cotel over the internet, add a bearer token to authenticate OTLP traffic."
+        >
+          <p className={styles.hint}>
+            Go to the <a href="/tokens" className={styles.link}>Tokens page</a> to create a token,
+            then add it to your Claude Code settings:
+          </p>
+          <div className={styles.codeBlock}>
+            <CopyButton text={OTLP_HEADERS_SNIPPET} />
+            <pre className={styles.pre}>{OTLP_HEADERS_SNIPPET}</pre>
+          </div>
+          <p className={styles.hint}>
+            Replace <code className={styles.code}>YOUR_TOKEN_HERE</code> with the token shown after creation.
+          </p>
         </Step>
       </div>
 
