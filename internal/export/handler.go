@@ -1,11 +1,8 @@
 package export
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/Flopsstuff/cotel/internal/storage"
@@ -14,7 +11,6 @@ import (
 // ExportDB is the storage interface required by the export handler.
 // *storage.DB satisfies this interface.
 type ExportDB interface {
-	ValidateToken(hash string) bool
 	ExportSpans(from, to time.Time) ([]storage.Span, error)
 	ExportDailyUsage(from, to time.Time) ([]storage.DailyUsageRow, error)
 }
@@ -32,12 +28,6 @@ func NewHandler(db ExportDB) *Handler {
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	hash, ok := bearerHash(r)
-	if !ok || !h.db.ValidateToken(hash) {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
@@ -109,14 +99,4 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// Headers already sent; can only log, not change status.
 		_ = err
 	}
-}
-
-func bearerHash(r *http.Request) (string, bool) {
-	auth := r.Header.Get("Authorization")
-	token, ok := strings.CutPrefix(auth, "Bearer ")
-	if !ok || token == "" {
-		return "", false
-	}
-	h := sha256.Sum256([]byte(token))
-	return hex.EncodeToString(h[:]), true
 }

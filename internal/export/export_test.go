@@ -228,20 +228,18 @@ func TestBuildZIP_OnlyDaily(t *testing.T) {
 
 // ---- HTTP handler ----
 
+// mockDB satisfies export.ExportDB. Auth is now handled by auth.Middleware, not the handler.
 type mockDB struct {
-	valid bool
 	spans []storage.Span
 	daily []storage.DailyUsageRow
 }
 
-func (m *mockDB) ValidateToken(_ string) bool                                         { return m.valid }
-func (m *mockDB) ExportSpans(_, _ time.Time) ([]storage.Span, error)                 { return m.spans, nil }
-func (m *mockDB) ExportDailyUsage(_, _ time.Time) ([]storage.DailyUsageRow, error)   { return m.daily, nil }
+func (m *mockDB) ExportSpans(_, _ time.Time) ([]storage.Span, error)               { return m.spans, nil }
+func (m *mockDB) ExportDailyUsage(_, _ time.Time) ([]storage.DailyUsageRow, error) { return m.daily, nil }
 
 func TestHandler_EmptyPeriod404(t *testing.T) {
-	h := export.NewHandler(&mockDB{valid: true})
+	h := export.NewHandler(&mockDB{})
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/export?period=day&date=2026-05-09", nil)
-	req.Header.Set("Authorization", "Bearer test-token")
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, req)
 
@@ -254,7 +252,6 @@ func TestHandler_NonEmptyDay200(t *testing.T) {
 	inp := int64(10)
 	start := time.Date(2026, 5, 9, 0, 0, 0, 0, time.UTC)
 	db := &mockDB{
-		valid: true,
 		spans: []storage.Span{
 			{SpanID: "s1", TraceID: "t1", Name: "op",
 				StartTime: start.Add(time.Hour), EndTime: start.Add(time.Hour + time.Second),
@@ -263,7 +260,6 @@ func TestHandler_NonEmptyDay200(t *testing.T) {
 	}
 	h := export.NewHandler(db)
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/export?period=day&date=2026-05-09", nil)
-	req.Header.Set("Authorization", "Bearer test-token")
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, req)
 
@@ -283,22 +279,9 @@ func TestHandler_NonEmptyDay200(t *testing.T) {
 	}
 }
 
-func TestHandler_Unauthorized(t *testing.T) {
-	h := export.NewHandler(&mockDB{valid: false})
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/export?period=day&date=2026-05-09", nil)
-	req.Header.Set("Authorization", "Bearer bad-token")
-	w := httptest.NewRecorder()
-	h.ServeHTTP(w, req)
-
-	if w.Code != http.StatusUnauthorized {
-		t.Errorf("unauthorized: got %d, want 401", w.Code)
-	}
-}
-
 func TestHandler_BadPeriod400(t *testing.T) {
-	h := export.NewHandler(&mockDB{valid: true})
+	h := export.NewHandler(&mockDB{})
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/export?period=hour&date=2026-05-09", nil)
-	req.Header.Set("Authorization", "Bearer test-token")
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, req)
 
@@ -308,9 +291,8 @@ func TestHandler_BadPeriod400(t *testing.T) {
 }
 
 func TestHandler_BadDate400(t *testing.T) {
-	h := export.NewHandler(&mockDB{valid: true})
+	h := export.NewHandler(&mockDB{})
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/export?period=day&date=not-a-date", nil)
-	req.Header.Set("Authorization", "Bearer test-token")
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, req)
 

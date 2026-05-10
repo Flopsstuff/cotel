@@ -7,10 +7,10 @@ import (
 	"net/http"
 	"os"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/Flopsstuff/cotel/internal/api"
+	"github.com/Flopsstuff/cotel/internal/api/auth"
 	"github.com/Flopsstuff/cotel/internal/dashboard"
 	"github.com/Flopsstuff/cotel/internal/export"
 	"github.com/Flopsstuff/cotel/internal/ingest"
@@ -51,12 +51,12 @@ func main() {
 	go db.RunRetentionWorker(retentionCfg, retentionInterval)
 
 	ingestMux := http.NewServeMux()
-	ingestMux.Handle("/v1/traces", otlpAuth(db, ingest.New(db)))
+	ingestMux.Handle("/v1/traces", auth.Middleware(db, ingest.New(db)))
 
 	ro := db.ReadOnly()
 	apiHandler := api.New(ro).SetUserStore(db)
 	dashMux := http.NewServeMux()
-	dashMux.Handle("/api/v1/export", export.NewHandler(db))
+	dashMux.Handle("/api/v1/export", auth.Middleware(db, export.NewHandler(db)))
 	dashMux.Handle("/api/v1/", apiHandler)
 	dashMux.Handle("/", dashboard.New(ro))
 
@@ -74,36 +74,6 @@ func main() {
 	if err := http.ListenAndServe(dashAddr, dashMux); err != nil {
 		log.Fatalf("dashboard: %v", err)
 	}
-}
-
-// otlpAuth guards the OTLP ingest endpoint.
-// A valid cotel_ bearer token identifies the user and injects their name into the request context.
-// Requests without a token are allowed when allow_anonymous=true (the default).
-func otlpAuth(db *storage.DB, next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		bearer := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-		if strings.HasPrefix(bearer, "cotel_") {
-			user, err := db.GetUserByToken(bearer)
-			if err == nil && user != nil {
-				ctx := ingest.WithUserName(r.Context(), user.Name)
-				next.ServeHTTP(w, r.WithContext(ctx))
-				return
-			}
-			// token present but unknown
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusUnauthorized)
-			_, _ = w.Write([]byte(`{"error":"unauthorized"}`))
-			return
-		}
-		// No token — pass through only when anonymous access is enabled.
-		if db.GetSettingBool("allow_anonymous", true) {
-			next.ServeHTTP(w, r)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusUnauthorized)
-		_, _ = w.Write([]byte(`{"error":"unauthorized"}`))
-	})
 }
 
 func env(key, fallback string) string {
