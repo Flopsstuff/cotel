@@ -1,4 +1,4 @@
--- Schema version: 3
+-- Schema version: 4
 -- Versioned; never silently rename columns.
 
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -78,6 +78,17 @@ CREATE TABLE IF NOT EXISTS daily_usage (
 -- Migration v2 → v3: add user_id to daily_usage.
 ALTER TABLE daily_usage ADD COLUMN IF NOT EXISTS user_id VARCHAR;
 
+-- API tokens for OTLP ingest auth (schema version 4)
+CREATE TABLE IF NOT EXISTS api_tokens (
+    id           VARCHAR PRIMARY KEY,
+    name         VARCHAR NOT NULL,
+    token_hash   VARCHAR NOT NULL UNIQUE,  -- SHA-256 of plaintext token
+    prefix       VARCHAR NOT NULL,          -- first 8 chars for display
+    created_at   TIMESTAMPTZ DEFAULT now(),
+    last_used_at TIMESTAMPTZ
+);
+
 INSERT INTO schema_version (version) VALUES (1) ON CONFLICT DO NOTHING;
 INSERT INTO schema_version (version) VALUES (2) ON CONFLICT DO NOTHING;
 INSERT INTO schema_version (version) VALUES (3) ON CONFLICT DO NOTHING;
+INSERT INTO schema_version (version) VALUES (4) ON CONFLICT DO NOTHING;
