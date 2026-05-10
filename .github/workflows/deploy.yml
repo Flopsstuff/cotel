@@ -1,0 +1,33 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-main
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy to self-hosted runner
+    runs-on: [self-hosted, flopsstuff, docker]
+    env:
+      COMPOSE_PROJECT_NAME: cotel
+      CLOUDFLARE_TUNNEL_TOKEN: ${{ secrets.CLOUDFLARE_TUNNEL_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker compose build --pull
+
+      - name: Recreate container
+        run: docker compose up -d --remove-orphans
+
+      - name: Show status
+        run: docker compose ps
+
+      - name: Prune dangling images
+        if: always()
+        run: docker image prune -f
