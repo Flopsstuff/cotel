@@ -1,4 +1,4 @@
--- Schema version: 6
+-- Schema version: 7
 -- Versioned; never silently rename columns.
 
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -115,7 +115,11 @@ SELECT
     user_id                                                      AS name,
     'cotel_' || md5(uuid()::VARCHAR) || md5(uuid()::VARCHAR)     AS token
 FROM (SELECT DISTINCT user_id FROM spans WHERE user_id IS NOT NULL AND user_id <> '') t
-WHERE NOT EXISTS (SELECT 1 FROM users u WHERE u.name = t.user_id);
+WHERE NOT EXISTS (SELECT 1 FROM users u WHERE u.name = t.user_id)
+  AND t.user_id <> '[deleted]';
+
+-- Migration v6 → v7: add deleted_at for soft-delete support.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ DEFAULT NULL;
 
 INSERT INTO schema_version (version) VALUES (1) ON CONFLICT DO NOTHING;
 INSERT INTO schema_version (version) VALUES (2) ON CONFLICT DO NOTHING;
@@ -123,3 +127,4 @@ INSERT INTO schema_version (version) VALUES (3) ON CONFLICT DO NOTHING;
 INSERT INTO schema_version (version) VALUES (4) ON CONFLICT DO NOTHING;
 INSERT INTO schema_version (version) VALUES (5) ON CONFLICT DO NOTHING;
 INSERT INTO schema_version (version) VALUES (6) ON CONFLICT DO NOTHING;
+INSERT INTO schema_version (version) VALUES (7) ON CONFLICT DO NOTHING;

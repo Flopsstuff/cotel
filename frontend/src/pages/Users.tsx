@@ -15,6 +15,7 @@ const CHART_COLORS = [
   'var(--color-chart-5)',
 ]
 
+const ANON_ID = '__anonymous__'
 const PAGE_SIZE = 25
 
 function CopyToken({ token }: { token: string }) {
@@ -161,7 +162,10 @@ export default function Users() {
 
   const handleDelete = async (e: React.MouseEvent, u: User) => {
     e.stopPropagation()
-    if (!confirm(`Delete user "${u.name}"? This cannot be undone.`)) return
+    const msg = u.id === ANON_ID
+      ? 'Delete all anonymous telemetry? All unattributed spans and daily summaries will be permanently removed. This cannot be undone.'
+      : `Delete user "${u.name}"? This cannot be undone.`
+    if (!confirm(msg)) return
     setActionError(null)
     try {
       await deleteUser(u.id)
@@ -172,7 +176,8 @@ export default function Users() {
   }
 
   const handleRowClick = (u: User) => {
-    navigate(`/?user_id=${encodeURIComponent(u.name)}`)
+    const uid = u.id === ANON_ID ? ANON_ID : u.name
+    navigate(`/?user_id=${encodeURIComponent(uid)}`)
   }
 
   return (
@@ -268,50 +273,60 @@ export default function Users() {
                     </tr>
                   </thead>
                   <tbody>
-                    {pageSlice.map((u) => (
-                      <tr
-                        key={u.id}
-                        className={`${styles.tr} ${styles.trClickable}`}
-                        onClick={() => handleRowClick(u)}
-                        title={`View ${u.name}'s activity`}
-                      >
-                        <td className={styles.td}>
-                          <span className={styles.userName}>{u.name}</span>
-                        </td>
-                        <td className={styles.td}>
-                          <CopyToken token={u.token} />
-                        </td>
-                        <td className={styles.td}>
-                          <span className={styles.dimText}>{new Date(u.created_at).toLocaleDateString()}</span>
-                        </td>
-                        <td className={styles.td}>
-                          <span className={styles.dimText}>
-                            {u.last_seen ? new Date(u.last_seen).toLocaleString() : '—'}
-                          </span>
-                        </td>
-                        <td className={styles.td}>
-                          <span className={styles.dimText}>${u.cost.toFixed(4)}</span>
-                        </td>
-                        <td className={styles.td}>
-                          <div className={styles.actions}>
-                            <button
-                              className={styles.actionBtn}
-                              title="Rotate token"
-                              onClick={(e) => handleRotate(e, u)}
-                            >
-                              <RotateCcw size={13} />
-                            </button>
-                            <button
-                              className={`${styles.actionBtn} ${styles.actionBtnDanger}`}
-                              title="Delete user"
-                              onClick={(e) => handleDelete(e, u)}
-                            >
-                              <Trash2 size={13} />
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
+                    {pageSlice.map((u) => {
+                      const isAnon = u.id === ANON_ID
+                      return (
+                        <tr
+                          key={u.id}
+                          className={`${styles.tr} ${styles.trClickable}`}
+                          onClick={() => handleRowClick(u)}
+                          title={isAnon ? 'View anonymous activity' : `View ${u.name}'s activity`}
+                        >
+                          <td className={styles.td}>
+                            <span className={isAnon ? styles.userNameAnon : styles.userName}>{u.name}</span>
+                          </td>
+                          <td className={styles.td}>
+                            {isAnon
+                              ? <span className={styles.dimText}>—</span>
+                              : <CopyToken token={u.token} />
+                            }
+                          </td>
+                          <td className={styles.td}>
+                            <span className={styles.dimText}>
+                              {isAnon ? '—' : new Date(u.created_at).toLocaleDateString()}
+                            </span>
+                          </td>
+                          <td className={styles.td}>
+                            <span className={styles.dimText}>
+                              {u.last_seen ? new Date(u.last_seen).toLocaleString() : '—'}
+                            </span>
+                          </td>
+                          <td className={styles.td}>
+                            <span className={styles.dimText}>${u.cost.toFixed(4)}</span>
+                          </td>
+                          <td className={styles.td}>
+                            <div className={styles.actions}>
+                              {!isAnon && (
+                                <button
+                                  className={styles.actionBtn}
+                                  title="Rotate token"
+                                  onClick={(e) => handleRotate(e, u)}
+                                >
+                                  <RotateCcw size={13} />
+                                </button>
+                              )}
+                              <button
+                                className={`${styles.actionBtn} ${styles.actionBtnDanger}`}
+                                title={isAnon ? 'Delete anonymous data' : 'Delete user'}
+                                onClick={(e) => handleDelete(e, u)}
+                              >
+                                <Trash2 size={13} />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      )
+                    })}
                   </tbody>
                 </table>
 

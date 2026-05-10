@@ -138,6 +138,12 @@
   color: var(--color-text-1);
 }
 
+.userNameAnon {
+  font-weight: 500;
+  color: var(--color-text-2);
+  font-style: italic;
+}
+
 .dimText {
   color: var(--color-text-2);
 }
