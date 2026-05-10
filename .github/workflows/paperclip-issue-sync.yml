@@ -15,7 +15,7 @@ concurrency:
 env:
   PC_PROJECT_ID: de8c64a6-61e4-4d1c-bd95-0c1c8b9667f0
   PC_GOAL_ID: defcc9c2-ba75-4af6-b675-f96fa4501237
-  AGENT_LYRA: 61b890c9-50a6-4fea-9d90-dd21d143279a
+  AGENT_ALDRIC: 7fc96a75-5551-4e00-b2f5-91324bc25f31
 
 jobs:
   sync:
@@ -30,9 +30,9 @@ jobs:
       CF_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
 
     steps:
-      # Handles opened, reopened, labeled — creates a single intake issue assigned to Lyra.
-      # Lyra safety-screens and triages the content before assigning to operational agents.
-      - name: Create intake issue for Lyra
+      # Handles opened, reopened, labeled — creates a single intake issue assigned to Aldric.
+      # Aldric safety-screens and triages the content before assigning to operational agents.
+      - name: Create intake issue for Aldric
         if: github.event.action != 'closed'
         env:
           GH_TITLE: ${{ github.event.issue.title }}
@@ -81,7 +81,7 @@ jobs:
               --arg repo "$GH_REPO" \
               --arg number "$GH_NUMBER" \
               --arg labels "$LABEL_NAMES" \
-              --arg assigneeAgentId "$AGENT_LYRA" \
+              --arg assigneeAgentId "$AGENT_ALDRIC" \
               --arg originId "$ORIGIN_ID" \
               --arg projectId "$PC_PROJECT_ID" \
               --arg goalId "$PC_GOAL_ID" \

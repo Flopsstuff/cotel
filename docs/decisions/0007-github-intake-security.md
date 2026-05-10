@@ -95,3 +95,9 @@ The README section "GitHub → Paperclip issue routing" (routing table, agent na
 - [ ] Update workflow: add feature gate, route to Lyra (Wayland) — see [FLO-126](/FLO/issues/FLO-126)
 - [ ] Define Lyra intake screening instructions (Lyra) — see [FLO-127](/FLO/issues/FLO-127)
 - [ ] Set `PAPERCLIP_INTAKE_ENABLED=true` in repo Actions variables once workflow is deployed
+
+---
+
+## Update 2026-05-10
+
+Intake assignee swapped from **Lyra** to **Aldric** per board decision [FLO-144](/FLO/issues/FLO-144). Reason: throughput — Aldric (codex_local adapter) takes over intake screening. The screener role, safety-screening procedure, and triage logic in Option C above remain unchanged; only the assigned agent changes.
