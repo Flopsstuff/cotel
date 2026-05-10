@@ -8,6 +8,8 @@ import { ManifestCard } from '../components/ManifestCard'
 import type { ZipManifest } from '../components/ManifestCard'
 import { InlineAlert } from '../components/InlineAlert'
 import { Toast } from '../components/Toast'
+import { LoadingSkeleton, ErrorState } from '../components'
+import { useSettings, updateSettings } from '../api'
 import styles from './Setup.module.css'
 
 // ─── Getting Started content ────────────────────────────────────────────────
@@ -183,8 +185,8 @@ function GettingStartedTab() {
             Replace <code className={styles.code}>YOUR_TOKEN_HERE</code> with the token shown after user creation.
           </p>
           <p className={styles.hint}>
-            To block unauthenticated sends, go to{' '}
-            <a href="/settings" className={styles.link}>Settings</a>{' '}
+            To block unauthenticated sends, open the{' '}
+            <a href="/setup" className={styles.link}>Settings tab</a>{' '}
             and disable <strong>Allow anonymous OTLP</strong>.
           </p>
         </Step>
@@ -464,14 +466,77 @@ function ImportTab() {
   )
 }
 
+// ─── Settings tab ────────────────────────────────────────────────────────────
+
+function SettingsTab() {
+  const { data, error, isLoading, mutate } = useSettings()
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
+
+  const handleToggle = async (checked: boolean) => {
+    setSaving(true)
+    setSaveError(null)
+    try {
+      await updateSettings({ allow_anonymous: checked })
+      await mutate()
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : 'Save failed')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (isLoading) return <LoadingSkeleton rows={3} height={32} />
+  if (error) return <ErrorState message={error.message} />
+
+  return (
+    <div className={styles.section}>
+      <div className={styles.sectionTitle}>OTLP Ingest</div>
+
+      <div className={styles.settingRow}>
+        <div className={styles.settingInfo}>
+          <div className={styles.settingLabel}>Allow anonymous OTLP</div>
+          <div className={styles.settingDesc}>
+            When enabled, spans without an <code className={styles.code}>Authorization</code> header are accepted and attributed to no user.
+            Disable to require every OTLP sender to present a valid user token.
+          </div>
+        </div>
+        <label className={styles.toggle}>
+          <input
+            type="checkbox"
+            className={styles.toggleInput}
+            checked={data?.allow_anonymous ?? true}
+            disabled={saving}
+            onChange={(e) => handleToggle(e.target.checked)}
+          />
+          <span className={styles.toggleTrack} />
+        </label>
+      </div>
+
+      {data?.allow_anonymous === false && (
+        <div className={styles.warning}>
+          Anonymous OTLP is disabled. All ingest requests must include{' '}
+          <code className={styles.code}>Authorization: Bearer &lt;token&gt;</code>.{' '}
+          Go to <a href="/users" className={styles.link}>Users</a> to manage tokens.
+        </div>
+      )}
+
+      {saveError && (
+        <div className={styles.errorMsg}>{saveError}</div>
+      )}
+    </div>
+  )
+}
+
 // ─── Page ────────────────────────────────────────────────────────────────────
 
-type TabId = 'getting-started' | 'export' | 'import'
+type TabId = 'getting-started' | 'export' | 'import' | 'settings'
 
 const TABS = [
   { id: 'getting-started', label: 'Getting Started' },
   { id: 'export', label: 'Export' },
   { id: 'import', label: 'Import' },
+  { id: 'settings', label: 'Settings' },
 ]
 
 export default function Setup() {
@@ -484,7 +549,7 @@ export default function Setup() {
         <div>
           <h1 className={styles.title}>Setup</h1>
           <p className={styles.subtitle}>
-            Configure telemetry, export data, and import from other instances.
+            Configure telemetry, manage data, and adjust runtime settings.
           </p>
         </div>
       </div>
@@ -504,6 +569,11 @@ export default function Setup() {
       {activeTab === 'import' && (
         <div id="panel-import" role="tabpanel" aria-labelledby="tab-import">
           <ImportTab />
+        </div>
+      )}
+      {activeTab === 'settings' && (
+        <div id="panel-settings" role="tabpanel" aria-labelledby="tab-settings">
+          <SettingsTab />
         </div>
       )}
     </div>
