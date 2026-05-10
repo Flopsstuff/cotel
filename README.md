@@ -176,20 +176,6 @@ go test ./...
 | `CLOUDFLARE_TUNNEL_TOKEN` | _(unset)_ | When set, starts `cloudflared tunnel run` before cotel; enables public HTTPS access via Cloudflare Tunnel |
 | `COTEL_PUBLIC_INGEST_URL` | _(unset)_ | Absolute `http`/`https` URL of the public OTLP ingest endpoint (e.g. `https://cotel-ingest.yourdomain.com`). When set, the Setup page substitutes this URL into the copy-paste Claude Code snippets. |
 
-## GitHub → Paperclip issue routing
-
-Opening a GitHub issue on this repo automatically creates a linked issue in the cotel Paperclip project. Closing it marks the Paperclip issue done.
-
-Labels determine the assignee:
-
-| Label | Assignee |
-|-------|----------|
-| `bug` | Coder |
-| `design`, `ux` | UXDesigner |
-| _(none / other)_ | CTO |
-
-Routing is defined in `.github/workflows/paperclip-issue-sync.yml`.
-
 ## Architecture
 
 ```
