@@ -11,6 +11,7 @@ import (
 
 	"github.com/Flopsstuff/cotel/internal/api"
 	"github.com/Flopsstuff/cotel/internal/dashboard"
+	"github.com/Flopsstuff/cotel/internal/export"
 	"github.com/Flopsstuff/cotel/internal/ingest"
 	"github.com/Flopsstuff/cotel/internal/storage"
 )
@@ -53,6 +54,7 @@ func main() {
 
 	ro := db.ReadOnly()
 	dashMux := http.NewServeMux()
+	dashMux.Handle("/api/v1/export", export.NewHandler(db))
 	dashMux.Handle("/api/v1/", api.New(ro))
 	dashMux.Handle("/", dashboard.New(ro))
 
