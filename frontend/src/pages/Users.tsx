@@ -1,6 +1,7 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useMemo } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts'
-import { Copy, Check, Plus, RotateCcw, Trash2 } from 'lucide-react'
+import { Copy, Check, Plus, RotateCcw, Trash2, Search, ChevronLeft, ChevronRight } from 'lucide-react'
 import { useUsers, createUser, rotateUserToken, deleteUser } from '../api'
 import type { User } from '../api'
 import { Card, EmptyState, ErrorState, LoadingSkeleton, ChartSkeleton, ChartTooltip } from '../components'
@@ -14,9 +15,12 @@ const CHART_COLORS = [
   'var(--color-chart-5)',
 ]
 
+const PAGE_SIZE = 25
+
 function CopyToken({ token }: { token: string }) {
   const [copied, setCopied] = useState(false)
-  const copy = useCallback(async () => {
+  const copy = useCallback(async (e: React.MouseEvent) => {
+    e.stopPropagation()
     await navigator.clipboard.writeText(token)
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
@@ -106,17 +110,36 @@ function NewTokenBanner({ user, onDismiss }: { user: User; onDismiss: () => void
 }
 
 export default function Users() {
+  const navigate = useNavigate()
   const { data, error, isLoading, mutate } = useUsers()
   const [showAdd, setShowAdd] = useState(false)
   const [newUser, setNewUser] = useState<User | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
+  const [search, setSearch] = useState('')
+  const [page, setPage] = useState(0)
 
   const users = data?.users ?? []
-  const chartData = users.slice(0, 10).map((u, i) => ({
-    name: u.name,
-    cost: u.cost,
-    colorIdx: i,
-  }))
+  const chartData = [...users]
+    .sort((a, b) => b.cost - a.cost)
+    .slice(0, 10)
+    .map((u, i) => ({ name: u.name, cost: u.cost, colorIdx: i }))
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    if (!q) return users
+    return users.filter(
+      (u) => u.name.toLowerCase().includes(q) || u.token.toLowerCase().startsWith(q)
+    )
+  }, [users, search])
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
+  const safePage = Math.min(page, totalPages - 1)
+  const pageSlice = filtered.slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE)
+
+  const handleSearch = (q: string) => {
+    setSearch(q)
+    setPage(0)
+  }
 
   const handleCreated = (u: User) => {
     setShowAdd(false)
@@ -124,7 +147,8 @@ export default function Users() {
     mutate()
   }
 
-  const handleRotate = async (u: User) => {
+  const handleRotate = async (e: React.MouseEvent, u: User) => {
+    e.stopPropagation()
     if (!confirm(`Rotate token for "${u.name}"? The old token will stop working immediately.`)) return
     setActionError(null)
     try {
@@ -135,7 +159,8 @@ export default function Users() {
     }
   }
 
-  const handleDelete = async (u: User) => {
+  const handleDelete = async (e: React.MouseEvent, u: User) => {
+    e.stopPropagation()
     if (!confirm(`Delete user "${u.name}"? This cannot be undone.`)) return
     setActionError(null)
     try {
@@ -144,6 +169,10 @@ export default function Users() {
     } catch (err) {
       setActionError(err instanceof Error ? err.message : 'Delete failed')
     }
+  }
+
+  const handleRowClick = (u: User) => {
+    navigate(`/?user_id=${encodeURIComponent(u.name)}`)
   }
 
   return (
@@ -200,66 +229,115 @@ export default function Users() {
             </Card>
           )}
 
-          <Card title={`All users (${users.length})`}>
+          <Card title={`All users (${filtered.length}${filtered.length !== users.length ? ` of ${users.length}` : ''})`}>
             <div className={styles.helpCallout}>
               Copy a token and set{' '}
               <code className={styles.code}>OTEL_EXPORTER_OTLP_HEADERS=Authorization=Bearer &lt;token&gt;</code>{' '}
               in your Claude Code settings (<code className={styles.code}>~/.claude/settings.json</code> or env).
+              Click a row to view that user's activity.
             </div>
 
-            <table className={styles.table}>
-              <thead>
-                <tr>
-                  <th className={styles.th}>Name</th>
-                  <th className={styles.th}>Token</th>
-                  <th className={styles.th}>Created</th>
-                  <th className={styles.th}>Last seen</th>
-                  <th className={styles.th}>Cost</th>
-                  <th className={styles.th}>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {users.map((u) => (
-                  <tr key={u.id} className={styles.tr}>
-                    <td className={styles.td}>
-                      <span className={styles.userName}>{u.name}</span>
-                    </td>
-                    <td className={styles.td}>
-                      <CopyToken token={u.token} />
-                    </td>
-                    <td className={styles.td}>
-                      <span className={styles.dimText}>{new Date(u.created_at).toLocaleDateString()}</span>
-                    </td>
-                    <td className={styles.td}>
-                      <span className={styles.dimText}>
-                        {u.last_seen ? new Date(u.last_seen).toLocaleString() : '—'}
-                      </span>
-                    </td>
-                    <td className={styles.td}>
-                      <span className={styles.dimText}>${u.cost.toFixed(4)}</span>
-                    </td>
-                    <td className={styles.td}>
-                      <div className={styles.actions}>
-                        <button
-                          className={styles.actionBtn}
-                          title="Rotate token"
-                          onClick={() => handleRotate(u)}
-                        >
-                          <RotateCcw size={13} />
-                        </button>
-                        <button
-                          className={`${styles.actionBtn} ${styles.actionBtnDanger}`}
-                          title="Delete user"
-                          onClick={() => handleDelete(u)}
-                        >
-                          <Trash2 size={13} />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <div className={styles.searchRow}>
+              <div className={styles.searchWrap}>
+                <Search size={14} className={styles.searchIcon} />
+                <input
+                  className={styles.searchInput}
+                  placeholder="Search by name or token prefix…"
+                  value={search}
+                  onChange={(e) => handleSearch(e.target.value)}
+                />
+                {search && (
+                  <button className={styles.searchClear} onClick={() => handleSearch('')}>×</button>
+                )}
+              </div>
+            </div>
+
+            {filtered.length === 0 ? (
+              <div className={styles.noResults}>No users match "{search}"</div>
+            ) : (
+              <>
+                <table className={styles.table}>
+                  <thead>
+                    <tr>
+                      <th className={styles.th}>Name</th>
+                      <th className={styles.th}>Token</th>
+                      <th className={styles.th}>Created</th>
+                      <th className={styles.th}>Last seen</th>
+                      <th className={styles.th}>Cost</th>
+                      <th className={styles.th}>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pageSlice.map((u) => (
+                      <tr
+                        key={u.id}
+                        className={`${styles.tr} ${styles.trClickable}`}
+                        onClick={() => handleRowClick(u)}
+                        title={`View ${u.name}'s activity`}
+                      >
+                        <td className={styles.td}>
+                          <span className={styles.userName}>{u.name}</span>
+                        </td>
+                        <td className={styles.td}>
+                          <CopyToken token={u.token} />
+                        </td>
+                        <td className={styles.td}>
+                          <span className={styles.dimText}>{new Date(u.created_at).toLocaleDateString()}</span>
+                        </td>
+                        <td className={styles.td}>
+                          <span className={styles.dimText}>
+                            {u.last_seen ? new Date(u.last_seen).toLocaleString() : '—'}
+                          </span>
+                        </td>
+                        <td className={styles.td}>
+                          <span className={styles.dimText}>${u.cost.toFixed(4)}</span>
+                        </td>
+                        <td className={styles.td}>
+                          <div className={styles.actions}>
+                            <button
+                              className={styles.actionBtn}
+                              title="Rotate token"
+                              onClick={(e) => handleRotate(e, u)}
+                            >
+                              <RotateCcw size={13} />
+                            </button>
+                            <button
+                              className={`${styles.actionBtn} ${styles.actionBtnDanger}`}
+                              title="Delete user"
+                              onClick={(e) => handleDelete(e, u)}
+                            >
+                              <Trash2 size={13} />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+
+                {totalPages > 1 && (
+                  <div className={styles.pagination}>
+                    <button
+                      className={styles.pageBtn}
+                      disabled={safePage === 0}
+                      onClick={() => setPage(safePage - 1)}
+                    >
+                      <ChevronLeft size={14} />
+                    </button>
+                    <span className={styles.pageInfo}>
+                      {safePage + 1} / {totalPages}
+                    </span>
+                    <button
+                      className={styles.pageBtn}
+                      disabled={safePage >= totalPages - 1}
+                      onClick={() => setPage(safePage + 1)}
+                    >
+                      <ChevronRight size={14} />
+                    </button>
+                  </div>
+                )}
+              </>
+            )}
           </Card>
         </>
       )}
