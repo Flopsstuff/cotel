@@ -13,7 +13,7 @@ import Models from './pages/Models'
 import History from './pages/History'
 import Users from './pages/Users'
 import Setup from './pages/Setup'
-import Tokens from './pages/Tokens'
+import AppSettings from './pages/Settings'
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <BrowserRouter>
@@ -27,7 +27,7 @@ createRoot(document.getElementById('root')!).render(
           <Route path="/tools" element={<Tools />} />
           <Route path="/models" element={<Models />} />
           <Route path="/history" element={<History />} />
-          <Route path="/tokens" element={<Tokens />} />
+          <Route path="/settings" element={<AppSettings />} />
           <Route path="/setup" element={<Setup />} />
         </Routes>
       </Layout>

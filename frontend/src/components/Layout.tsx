@@ -1,6 +1,6 @@
 import { ReactNode } from 'react'
 import { NavLink } from 'react-router-dom'
-import { Activity, DollarSign, Layers, Cpu, Wrench, CalendarDays, Settings, Users, Key } from 'lucide-react'
+import { Activity, DollarSign, Layers, Cpu, Wrench, CalendarDays, Settings, Users, SlidersHorizontal } from 'lucide-react'
 import styles from './Layout.module.css'
 
 const navItems = [
@@ -11,7 +11,7 @@ const navItems = [
   { to: '/costs', label: 'Costs', icon: <DollarSign size={15} /> },
   { to: '/tools', label: 'Tools', icon: <Wrench size={15} /> },
   { to: '/models', label: 'Models', icon: <Cpu size={15} /> },
-  { to: '/tokens', label: 'Tokens', icon: <Key size={15} /> },
+  { to: '/settings', label: 'Settings', icon: <SlidersHorizontal size={15} /> },
   { to: '/setup', label: 'Setup', icon: <Settings size={15} /> },
 ]
 

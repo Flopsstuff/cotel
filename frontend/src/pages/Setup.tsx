@@ -135,19 +135,25 @@ function GettingStartedTab() {
 
         <Step
           number={4}
-          title="Create your first agent token (optional)"
-          description="If you're exposing cotel over the internet, add a bearer token to authenticate OTLP traffic."
+          title="Add yourself as a user (optional)"
+          description="Create a named user to track your usage and optionally restrict anonymous access."
         >
-          <p className={styles.hint}>
-            Go to the <a href="/tokens" className={styles.link}>Tokens page</a> to create a token,
-            then add it to your Claude Code settings:
-          </p>
+          <ol className={styles.verifyList}>
+            <li>Go to <a href="/users" className={styles.link}>Users</a> and click <strong>Add user</strong>.</li>
+            <li>Copy the generated token.</li>
+            <li>Add to Claude Code settings:</li>
+          </ol>
           <div className={styles.codeBlock}>
             <CopyButton text={OTLP_HEADERS_SNIPPET} />
             <pre className={styles.pre}>{OTLP_HEADERS_SNIPPET}</pre>
           </div>
           <p className={styles.hint}>
-            Replace <code className={styles.code}>YOUR_TOKEN_HERE</code> with the token shown after creation.
+            Replace <code className={styles.code}>YOUR_TOKEN_HERE</code> with the token shown after user creation.
+          </p>
+          <p className={styles.hint}>
+            To block unauthenticated sends, go to{' '}
+            <a href="/settings" className={styles.link}>Settings</a>{' '}
+            and disable <strong>Allow anonymous OTLP</strong>.
           </p>
         </Step>
       </div>
