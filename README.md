@@ -35,6 +35,16 @@ Add to your `~/.claude/settings.json`:
 
 Restart Claude Code. Telemetry starts flowing immediately.
 
+## Users and authentication
+
+cotel ships with token-based authentication for OTLP ingest. Tokens are tied to named users.
+
+Open the dashboard → **Users** (people icon in the sidebar) → **Add user**. Give the user a name (e.g. the machine or agent name sending telemetry). Copy the token — it is always accessible from the Users table. Rotating or deleting a user revokes its token immediately.
+
+By default, cotel accepts spans without an `Authorization` header (allow-anonymous mode). To enforce strict auth: **Settings** → disable **Allow anonymous OTLP**. Requests without a valid token then receive `401 Unauthorized`.
+
+See **[docs/operations/users-and-auth.md](docs/operations/users-and-auth.md)** for the full guide: multi-user setup, token rotation, and security considerations.
+
 ## Publishing with Cloudflare
 
 Use [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) to expose cotel over HTTPS without opening inbound ports. The dashboard is protected by Cloudflare Zero Trust; OTLP ingest is protected by a bearer token you create in the cotel Tokens page.
