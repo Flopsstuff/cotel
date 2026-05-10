@@ -193,7 +193,7 @@ function CalendarHeatmap({ days, from, to }: CalHeatmapProps) {
         >
           <strong>{tip.info.date}</strong>
           <br />
-          {tip.info.count} spans · ${tip.info.cost.toFixed(4)}
+          {tip.info.count} spans · ${tip.info.cost.toFixed(2)}
         </div>
       )}
     </div>
@@ -393,8 +393,8 @@ export default function History() {
             <div className={styles.kpiRow}>
               <KpiCard label="Sessions" value={String(kpis.sessions)} />
               <KpiCard label="Spans" value={fmtTokens(kpis.spans)} />
-              <KpiCard label="Total Cost" value={`$${kpis.cost.toFixed(4)}`} />
-              <KpiCard label={`Avg Cost / ${gran}`} value={`$${kpis.avgCost.toFixed(4)}`} />
+              <KpiCard label="Total Cost" value={`$${kpis.cost.toFixed(2)}`} />
+              <KpiCard label={`Avg Cost / ${gran}`} value={`$${kpis.avgCost.toFixed(2)}`} />
             </div>
           )}
 
@@ -454,7 +454,7 @@ export default function History() {
                         tickFormatter={(v) => `$${v.toFixed(2)}`}
                         width={52}
                       />
-                      <Tooltip content={<ChartTooltip formatter={(v) => [`$${v.toFixed(4)}`, 'Cost']} />} />
+                      <Tooltip content={<ChartTooltip formatter={(v) => [`$${v.toFixed(2)}`, 'Cost']} />} />
                       <Area
                         type="monotone"
                         dataKey="cost_usd"
@@ -507,7 +507,7 @@ export default function History() {
                   <Tooltip
                     content={
                       <ChartTooltip
-                        formatter={(v, n) => [`$${Number(v).toFixed(4)}`, String(n)]}
+                        formatter={(v, n) => [`$${Number(v).toFixed(2)}`, String(n)]}
                       />
                     }
                   />

@@ -372,7 +372,7 @@ export default function Users() {
                       tick={{ fontSize: 11, fill: 'var(--color-text-3)' }}
                       width={120}
                     />
-                    <Tooltip content={<ChartTooltip formatter={(v) => [`$${Number(v).toFixed(4)}`, 'Cost']} />} />
+                    <Tooltip content={<ChartTooltip formatter={(v) => [`$${Number(v).toFixed(2)}`, 'Cost']} />} />
                     <Bar dataKey="cost" radius={[0, 2, 2, 0]}>
                       {chartData.map((entry) => (
                         <Cell key={entry.name} fill={CHART_COLORS[entry.colorIdx % CHART_COLORS.length]} />
@@ -452,7 +452,7 @@ export default function Users() {
                             </span>
                           </td>
                           <td className={styles.td}>
-                            <span className={styles.dimText}>${u.cost.toFixed(4)}</span>
+                            <span className={styles.dimText}>${u.cost.toFixed(2)}</span>
                           </td>
                           <td className={styles.td}>
                             <div className={styles.actions}>
