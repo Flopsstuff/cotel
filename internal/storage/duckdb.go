@@ -101,6 +101,8 @@ type Span struct {
 	CostUSD          *float64
 	Attributes       string // JSON
 	ResourceAttrs    string // JSON
+	// IngestedAt is populated on export; zero on ingest (DB uses DEFAULT now()).
+	IngestedAt       time.Time
 }
 
 const insertSpan = `
