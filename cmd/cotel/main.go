@@ -1,16 +1,20 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"flag"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Flopsstuff/cotel/internal/api"
 	"github.com/Flopsstuff/cotel/internal/dashboard"
+	"github.com/Flopsstuff/cotel/internal/export"
 	"github.com/Flopsstuff/cotel/internal/ingest"
 	"github.com/Flopsstuff/cotel/internal/storage"
 )
@@ -49,11 +53,13 @@ func main() {
 	go db.RunRetentionWorker(retentionCfg, retentionInterval)
 
 	ingestMux := http.NewServeMux()
-	ingestMux.Handle("/v1/traces", ingest.New(db))
+	ingestMux.Handle("/v1/traces", otlpAuth(db, ingest.New(db)))
 
 	ro := db.ReadOnly()
+	apiHandler := api.New(ro).SetTokenStore(db)
 	dashMux := http.NewServeMux()
-	dashMux.Handle("/api/v1/", api.New(ro))
+	dashMux.Handle("/api/v1/export", export.NewHandler(db))
+	dashMux.Handle("/api/v1/", apiHandler)
 	dashMux.Handle("/", dashboard.New(ro))
 
 	ingestAddr := env("COTEL_INGEST_ADDR", ":4318")
@@ -70,6 +76,31 @@ func main() {
 	if err := http.ListenAndServe(dashAddr, dashMux); err != nil {
 		log.Fatalf("dashboard: %v", err)
 	}
+}
+
+// otlpAuth guards the OTLP ingest endpoint.
+// When no tokens are stored (local mode) all requests pass through.
+// Once any token exists, requests must supply a valid Bearer cotel_... token.
+func otlpAuth(db *storage.DB, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		bearer := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		if strings.HasPrefix(bearer, "cotel_") {
+			h := sha256.Sum256([]byte(bearer))
+			if db.ValidateToken(hex.EncodeToString(h[:])) {
+				next.ServeHTTP(w, r)
+				return
+			}
+		}
+		// No valid token presented — pass through only in local mode (0 tokens configured).
+		n, _ := db.CountTokens()
+		if n == 0 {
+			next.ServeHTTP(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":"unauthorized"}`))
+	})
 }
 
 func env(key, fallback string) string {
