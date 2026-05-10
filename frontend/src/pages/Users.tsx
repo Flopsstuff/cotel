@@ -112,11 +112,10 @@ export default function Users() {
   const [actionError, setActionError] = useState<string | null>(null)
 
   const users = data?.users ?? []
-  const chartData = users.slice(0, 10).map((u, i) => ({
-    name: u.name,
-    cost: u.cost,
-    colorIdx: i,
-  }))
+  const chartData = [...users]
+    .sort((a, b) => b.cost - a.cost)
+    .slice(0, 10)
+    .map((u, i) => ({ name: u.name, cost: u.cost, colorIdx: i }))
 
   const handleCreated = (u: User) => {
     setShowAdd(false)
