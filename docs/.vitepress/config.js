@@ -9,6 +9,7 @@ export default defineConfig({
   themeConfig: {
     nav: [
       { text: 'Home', link: '/' },
+      { text: 'Operations', link: '/operations/cloudflare-tunnel-remote' },
       { text: 'Decisions', link: '/decisions/' },
       { text: 'Design', link: '/design/' },
       {
@@ -18,6 +19,15 @@ export default defineConfig({
     ],
 
     sidebar: {
+      '/operations/': [
+        {
+          text: 'Operations',
+          items: [
+            { text: 'Cloudflare Tunnel — Token Mode', link: '/operations/cloudflare-tunnel-remote' },
+            { text: 'Cloudflare Tunnel — Local Config', link: '/operations/cloudflare-tunnel-local' },
+          ],
+        },
+      ],
       '/decisions/': [
         {
           text: 'Architecture Decisions',
@@ -26,6 +36,8 @@ export default defineConfig({
             { text: 'ADR-0002 — Dashboard React SPA', link: '/decisions/0002-dashboard-react-spa' },
             { text: 'ADR-0003 — Release Policy', link: '/decisions/0003-release-policy' },
             { text: 'ADR-0004 — Multi-User Separation', link: '/decisions/0004-multi-user-separation' },
+            { text: 'ADR-0005 — Export/Import Format', link: '/decisions/0005-export-import-format' },
+            { text: 'ADR-0006 — Cloudflare Tunnel + Token Auth', link: '/decisions/0006-cloudflare-tunnel-and-token-auth' },
           ],
         },
       ],
