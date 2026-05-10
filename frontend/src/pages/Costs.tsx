@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { useCosts } from '../api'
 import { Card, DataTable, EmptyState, ErrorState, LoadingSkeleton, ChartSkeleton, DateRangePicker, ChartTooltip } from '../components'
 import type { CostsResponse } from '../api'
@@ -22,14 +23,31 @@ function daysAgo(n: number) {
 export default function Costs() {
   const [from, setFrom] = useState(daysAgo(30))
   const [to, setTo] = useState(today())
-  const { data, error, isLoading } = useCosts(from, to)
+  const [searchParams, setSearchParams] = useSearchParams()
+  const userId = searchParams.get('user_id') ?? undefined
+  const { data, error, isLoading } = useCosts(from, to, userId)
 
   const totalCost = data?.by_model.reduce((s, m) => s + m.cost_usd, 0) ?? 0
+
+  function clearUserFilter() {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev)
+      next.delete('user_id')
+      return next
+    })
+  }
 
   return (
     <div>
       <div className={styles.header}>
-        <h1 className={styles.title}>Costs</h1>
+        <div>
+          <h1 className={styles.title}>Costs</h1>
+          {userId && (
+            <button className={styles.userChip} onClick={clearUserFilter}>
+              Filtered by: <strong>{userId}</strong> ×
+            </button>
+          )}
+        </div>
         <DateRangePicker from={from} to={to} onChange={(f, t) => { setFrom(f); setTo(t) }} />
       </div>
 

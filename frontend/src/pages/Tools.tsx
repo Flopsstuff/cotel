@@ -1,3 +1,4 @@
+import { useSearchParams } from 'react-router-dom'
 import { useTools, useBashCommands } from '../api'
 import { Card, DataTable, EmptyState, ErrorState, LoadingSkeleton, ChartSkeleton, failRateBadge, ChartTooltip } from '../components'
 import type { ToolItem, BashCommandItem } from '../api'
@@ -9,15 +10,32 @@ function truncateCommand(cmd: string, max = 80): string {
 }
 
 export default function Tools() {
-  const { data, error, isLoading } = useTools()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const userId = searchParams.get('user_id') ?? undefined
+  const { data, error, isLoading } = useTools(userId)
   const { data: bashData, isLoading: bashLoading } = useBashCommands()
 
   const topTools = data?.items.slice().sort((a, b) => b.calls - a.calls).slice(0, 10) ?? []
   const hasBashCommands = (bashData?.items.length ?? 0) > 0
 
+  function clearUserFilter() {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev)
+      next.delete('user_id')
+      return next
+    })
+  }
+
   return (
     <div>
-      <h1 className={styles.title}>Tools</h1>
+      <div className={styles.pageHeader}>
+        <h1 className={styles.title}>Tools</h1>
+        {userId && (
+          <button className={styles.userChip} onClick={clearUserFilter}>
+            Filtered by: <strong>{userId}</strong> ×
+          </button>
+        )}
+      </div>
 
       {isLoading ? (
         <>

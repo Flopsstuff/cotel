@@ -1,11 +1,22 @@
 import { useMemo } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { useModels } from '../api'
 import { Card, DataTable, EmptyState, ErrorState, LoadingSkeleton } from '../components'
 import type { ModelItem } from '../api'
 import styles from './Models.module.css'
 
 export default function Models() {
-  const { data, error, isLoading } = useModels()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const userId = searchParams.get('user_id') ?? undefined
+  const { data, error, isLoading } = useModels(userId)
+
+  function clearUserFilter() {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev)
+      next.delete('user_id')
+      return next
+    })
+  }
 
   const rows = useMemo(() => {
     if (!data) return []
@@ -16,7 +27,14 @@ export default function Models() {
 
   return (
     <div>
-      <h1 className={styles.title}>Models</h1>
+      <div className={styles.pageHeader}>
+        <h1 className={styles.title}>Models</h1>
+        {userId && (
+          <button className={styles.userChip} onClick={clearUserFilter}>
+            Filtered by: <strong>{userId}</strong> ×
+          </button>
+        )}
+      </div>
 
       {isLoading ? (
         <LoadingSkeleton rows={6} height={52} />
