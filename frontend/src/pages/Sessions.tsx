@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useSessions } from '../api'
 import { Card, DataTable, EmptyState, ErrorState, LoadingSkeleton, sessionStatusBadge } from '../components'
 import type { SessionItem } from '../api'
@@ -10,7 +10,17 @@ export default function Sessions() {
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState<'all' | 'ok' | 'error'>('all')
   const navigate = useNavigate()
-  const { data, error, isLoading } = useSessions(page, 50, 'start_time', 'desc')
+  const [searchParams, setSearchParams] = useSearchParams()
+  const userId = searchParams.get('user_id') ?? undefined
+  const { data, error, isLoading } = useSessions(page, 50, 'start_time', 'desc', userId)
+
+  function clearUserFilter() {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev)
+      next.delete('user_id')
+      return next
+    })
+  }
 
   const filtered = useMemo(() => {
     if (!data) return []
@@ -25,7 +35,14 @@ export default function Sessions() {
 
   return (
     <div>
-      <h1 className={styles.title}>Sessions</h1>
+      <div className={styles.pageHeader}>
+        <h1 className={styles.title}>Sessions</h1>
+        {userId && (
+          <button className={styles.userChip} onClick={clearUserFilter}>
+            Filtered by: <strong>{userId}</strong> ×
+          </button>
+        )}
+      </div>
 
       <div className={styles.filterBar}>
         <input

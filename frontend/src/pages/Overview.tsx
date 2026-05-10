@@ -12,7 +12,7 @@ import {
   Card, KpiCard, DataTable, EmptyState, ErrorState, RefreshIndicator,
   KpiSkeleton, ChartSkeleton, LoadingSkeleton, sessionStatusBadge, failRateBadge, ChartTooltip,
 } from '../components'
-import { UserPicker } from '../components/UserPicker'
+import { UserSearch } from '../components/UserSearch'
 import { StatSection } from '../components/StatSection'
 import styles from './Overview.module.css'
 
@@ -257,12 +257,13 @@ export default function Overview() {
 
   const { data, error, isLoading, isValidating, mutate } = useOverview(paused ? 0 : 30_000, userId)
 
+  const userParam = userId ? `?user_id=${encodeURIComponent(userId)}` : ''
+
   return (
     <div>
       <div className={styles.header}>
         <h1 className={styles.title}>Overview</h1>
         <div className={styles.headerRight}>
-          <UserPicker />
           <RefreshIndicator
             isValidating={isValidating}
             paused={paused}
@@ -270,6 +271,8 @@ export default function Overview() {
           />
         </div>
       </div>
+
+      <UserSearch />
 
       {isLoading ? (
         <>
@@ -288,23 +291,23 @@ export default function Overview() {
         </div>
       ) : null}
 
-      <StatSection title="Sessions" viewAllHref="/sessions">
+      <StatSection title="Sessions" viewAllHref={`/sessions${userParam}`}>
         <SessionsSection userId={userId} />
       </StatSection>
 
-      <StatSection title="History" viewAllHref="/history">
+      <StatSection title="History" viewAllHref={`/history${userParam}`}>
         <HistorySection userId={userId} />
       </StatSection>
 
-      <StatSection title="Costs" viewAllHref="/costs">
+      <StatSection title="Costs" viewAllHref={`/costs${userParam}`}>
         <CostsSection userId={userId} />
       </StatSection>
 
-      <StatSection title="Tools" viewAllHref="/tools">
+      <StatSection title="Tools" viewAllHref={`/tools${userParam}`}>
         <ToolsSection userId={userId} />
       </StatSection>
 
-      <StatSection title="Models" viewAllHref="/models">
+      <StatSection title="Models" viewAllHref={`/models${userParam}`}>
         <ModelsSection userId={userId} />
       </StatSection>
     </div>

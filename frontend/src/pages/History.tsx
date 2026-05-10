@@ -1,4 +1,5 @@
 import { useState, useMemo, useCallback } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip,
   ResponsiveContainer, Legend,
@@ -315,7 +316,17 @@ export default function History() {
   const [from, setFrom] = useState(daysAgo(30))
   const [to, setTo] = useState(today())
   const [activePreset, setActivePreset] = useState<string>('30d')
-  const { data, error, isLoading } = useHistory(gran, from, to)
+  const [searchParams, setSearchParams] = useSearchParams()
+  const userId = searchParams.get('user_id') ?? undefined
+  const { data, error, isLoading } = useHistory(gran, from, to, userId)
+
+  function clearUserFilter() {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev)
+      next.delete('user_id')
+      return next
+    })
+  }
 
   const applyPreset = (p: Preset) => {
     setActivePreset(p.label)
@@ -334,7 +345,14 @@ export default function History() {
   return (
     <div>
       <div className={styles.header}>
-        <h1 className={styles.title}>History</h1>
+        <div>
+          <h1 className={styles.title}>History</h1>
+          {userId && (
+            <button className={styles.userChip} onClick={clearUserFilter}>
+              Filtered by: <strong>{userId}</strong> ×
+            </button>
+          )}
+        </div>
         <div className={styles.controls}>
           <div className={styles.presets}>
             {PRESETS.map(p => (
