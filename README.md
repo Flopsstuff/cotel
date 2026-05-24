@@ -1,3 +1,5 @@
+<img src="assets/logo.svg" alt="Flopsstuff logo" width="80">
+
 # cotel — Claude Code Telemetry
 
 One Docker container. OTLP ingest on `:4318`, interactive analytics dashboard on `:8080`. No cloud dependencies, no sign-up.
