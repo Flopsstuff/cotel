@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#1a1a2e"/>
+      <stop offset="100%" style="stop-color:#16213e"/>
+    </linearGradient>
+    <linearGradient id="fg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#e94560"/>
+      <stop offset="100%" style="stop-color:#0f3460"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#e94560"/>
+      <stop offset="100%" style="stop-color:#c0392b"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Square background with rounded corners -->
+  <rect width="200" height="200" rx="24" ry="24" fill="url(#bg)"/>
+
+  <!-- Subtle grid lines for tech feel -->
+  <line x1="100" y1="20" x2="100" y2="180" stroke="#ffffff" stroke-opacity="0.04" stroke-width="1"/>
+  <line x1="20" y1="100" x2="180" y2="100" stroke="#ffffff" stroke-opacity="0.04" stroke-width="1"/>
+
+  <!-- F letter — geometric, bold -->
+  <!-- Vertical bar of F -->
+  <rect x="38" y="44" width="14" height="112" rx="3" fill="#f0f0f5"/>
+
+  <!-- Top horizontal bar of F -->
+  <rect x="38" y="44" width="54" height="14" rx="3" fill="#f0f0f5"/>
+
+  <!-- Middle horizontal bar of F -->
+  <rect x="38" y="94" width="42" height="12" rx="3" fill="#f0f0f5"/>
+
+  <!-- S letter — geometric, bold -->
+  <!-- Top arc of S (top bar) -->
+  <rect x="108" y="44" width="54" height="14" rx="7" fill="url(#accent)"/>
+
+  <!-- Upper vertical of S (left side, top half) -->
+  <rect x="108" y="44" width="14" height="50" rx="3" fill="url(#accent)"/>
+
+  <!-- Middle bar of S -->
+  <rect x="108" y="93" width="54" height="12" rx="6" fill="url(#accent)"/>
+
+  <!-- Lower vertical of S (right side, bottom half) -->
+  <rect x="148" y="93" width="14" height="50" rx="3" fill="url(#accent)"/>
+
+  <!-- Bottom bar of S -->
+  <rect x="108" y="142" width="54" height="14" rx="7" fill="url(#accent)"/>
+
+  <!-- Divider line between F and S -->
+  <line x1="100" y1="50" x2="100" y2="150" stroke="#e94560" stroke-opacity="0.3" stroke-width="1"/>
+
+  <!-- Bottom tagline area -->
+  <rect x="38" y="170" width="124" height="2" rx="1" fill="#e94560" fill-opacity="0.4"/>
+</svg>
