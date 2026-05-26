@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+#
+# prepare-commit-msg — append the per-agent co-author trailer idempotently.
+#
+# Part of the FlopBut agent-identity scheme (see docs/operations/agent-identity.md).
+# Each local agent runs with GIT_AUTHOR_NAME / GIT_AUTHOR_EMAIL injected by its
+# Paperclip adapter env. This hook turns those into a second co-author trailer so
+# the agent is credited in the commit body in addition to the author/committer
+# fields. The mandatory `Co-Authored-By: Paperclip <noreply@paperclip.ing>` line
+# is added by the agent itself per the skill rule and is left untouched here.
+#
+# Idempotent: re-running never duplicates a trailer. Safe to install in every repo.
+
+set -euo pipefail
+
+COMMIT_MSG_FILE="$1"
+COMMIT_SOURCE="${2:-}"
+
+# Skip for merge/squash commits and when amending an existing message — those
+# already carry trailers or are machine-generated.
+case "$COMMIT_SOURCE" in
+  merge|squash) exit 0 ;;
+esac
+
+NAME="${GIT_AUTHOR_NAME:-}"
+EMAIL="${GIT_AUTHOR_EMAIL:-}"
+
+# No agent identity in env → nothing to attribute. Leave the message untouched.
+[ -n "$NAME" ] && [ -n "$EMAIL" ] || exit 0
+
+TRAILER="Co-authored-by: ${NAME} <${EMAIL}>"
+
+# Already present (case-insensitive on the trailer key, exact on name+email)?
+if grep -qiF "$TRAILER" "$COMMIT_MSG_FILE"; then
+  exit 0
+fi
+
+# Ensure a blank line separates the body from the trailer block, then append.
+if [ -s "$COMMIT_MSG_FILE" ] && [ -n "$(tail -c1 "$COMMIT_MSG_FILE")" ]; then
+  printf '\n' >> "$COMMIT_MSG_FILE"
+fi
+printf '%s\n' "$TRAILER" >> "$COMMIT_MSG_FILE"
