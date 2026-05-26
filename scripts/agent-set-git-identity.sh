@@ -77,8 +77,14 @@ if all(current(k) == v for k, v in want.items()):
 
 for k, v in want.items():
     env[k] = {"type": "plain", "value": v}
-ac["env"] = env
 
-call("PATCH", f"/api/agents/{agent_id}", {"adapterConfig": ac})
+# Send ONLY env, not the whole adapterConfig. The API shallow-merges top-level
+# adapterConfig keys, so model / skills / instructions are preserved either way.
+# But it also rejects agent self-edits that carry instructions* bundle-config
+# keys (403 "cannot modify instructions path or bundle configuration") — even
+# when unchanged. Empirically verified: a full-adapterConfig self-PATCH 403s for
+# managed-instruction agents, while an env-only PATCH returns 200 and leaves the
+# rest of adapterConfig intact.
+call("PATCH", f"/api/agents/{agent_id}", {"adapterConfig": {"env": env}})
 print(f"set git identity: {name} <{email}> (applies on the next run)")
 PY
