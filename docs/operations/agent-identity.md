@@ -42,11 +42,28 @@ Each local agent's Paperclip `adapterConfig.env` carries four variables:
 ```
 
 `GIT_*` env vars override `git config` in **every** repository, so no per-repo
-setup is needed. When adding them, **merge** into the existing `env` — do not
-replace it (some agents carry other env such as an OTEL header).
+setup is needed. New values take effect on the agent's **next** run (the current
+process inherited its env at spawn).
 
-Applying these requires the `agents:create` permission and is done by the board
-/ CEO via `PATCH /api/agents/{agentId}` with the merged `adapterConfig`.
+### Rolling it out — agents self-apply
+
+Each agent runs this once, inside a heartbeat:
+
+```bash
+scripts/agent-set-git-identity.sh
+```
+
+It reads the agent's own name from `/api/agents/me`, derives the email, and
+**merges** the four `GIT_*` vars into its own `adapterConfig.env`. Idempotent.
+
+> **Why self-apply, not a central rollout?** A `PATCH` to `adapterConfig`
+> *replaces* the whole `env` object, and the API redacts other agents' configs
+> and rejects cross-agent edits unless the caller holds `agents:create` (most
+> agents, including the CTO, do not). Even an authorized caller cannot read
+> another agent's *secret* env (e.g. an adapter API key) to merge it back, so a
+> blind cross-agent write would silently wipe secrets. An agent editing itself
+> can read its full env and merge safely — so self-apply is both the only
+> permitted path and the only safe one.
 
 ## 2. Commit trailers
 
