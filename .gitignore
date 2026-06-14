@@ -11,3 +11,7 @@ internal/dashboard/static/assets/
 docs/node_modules/
 docs/.vitepress/dist/
 docs/.vitepress/cache/
+
+# MCP
+.playwright-mcp/
+.markdown_vault_mcp/
