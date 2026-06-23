@@ -113,6 +113,62 @@ gh label create "agent:wayland" --color BFD4F2 -f
 gh pr create --title "..." --body $'...\n\nAgent: Wayland' --label agent:wayland
 ```
 
+## 4. Telemetry (OTEL) identity
+
+Each local agent reports its Claude Code telemetry to cotel under its **own**
+ingest token, so the dashboard's **Users** view separates agents instead of
+merging them into one bucket. The token is injected exactly like the `GIT_*`
+vars — through the agent's Paperclip `adapterConfig.env`:
+
+```json
+"env": {
+  "OTEL_EXPORTER_OTLP_HEADERS": { "type": "plain", "value": "Authorization=Bearer cotel_<agent-token>" }
+}
+```
+
+Paperclip writes this into the spawned process environment (visible in
+`/proc/<pid>/environ`). Claude Code inherits it at startup, so the agent's spans
+carry its own token.
+
+### The hard rule — never hardcode per-agent identity vars in shared `settings.json`
+
+> **Per-agent identity vars (`OTEL_EXPORTER_OTLP_HEADERS`, `GIT_*`) must NEVER
+> appear in the shared global `~/.claude/settings.json` `env` block.**
+
+Claude Code reads the `settings.json` `env` block at startup and applies it
+**over** the inherited process environment. A token hardcoded there therefore
+*clobbers* every agent's injected per-agent token — all telemetry collapses into
+that one default bucket. This is exactly the bug [FLO-485](/FLO/issues/FLO-485)
+surfaced and [FLO-486](/FLO/issues/FLO-486) fixed: the shared `settings.json`
+pinned a default `cotel_654b…` header, so spans from every agent landed under it
+despite each process carrying a distinct token in `/proc/<pid>/environ`.
+
+The same precedence trap applies to `GIT_*` — keep those out of the shared
+`settings.json` too (they already live only in per-agent `adapterConfig.env`).
+
+`settings.json` keeps only the **identity-independent** OTEL config, shared by
+everyone:
+
+```json
+"env": {
+  "CLAUDE_CODE_ENABLE_TELEMETRY": "1",
+  "CLAUDE_CODE_ENHANCED_TELEMETRY_BETA": "1",
+  "OTEL_TRACES_EXPORTER": "otlp",
+  "OTEL_EXPORTER_OTLP_PROTOCOL": "http/json",
+  "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "https://otlp.aignite.pl/v1/traces"
+}
+```
+
+### Where the human's interactive default lives
+
+The board's **own** interactive `claude` sessions are not spawned by Paperclip,
+so they inherit no per-agent token. Their default token is exported from
+`~/.bashrc`, below its interactive guard (`case $- in *i*) ;; *) return;; esac`).
+That guard is what makes this safe: Paperclip spawns agents with a
+non-interactive `bash -c`, which returns before reaching the export, so an agent
+never picks up the human default — it keeps its own injected token. Interactive
+human shells run the export and report under the default token.
+
 ## Scope
 
 Repositories in scope: `cotel`, `ksef-docs`, and any new repo under
