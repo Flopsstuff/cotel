@@ -50,6 +50,12 @@ function SessionsSection({ userId }: { userId?: string }) {
           ),
         },
         {
+          key: 'user_id',
+          label: 'User',
+          render: (v) =>
+            v ? String(v) : <span className={styles.anonUser}>anonymous</span>,
+        },
+        {
           key: 'first_seen',
           label: 'Started',
           render: (v) => new Date(String(v)).toLocaleString(),
