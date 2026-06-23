@@ -4,7 +4,9 @@ export default defineConfig({
   title: 'cotel',
   description: 'Claude Code Telemetry — self-hosted OTLP ingest + analytics dashboard',
   base: '/cotel/',
-  ignoreDeadLinks: [/^http:\/\/localhost/],
+  // /FLO/... are Paperclip board tracker references, not VitePress pages — they
+  // resolve on the board, not on GitHub Pages, so exclude them from the dead-link check.
+  ignoreDeadLinks: [/^http:\/\/localhost/, /^\/FLO\//],
 
   themeConfig: {
     nav: [
