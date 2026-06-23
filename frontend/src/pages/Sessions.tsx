@@ -22,11 +22,21 @@ export default function Sessions() {
     })
   }
 
+  function applyUserFilter(uid: string) {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev)
+      next.set('user_id', uid)
+      return next
+    })
+    setPage(1)
+  }
+
   const filtered = useMemo(() => {
     if (!data) return []
+    const needle = search.toLowerCase()
     return data.items.filter(
       (s) =>
-        (search === '' || s.session_id.toLowerCase().includes(search.toLowerCase())) &&
+        (search === '' || (s.user_id ?? '').toLowerCase().includes(needle)) &&
         (statusFilter === 'all' || s.status === statusFilter),
     )
   }, [data, search, statusFilter])
@@ -47,7 +57,7 @@ export default function Sessions() {
       <div className={styles.filterBar}>
         <input
           className={styles.searchInput}
-          placeholder="Search by session ID…"
+          placeholder="Search by user…"
           value={search}
           onChange={(e) => { setSearch(e.target.value); setPage(1) }}
         />
@@ -87,6 +97,23 @@ export default function Sessions() {
                     {String(v).slice(0, 16)}…
                   </Link>
                 ),
+              },
+              {
+                key: 'user_id',
+                label: 'User',
+                sortable: true,
+                render: (v) =>
+                  v ? (
+                    <button
+                      className={styles.userLink}
+                      onClick={(e) => { e.stopPropagation(); applyUserFilter(String(v)) }}
+                      title={`Filter by ${v}`}
+                    >
+                      {String(v)}
+                    </button>
+                  ) : (
+                    <span className={styles.anonUser}>anonymous</span>
+                  ),
               },
               {
                 key: 'first_seen',

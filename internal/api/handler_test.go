@@ -241,6 +241,28 @@ func TestSessions(t *testing.T) {
 				}
 			},
 		},
+		{
+			name: "surfaces user_id",
+			seed: func(t *testing.T, db *storage.DB) {
+				now := time.Now()
+				insertSpan(t, db, storage.Span{
+					TraceID: "t1", SpanID: "s1", Name: "llm", SessionID: "sess1",
+					UserID: "alice", StartTime: now, EndTime: now.Add(time.Second),
+				})
+			},
+			path:       "/api/v1/sessions",
+			wantStatus: http.StatusOK,
+			checkBody: func(t *testing.T, body map[string]any) {
+				items, ok := body["items"].([]any)
+				if !ok || len(items) != 1 {
+					t.Fatalf("want 1 item, got %v", body["items"])
+				}
+				item := items[0].(map[string]any)
+				if item["user_id"] != "alice" {
+					t.Errorf("want user_id=alice, got %v", item["user_id"])
+				}
+			},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

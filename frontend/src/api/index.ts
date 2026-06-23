@@ -20,6 +20,7 @@ export interface OverviewResponse {
 
 export interface SessionItem {
   session_id: string
+  user_id: string
   first_seen: string
   last_seen: string
   model: string
