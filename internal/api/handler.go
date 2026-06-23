@@ -309,6 +309,7 @@ func (h *Handler) handleOverview(w http.ResponseWriter, r *http.Request) {
 
 type sessionItem struct {
 	SessionID    string  `json:"session_id"`
+	UserID       string  `json:"user_id"`
 	FirstSeen    string  `json:"first_seen"`
 	LastSeen     string  `json:"last_seen"`
 	Model        string  `json:"model"`
@@ -368,7 +369,8 @@ func (h *Handler) handleSessions(w http.ResponseWriter, r *http.Request) {
 			COALESCE(SUM(input_tokens), 0),
 			COALESCE(SUM(output_tokens), 0),
 			COUNT(*) FILTER (WHERE tool_name IS NOT NULL AND tool_name <> ''),
-			MAX(CASE WHEN status_code = 2 THEN 1 ELSE 0 END)
+			MAX(CASE WHEN status_code = 2 THEN 1 ELSE 0 END),
+			COALESCE(MAX(user_id), '')
 		FROM spans
 		WHERE session_id IS NOT NULL%s
 		GROUP BY session_id
@@ -394,7 +396,7 @@ func (h *Handler) handleSessions(w http.ResponseWriter, r *http.Request) {
 		var firstSeen, lastSeen time.Time
 		var hasError int
 		if err := rows.Scan(&s.SessionID, &firstSeen, &lastSeen, &s.Model,
-			&s.CostUSD, &s.InputTokens, &s.OutputTokens, &s.ToolCalls, &hasError); err != nil {
+			&s.CostUSD, &s.InputTokens, &s.OutputTokens, &s.ToolCalls, &hasError, &s.UserID); err != nil {
 			continue
 		}
 		s.FirstSeen = firstSeen.UTC().Format(time.RFC3339)

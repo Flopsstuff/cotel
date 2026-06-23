@@ -9,7 +9,7 @@ One Docker container. OTLP ingest on `:4318`, interactive analytics dashboard on
 ## What you get
 
 - **Overview dashboard** — KPI cards for sessions, unique users, total cost, and token counts (30-day window), with per-user filter across all charts
-- **Sessions** — live table of every Claude Code session with model, duration, cost, and status (OK / ERROR)
+- **Sessions** — live table of every Claude Code session with user, model, duration, cost, and status (OK / ERROR); search by user and click any user to filter the table to their sessions
 - **History** — time-series and daily-activity heatmaps for sessions and token spend over time
 - **Costs** — cumulative spend chart + breakdown table by model
 - **Tools** — call counts, average duration, and error rate per tool (`Bash`, `Read`, `Edit`, …)
