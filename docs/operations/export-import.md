@@ -156,4 +156,4 @@ Import uses **insert-or-skip** semantics. Re-importing the same archive inserts 
 ## References
 
 - [ADR-0005 — Export/Import Format](../decisions/0005-export-import-format.md) — full architectural rationale, format specification, and migration strategy
-- [README — Export and import](../../README.md#export-and-import) — quick-reference section
+- [README — Export and import](https://github.com/Flopsstuff/cotel/blob/main/README.md#export-and-import) — quick-reference section
