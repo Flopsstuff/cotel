@@ -44,6 +44,11 @@
   color: var(--color-accent);
 }
 
+.anonUser {
+  color: var(--color-text-2);
+  font-style: italic;
+}
+
 .viewAll {
   display: flex;
   justify-content: flex-end;
