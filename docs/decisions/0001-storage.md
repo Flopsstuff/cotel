@@ -49,3 +49,38 @@ Reasons:
 - One writer at a time: the ingest handler queues writes through a channel; concurrent dashboard reads use DuckDB's read-only connection pool.
 - Schema changes require migrations (versioned `.sql` files). Schema is frozen at the OTLP boundary — column renames break Claude Code integrations.
 - Down-sampling job is a Go ticker inside the same process. If the container restarts mid-roll-up, the job re-runs idempotently (window functions on raw data).
+
+---
+
+## Known engine trap: virtual generated columns and secondary indexes
+
+`spans` declares `duration_ms` as a VIRTUAL generated column and carries four
+secondary indexes. That combination makes DuckDB answer some constant-equality
+predicates — `WHERE tool_name = 'Bash'` — with **zero rows** instead of the
+matching ones: a silent wrong result, not an error and not a slowdown.
+
+A virtual generated column takes a logical slot but no storage slot, so every
+column declared after it has logical index = physical index + 1. A column is
+answered wrongly exactly when its logical index collides with the *physical*
+index of an indexed column: the scan concludes an index covers the predicate,
+probes that unrelated ART index for the constant, and finds nothing. On the
+current layout `service_name` (logical 7) collides with `session_id` (physical
+7), and `tool_name` (logical 10) with `user_id` (physical 10).
+
+Two consequences for anyone touching this schema:
+
+- **The affected set is a property of the layout, not of those two columns.**
+  Adding, reordering, or indexing a column silently moves the collisions.
+  `TestSpansEqualityUnderFilterPushdown` in `internal/storage` derives the set
+  from the live schema on every run and fails in both directions, so a moved
+  collision is a red build rather than an empty dashboard panel.
+- **Wrapping the column keeps the predicate out of the pushdown**
+  (`COALESCE(col, '') = …`), which is the workaround in use today. It is not
+  durable: DuckDB 1.4+ pushes `COALESCE` down too, so the same guard test also
+  asserts the workaround still returns the truth.
+
+Verified present on DuckDB 1.1.3 (bundled), 1.4.1 and 1.5.5, so upgrading the
+engine does not resolve it. Neither does `STORED` — DuckDB rejects stored
+generated columns outright. The root-cause fix is to stop declaring
+`duration_ms` as a generated column mid-table; that is a schema migration and
+is tracked separately.
