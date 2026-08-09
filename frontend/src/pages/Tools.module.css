@@ -27,10 +27,21 @@
   white-space: nowrap;
 }
 
+.section {
+  margin-top: var(--space-6);
+}
+
+.sectionTitle {
+  font-size: var(--text-lg);
+  font-weight: 600;
+  color: var(--color-text-1);
+  margin: 0 0 var(--space-1);
+}
+
 .sectionNote {
   font-size: var(--text-sm);
   color: var(--color-text-3);
-  margin-bottom: var(--space-3);
+  margin: 0 0 var(--space-3);
 }
 
 .commandCell {

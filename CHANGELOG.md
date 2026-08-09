@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Tools page is flat: the tools table sits directly on the page instead of inside an "All Tools" card. `DataTable` already draws its own bordered surface, so the card put a box inside a box for a heading the page title already gave. Matches the Users page
+- The Bash commands section no longer vanishes when it has no rows — it always renders and says why it is empty. Claude Code's tool spans carry `tool_name`, `tool_use_id` and `duration_ms` only: which tool ran, not what it ran. No `command` attribute is ever sent (verified against a captured live session, including the enhanced-telemetry beta), so this breakdown stays empty against Claude Code telemetry no matter what — the DuckDB filter-pushdown fix in 0.3.0 was a real bug fix but could not, on its own, put rows in this table. The endpoint is kept for OTLP producers that do send `command`
+
 ## [0.3.0] - 2026-08-09
 
 ### Fixed
