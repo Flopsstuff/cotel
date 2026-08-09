@@ -1,7 +1,7 @@
 import { ReactNode, useState, useMemo } from 'react'
 import styles from './DataTable.module.css'
 
-type SortState<T> = { key: keyof T; dir: 'asc' | 'desc' } | null
+export type SortState<T> = { key: keyof T; dir: 'asc' | 'desc' } | null
 
 export interface Column<T> {
   key: keyof T
@@ -14,13 +14,19 @@ interface DataTableProps<T extends object> {
   columns: Column<T>[]
   rows: T[]
   onRowClick?: (row: T) => void
+  // Controlled sort: pass both to drive sorting externally (e.g. server-side).
+  // When onSortChange is absent the table sorts its own rows, exactly as before.
+  sort?: SortState<T>
+  onSortChange?: (next: NonNullable<SortState<T>>) => void
 }
 
-export function DataTable<T extends object>({ columns, rows, onRowClick }: DataTableProps<T>) {
-  const [sort, setSort] = useState<SortState<T>>(null)
+export function DataTable<T extends object>({ columns, rows, onRowClick, sort: controlledSort, onSortChange }: DataTableProps<T>) {
+  const controlled = onSortChange != null
+  const [internalSort, setInternalSort] = useState<SortState<T>>(null)
+  const sort = controlled ? controlledSort ?? null : internalSort
 
   const sorted = useMemo(() => {
-    if (!sort) return rows
+    if (controlled || !sort) return rows
     const { key, dir } = sort
     return [...rows].sort((a, b) => {
       const av = a[key] as unknown
@@ -30,15 +36,19 @@ export function DataTable<T extends object>({ columns, rows, onRowClick }: DataT
       const cmp = sa < sb ? -1 : sa > sb ? 1 : 0
       return dir === 'asc' ? cmp : -cmp
     })
-  }, [rows, sort])
+  }, [rows, sort, controlled])
 
   function handleHeaderClick(col: Column<T>) {
     if (!col.sortable) return
-    setSort((prev) =>
-      prev?.key === col.key
-        ? { key: col.key, dir: prev.dir === 'asc' ? 'desc' : 'asc' }
-        : { key: col.key, dir: 'asc' },
-    )
+    const next: NonNullable<SortState<T>> =
+      sort?.key === col.key
+        ? { key: col.key, dir: sort.dir === 'asc' ? 'desc' : 'asc' }
+        : { key: col.key, dir: 'asc' }
+    if (controlled) {
+      onSortChange!(next)
+    } else {
+      setInternalSort(next)
+    }
   }
 
   return (

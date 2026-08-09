@@ -12,6 +12,7 @@ import Tools from './pages/Tools'
 import Models from './pages/Models'
 import History from './pages/History'
 import Users from './pages/Users'
+import UserDetail from './pages/UserDetail'
 import Setup from './pages/Setup'
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
@@ -22,6 +23,7 @@ createRoot(document.getElementById('root')!).render(
           <Route path="/sessions" element={<Sessions />} />
           <Route path="/sessions/:id" element={<SessionDetail />} />
           <Route path="/users" element={<Users />} />
+          <Route path="/users/:id" element={<UserDetail />} />
           <Route path="/costs" element={<Costs />} />
           <Route path="/tools" element={<Tools />} />
           <Route path="/models" element={<Models />} />

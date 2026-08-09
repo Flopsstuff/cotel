@@ -1,0 +1,216 @@
+.modalOverlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+}
+
+.modal {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-6);
+  width: 360px;
+  box-shadow: var(--shadow-2);
+}
+
+.modalHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-3);
+}
+
+.modalTitle {
+  font-size: var(--text-lg);
+  font-weight: 600;
+  color: var(--color-text-1);
+  margin: 0;
+}
+
+.dismissBtn {
+  background: none;
+  border: none;
+  font-size: 18px;
+  color: var(--color-text-3);
+  cursor: pointer;
+  padding: 0 var(--space-1);
+  line-height: 1;
+}
+
+.modalPreamble {
+  font-size: var(--text-sm);
+  color: var(--color-text-2);
+  margin: 0 0 var(--space-4);
+}
+
+.radioCard {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md, 6px);
+  padding: var(--space-3);
+  margin-bottom: var(--space-3);
+  cursor: pointer;
+  background: var(--color-surface-2);
+  transition: border-color 0.1s;
+}
+
+.radioCard:focus {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.radioCardSelectedA {
+  border-color: var(--color-accent);
+  background: var(--color-surface-2);
+}
+
+.radioCardSelectedB {
+  border-color: var(--color-error, #dc2626);
+  background: var(--color-error-bg, #fee2e2);
+}
+
+.radioRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-1);
+}
+
+.radioMark {
+  font-size: 12px;
+  color: var(--color-text-2);
+  flex-shrink: 0;
+}
+
+.radioLabel {
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--color-text-1);
+}
+
+.permanentBadge {
+  margin-left: auto;
+  font-size: var(--text-xs);
+  font-weight: 500;
+  color: #b45309;
+  background: #fef3c7;
+  border: 1px solid #fcd34d;
+  border-radius: var(--radius-sm);
+  padding: 1px 6px;
+}
+
+.radioDesc {
+  font-size: var(--text-xs);
+  color: var(--color-text-2);
+  line-height: 1.5;
+  margin: 0;
+}
+
+.confirmInputWrap {
+  margin-top: var(--space-3);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .confirmInputAnimate {
+    animation: slideDown 0.15s ease-out;
+  }
+}
+
+@keyframes slideDown {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.confirmLabel {
+  display: block;
+  font-size: var(--text-xs);
+  color: var(--color-text-2);
+  margin-bottom: var(--space-1);
+}
+
+.confirmInput {
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+  font-size: var(--text-sm);
+  font-family: var(--font-mono);
+  color: var(--color-text-1);
+  box-sizing: border-box;
+}
+
+.confirmInput:focus {
+  border-color: var(--color-error, #dc2626);
+  outline: none;
+}
+
+.fieldError {
+  margin-top: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--color-error, #dc2626);
+}
+
+.modalFooter {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--color-border);
+  margin-top: var(--space-4);
+}
+
+.ghostBtn {
+  padding: var(--space-2) var(--space-4);
+  background: none;
+  color: var(--color-text-2);
+  border: none;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.ghostBtn:hover {
+  color: var(--color-text-1);
+  background: var(--color-surface-2);
+}
+
+.secondaryBtn {
+  padding: var(--space-2) var(--space-4);
+  background: var(--color-surface);
+  color: var(--color-text-1);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.secondaryBtn:hover {
+  background: var(--color-surface-2);
+}
+
+.dangerBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-4);
+  background: var(--color-error, #dc2626);
+  color: white;
+  border: none;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.dangerBtn:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.dangerBtn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}

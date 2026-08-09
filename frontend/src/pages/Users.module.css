@@ -291,6 +291,30 @@
   border-radius: var(--radius-xs, 2px);
 }
 
+/* List controls: range switcher (left) + search (right) */
+.controlsRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-4);
+}
+
+.rangeGroup {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.rangeLabel {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-2);
+}
+
 /* Search bar */
 .searchRow {
   margin-bottom: var(--space-4);
@@ -301,6 +325,7 @@
   display: flex;
   align-items: center;
   max-width: 360px;
+  flex: 1 1 240px;
 }
 
 .searchIcon {

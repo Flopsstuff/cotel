@@ -1,39 +1,51 @@
-import { useState, useCallback, useMemo, useEffect, useRef } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts'
-import { Copy, Check, Plus, RotateCcw, Trash2, Search, ChevronLeft, ChevronRight } from 'lucide-react'
-import { useUsers, createUser, rotateUserToken, deleteUser } from '../api'
-import type { User, DeleteMode } from '../api'
-import { Card, EmptyState, ErrorState, LoadingSkeleton, ChartSkeleton, ChartTooltip } from '../components'
+import { Copy, Check, Plus, Search, ChevronLeft, ChevronRight } from 'lucide-react'
+import { useUsersPage, createUser } from '../api'
+import type { User } from '../api'
+import { Card, DataTable, EmptyState, ErrorState, LoadingSkeleton, SegmentedControl } from '../components'
+import type { Column, SortState } from '../components'
+import { getCookie, setCookie } from '../lib/cookie'
 import styles from './Users.module.css'
 
-const CHART_COLORS = [
-  'var(--color-chart-1)',
-  'var(--color-chart-2)',
-  'var(--color-chart-3)',
-  'var(--color-chart-4)',
-  'var(--color-chart-5)',
+const ANON_ID = '__anonymous__'
+const PAGE_SIZE = 50
+const RANGE_COOKIE = 'cotel_users_range'
+const COOKIE_MAX_AGE = 60 * 60 * 24 * 365 // one year
+
+type RangeKey = 'all' | 'year' | 'month' | 'week' | 'day'
+type SortKey = 'name' | 'cost' | 'sessions' | 'created_at' | 'last_seen'
+
+const RANGE_OPTIONS = [
+  { value: 'all', label: 'All' },
+  { value: 'year', label: 'Year' },
+  { value: 'month', label: 'Month' },
+  { value: 'week', label: 'Week' },
+  { value: 'day', label: 'Day' },
 ]
 
-const ANON_ID = '__anonymous__'
-const PAGE_SIZE = 25
+// Short suffix shown on the range-governed columns so it is obvious the switcher
+// only scopes Cost and Sessions.
+const RANGE_SUFFIX: Record<RangeKey, string> = {
+  all: '',
+  year: '1y',
+  month: '30d',
+  week: '7d',
+  day: '24h',
+}
 
-function CopyToken({ token }: { token: string }) {
-  const [copied, setCopied] = useState(false)
-  const copy = useCallback(async (e: React.MouseEvent) => {
-    e.stopPropagation()
-    await navigator.clipboard.writeText(token)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
-  }, [token])
-  return (
-    <div className={styles.tokenCell}>
-      <code className={styles.tokenText}>{token}</code>
-      <button className={styles.iconBtn} onClick={copy} title="Copy token">
-        {copied ? <Check size={13} /> : <Copy size={13} />}
-      </button>
-    </div>
-  )
+function isRangeKey(v: string | null): v is RangeKey {
+  return v === 'all' || v === 'year' || v === 'month' || v === 'week' || v === 'day'
+}
+
+interface UserVM {
+  id: string
+  name: string
+  cost: number
+  sessions: number
+  created_at: string
+  last_seen: string | null
+  isAnon: boolean
 }
 
 function AddUserModal({ onClose, onCreated }: { onClose: () => void; onCreated: (u: User) => void }) {
@@ -110,164 +122,65 @@ function NewTokenBanner({ user, onDismiss }: { user: User; onDismiss: () => void
   )
 }
 
-interface DeleteUserModalProps {
-  user: User
-  onClose: () => void
-  onDeleted: (mode: DeleteMode) => void
-}
-
-function DeleteUserModal({ user, onClose, onDeleted }: DeleteUserModalProps) {
-  const [mode, setMode] = useState<DeleteMode | null>(null)
-  const [confirmText, setConfirmText] = useState('')
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const firstRadioRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    firstRadioRef.current?.focus()
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
-    }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
-  }, [onClose])
-
-  const modeAReady = mode === 'user_only'
-  const modeBReady = mode === 'user_and_history' && confirmText === user.name
-  const canSubmit = modeAReady || modeBReady
-
-  const handleSubmit = async () => {
-    if (!mode || !canSubmit) return
-    setLoading(true)
-    setError(null)
-    try {
-      await deleteUser(user.id, mode)
-      onDeleted(mode)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Delete failed')
-      setLoading(false)
-    }
-  }
-
-  const handleModeChange = (next: DeleteMode) => {
-    setMode(next)
-    if (next !== 'user_and_history') setConfirmText('')
-    setError(null)
-  }
-
-  const confirmLabel = mode === 'user_and_history' ? 'Permanently delete' : 'Delete user'
-
-  return (
-    <div className={styles.modalOverlay} onClick={(e) => e.target === e.currentTarget && onClose()}>
-      <div className={styles.modal} role="dialog" aria-modal="true" aria-labelledby="delete-modal-title">
-        <div className={styles.modalHeader}>
-          <h2 className={styles.modalTitle} id="delete-modal-title">Delete user</h2>
-          <button className={styles.dismissBtn} onClick={onClose} aria-label="Close">×</button>
-        </div>
-        <p className={styles.modalPreamble}>
-          You are about to delete <strong>{user.name}</strong>. Choose what to delete:
-        </p>
-
-        {/* Mode A */}
-        <div
-          ref={firstRadioRef}
-          role="radio"
-          aria-checked={mode === 'user_only'}
-          tabIndex={0}
-          className={`${styles.radioCard} ${mode === 'user_only' ? styles.radioCardSelectedA : ''}`}
-          onClick={() => handleModeChange('user_only')}
-          onKeyDown={(e) => (e.key === ' ' || e.key === 'Enter') && handleModeChange('user_only')}
-        >
-          <div className={styles.radioRow}>
-            <span className={styles.radioMark}>{mode === 'user_only' ? '●' : '○'}</span>
-            <span className={styles.radioLabel}>Delete user only</span>
-          </div>
-          <p className={styles.radioDesc}>
-            Revokes {user.name}'s login access. All session history and telemetry stays attributed to {user.name}. Reversible by re-creating a user with the same name.
-          </p>
-        </div>
-
-        {/* Mode B */}
-        <div
-          role="radio"
-          aria-checked={mode === 'user_and_history'}
-          tabIndex={0}
-          className={`${styles.radioCard} ${mode === 'user_and_history' ? styles.radioCardSelectedB : ''}`}
-          onClick={() => handleModeChange('user_and_history')}
-          onKeyDown={(e) => (e.key === ' ' || e.key === 'Enter') && handleModeChange('user_and_history')}
-        >
-          <div className={styles.radioRow}>
-            <span className={styles.radioMark}>{mode === 'user_and_history' ? '●' : '○'}</span>
-            <span className={styles.radioLabel}>Delete user + history</span>
-            <span className={styles.permanentBadge}>⚠ Permanent</span>
-          </div>
-          <p className={styles.radioDesc}>
-            Revokes access and permanently replaces {user.name} with [deleted] in all telemetry. Session data is preserved but permanently unattributable. This cannot be undone.
-          </p>
-          {mode === 'user_and_history' && (
-            <div className={`${styles.confirmInputWrap} ${styles.confirmInputAnimate}`}>
-              <label className={styles.confirmLabel}>Type "{user.name}" to confirm:</label>
-              <input
-                className={styles.confirmInput}
-                value={confirmText}
-                onChange={(e) => setConfirmText(e.target.value)}
-                autoFocus
-                onKeyDown={(e) => e.key === 'Enter' && modeBReady && !loading && handleSubmit()}
-                spellCheck={false}
-              />
-            </div>
-          )}
-        </div>
-
-        {error && <div className={styles.fieldError}>{error}</div>}
-
-        <div className={styles.modalFooter}>
-          <button className={styles.ghostBtn} onClick={onClose} disabled={loading}>Cancel</button>
-          <button
-            className={mode === 'user_and_history' ? styles.dangerBtn : styles.secondaryBtn}
-            disabled={!canSubmit || loading}
-            onClick={handleSubmit}
-          >
-            {loading ? 'Deleting…' : (mode == null ? 'Delete' : confirmLabel)}
-          </button>
-        </div>
-      </div>
-    </div>
-  )
-}
-
 export default function Users() {
   const navigate = useNavigate()
-  const { data, error, isLoading, mutate } = useUsers()
+
+  const [range, setRange] = useState<RangeKey>(() => {
+    const c = getCookie(RANGE_COOKIE)
+    return isRangeKey(c) ? c : 'month'
+  })
+  const [sort, setSort] = useState<SortKey>('cost')
+  const [order, setOrder] = useState<'asc' | 'desc'>('desc')
+  const [page, setPage] = useState(1)
+  const [search, setSearch] = useState('')
+  const [q, setQ] = useState('')
+
   const [showAdd, setShowAdd] = useState(false)
   const [newUser, setNewUser] = useState<User | null>(null)
-  const [actionError, setActionError] = useState<string | null>(null)
-  const [toast, setToast] = useState<string | null>(null)
-  const [deleteTarget, setDeleteTarget] = useState<User | null>(null)
-  const [search, setSearch] = useState('')
-  const [page, setPage] = useState(0)
 
-  const users = data?.users ?? []
-  const chartData = [...users]
-    .sort((a, b) => b.cost - a.cost)
-    .slice(0, 10)
-    .map((u, i) => ({ name: u.name, cost: u.cost, colorIdx: i }))
+  // Debounce the search box into the server-side q parameter.
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setQ(search.trim())
+      setPage(1)
+    }, 300)
+    return () => clearTimeout(t)
+  }, [search])
 
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase()
-    if (!q) return users
-    return users.filter(
-      (u) => u.name.toLowerCase().includes(q) || u.token.toLowerCase().startsWith(q)
-    )
-  }, [users, search])
+  const { data, error, isLoading, mutate } = useUsersPage({
+    range,
+    q: q || undefined,
+    sort,
+    order,
+    page,
+    limit: PAGE_SIZE,
+  })
 
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
-  const safePage = Math.min(page, totalPages - 1)
-  const pageSlice = filtered.slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE)
+  const total = data?.total ?? 0
+  const rows: UserVM[] = (data?.users ?? []).map((u) => ({
+    id: u.id,
+    name: u.name,
+    cost: u.cost,
+    sessions: u.sessions,
+    created_at: u.created_at,
+    last_seen: u.last_seen,
+    isAnon: u.id === ANON_ID,
+  }))
 
-  const handleSearch = (q: string) => {
-    setSearch(q)
-    setPage(0)
+  const suffix = RANGE_SUFFIX[range]
+  const scoped = (label: string) => (suffix ? `${label} (${suffix})` : label)
+
+  const changeRange = (v: string) => {
+    if (!isRangeKey(v)) return
+    setRange(v)
+    setCookie(RANGE_COOKIE, v, COOKIE_MAX_AGE)
+    setPage(1)
+  }
+
+  const handleSortChange = (next: NonNullable<SortState<UserVM>>) => {
+    setSort(next.key as SortKey)
+    setOrder(next.dir)
+    setPage(1)
   }
 
   const handleCreated = (u: User) => {
@@ -276,58 +189,48 @@ export default function Users() {
     mutate()
   }
 
-  const handleRotate = async (e: React.MouseEvent, u: User) => {
-    e.stopPropagation()
-    if (!confirm(`Rotate token for "${u.name}"? The old token will stop working immediately.`)) return
-    setActionError(null)
-    try {
-      await rotateUserToken(u.id)
-      mutate()
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : 'Rotate failed')
-    }
-  }
+  const columns: Column<UserVM>[] = [
+    {
+      key: 'name',
+      label: 'Name',
+      sortable: true,
+      render: (_v, row) => (
+        <span className={row.isAnon ? styles.userNameAnon : styles.userName}>{row.name}</span>
+      ),
+    },
+    {
+      key: 'cost',
+      label: scoped('Cost'),
+      sortable: true,
+      render: (v) => <span className={styles.dimText}>${Number(v).toFixed(2)}</span>,
+    },
+    {
+      key: 'sessions',
+      label: scoped('Sessions'),
+      sortable: true,
+      render: (v) => <span className={styles.dimText}>{Number(v).toLocaleString()}</span>,
+    },
+    {
+      key: 'created_at',
+      label: 'Created',
+      sortable: true,
+      render: (v, row) => (
+        <span className={styles.dimText}>
+          {row.isAnon || !v ? '—' : new Date(String(v)).toLocaleDateString()}
+        </span>
+      ),
+    },
+    {
+      key: 'last_seen',
+      label: 'Last seen',
+      sortable: true,
+      render: (v) => (
+        <span className={styles.dimText}>{v ? new Date(String(v)).toLocaleString() : '—'}</span>
+      ),
+    },
+  ]
 
-  const showToast = (msg: string) => {
-    setToast(msg)
-    setTimeout(() => setToast(null), 4000)
-  }
-
-  const handleDeleteAnon = async (e: React.MouseEvent) => {
-    e.stopPropagation()
-    if (!confirm('Delete all anonymous telemetry? All unattributed spans and daily summaries will be permanently removed. This cannot be undone.')) return
-    setActionError(null)
-    try {
-      await deleteUser(ANON_ID)
-      mutate()
-      showToast('Anonymous telemetry deleted')
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : 'Delete failed')
-    }
-  }
-
-  const handleDeleteClick = (e: React.MouseEvent, u: User) => {
-    e.stopPropagation()
-    if (u.id === ANON_ID) {
-      handleDeleteAnon(e)
-    } else {
-      setDeleteTarget(u)
-    }
-  }
-
-  const handleDeleteConfirmed = (u: User, mode: DeleteMode) => {
-    setDeleteTarget(null)
-    mutate()
-    const msg = mode === 'user_and_history'
-      ? `"${u.name}" removed and history anonymized`
-      : `"${u.name}" removed`
-    showToast(msg)
-  }
-
-  const handleRowClick = (u: User) => {
-    const uid = u.id === ANON_ID ? ANON_ID : u.name
-    navigate(`/?user_id=${encodeURIComponent(uid)}`)
-  }
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
 
   return (
     <div>
@@ -339,184 +242,76 @@ export default function Users() {
       </div>
 
       {newUser && <NewTokenBanner user={newUser} onDismiss={() => setNewUser(null)} />}
-      {actionError && <div className={styles.errorMsg}>{actionError}</div>}
-      {toast && <div className={styles.toastMsg}>{toast}</div>}
 
       {isLoading ? (
-        <>
-          <div className={styles.chartBlock}><ChartSkeleton /></div>
-          <LoadingSkeleton rows={4} height={40} />
-        </>
+        <LoadingSkeleton rows={6} height={40} />
       ) : error ? (
         <ErrorState message={error.message} />
-      ) : users.length === 0 ? (
-        <EmptyState
-          heading="No users yet"
-          subtext="Add a user to get a token for authenticated OTLP ingest. Anonymous sends are allowed by default."
-        />
       ) : (
-        <>
-          {chartData.length > 0 && (
-            <Card title="Cost by user (top 10)">
-              <div className={styles.chartBlock}>
-                <ResponsiveContainer width="100%" height={Math.max(160, chartData.length * 32)}>
-                  <BarChart data={chartData} layout="vertical" margin={{ top: 4, right: 16, bottom: 4, left: 0 }}>
-                    <XAxis
-                      type="number"
-                      tick={{ fontSize: 11, fill: 'var(--color-text-3)' }}
-                      tickFormatter={(v) => `$${Number(v).toFixed(2)}`}
-                    />
-                    <YAxis
-                      type="category"
-                      dataKey="name"
-                      tick={{ fontSize: 11, fill: 'var(--color-text-3)' }}
-                      width={120}
-                    />
-                    <Tooltip content={<ChartTooltip formatter={(v) => [`$${Number(v).toFixed(2)}`, 'Cost']} />} />
-                    <Bar dataKey="cost" radius={[0, 2, 2, 0]}>
-                      {chartData.map((entry) => (
-                        <Cell key={entry.name} fill={CHART_COLORS[entry.colorIdx % CHART_COLORS.length]} />
-                      ))}
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            </Card>
-          )}
-
-          <Card title={`All users (${filtered.length}${filtered.length !== users.length ? ` of ${users.length}` : ''})`}>
-            <div className={styles.helpCallout}>
-              Copy a token and set{' '}
-              <code className={styles.code}>OTEL_EXPORTER_OTLP_HEADERS=Authorization=Bearer &lt;token&gt;</code>{' '}
-              in your Claude Code settings (<code className={styles.code}>~/.claude/settings.json</code> or env).
-              Click a row to view that user's activity.
+        <Card>
+          <div className={styles.controlsRow}>
+            <div className={styles.rangeGroup}>
+              <span className={styles.rangeLabel}>Cost &amp; sessions:</span>
+              <SegmentedControl options={RANGE_OPTIONS} value={range} onChange={changeRange} />
             </div>
-
-            <div className={styles.searchRow}>
-              <div className={styles.searchWrap}>
-                <Search size={14} className={styles.searchIcon} />
-                <input
-                  className={styles.searchInput}
-                  placeholder="Search by name or token prefix…"
-                  value={search}
-                  onChange={(e) => handleSearch(e.target.value)}
-                />
-                {search && (
-                  <button className={styles.searchClear} onClick={() => handleSearch('')}>×</button>
-                )}
-              </div>
+            <div className={styles.searchWrap}>
+              <Search size={14} className={styles.searchIcon} />
+              <input
+                className={styles.searchInput}
+                placeholder="Search by name…"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+              {search && (
+                <button className={styles.searchClear} onClick={() => setSearch('')}>×</button>
+              )}
             </div>
+          </div>
 
-            {filtered.length === 0 ? (
-              <div className={styles.noResults}>No users match "{search}"</div>
+          {total === 0 ? (
+            q ? (
+              <div className={styles.noResults}>No users match "{q}"</div>
             ) : (
-              <>
-                <table className={styles.table}>
-                  <thead>
-                    <tr>
-                      <th className={styles.th}>Name</th>
-                      <th className={styles.th}>Token</th>
-                      <th className={styles.th}>Created</th>
-                      <th className={styles.th}>Last seen</th>
-                      <th className={styles.th}>Cost</th>
-                      <th className={styles.th}>Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {pageSlice.map((u) => {
-                      const isAnon = u.id === ANON_ID
-                      return (
-                        <tr
-                          key={u.id}
-                          className={`${styles.tr} ${styles.trClickable}`}
-                          onClick={() => handleRowClick(u)}
-                          title={isAnon ? 'View anonymous activity' : `View ${u.name}'s activity`}
-                        >
-                          <td className={styles.td}>
-                            <span className={isAnon ? styles.userNameAnon : styles.userName}>{u.name}</span>
-                          </td>
-                          <td className={styles.td}>
-                            {isAnon
-                              ? <span className={styles.dimText}>—</span>
-                              : <CopyToken token={u.token} />
-                            }
-                          </td>
-                          <td className={styles.td}>
-                            <span className={styles.dimText}>
-                              {isAnon ? '—' : new Date(u.created_at).toLocaleDateString()}
-                            </span>
-                          </td>
-                          <td className={styles.td}>
-                            <span className={styles.dimText}>
-                              {u.last_seen ? new Date(u.last_seen).toLocaleString() : '—'}
-                            </span>
-                          </td>
-                          <td className={styles.td}>
-                            <span className={styles.dimText}>${u.cost.toFixed(2)}</span>
-                          </td>
-                          <td className={styles.td}>
-                            <div className={styles.actions}>
-                              {!isAnon && (
-                                <button
-                                  className={styles.actionBtn}
-                                  title="Rotate token"
-                                  onClick={(e) => handleRotate(e, u)}
-                                >
-                                  <RotateCcw size={13} />
-                                </button>
-                              )}
-                              <button
-                                className={`${styles.actionBtn} ${styles.actionBtnDanger}`}
-                                title={isAnon ? 'Delete anonymous data' : 'Delete user'}
-                                onClick={(e) => handleDeleteClick(e, u)}
-                              >
-                                <Trash2 size={13} />
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
+              <EmptyState
+                heading="No users yet"
+                subtext="Add a user to get a token for authenticated OTLP ingest. Anonymous sends are allowed by default."
+              />
+            )
+          ) : (
+            <>
+              <DataTable<UserVM>
+                columns={columns}
+                rows={rows}
+                sort={{ key: sort as keyof UserVM, dir: order }}
+                onSortChange={handleSortChange}
+                onRowClick={(row) => navigate(`/users/${encodeURIComponent(row.id)}`)}
+              />
 
-                {totalPages > 1 && (
-                  <div className={styles.pagination}>
-                    <button
-                      className={styles.pageBtn}
-                      disabled={safePage === 0}
-                      onClick={() => setPage(safePage - 1)}
-                    >
-                      <ChevronLeft size={14} />
-                    </button>
-                    <span className={styles.pageInfo}>
-                      {safePage + 1} / {totalPages}
-                    </span>
-                    <button
-                      className={styles.pageBtn}
-                      disabled={safePage >= totalPages - 1}
-                      onClick={() => setPage(safePage + 1)}
-                    >
-                      <ChevronRight size={14} />
-                    </button>
-                  </div>
-                )}
-              </>
-            )}
-          </Card>
-        </>
+              {total > PAGE_SIZE && (
+                <div className={styles.pagination}>
+                  <button
+                    className={styles.pageBtn}
+                    disabled={page <= 1}
+                    onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  >
+                    <ChevronLeft size={14} />
+                  </button>
+                  <span className={styles.pageInfo}>{page} / {totalPages}</span>
+                  <button
+                    className={styles.pageBtn}
+                    disabled={page >= totalPages}
+                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                  >
+                    <ChevronRight size={14} />
+                  </button>
+                </div>
+              )}
+            </>
+          )}
+        </Card>
       )}
 
-      {showAdd && (
-        <AddUserModal onClose={() => setShowAdd(false)} onCreated={handleCreated} />
-      )}
-      {deleteTarget && (
-        <DeleteUserModal
-          user={deleteTarget}
-          onClose={() => setDeleteTarget(null)}
-          onDeleted={(mode) => handleDeleteConfirmed(deleteTarget, mode)}
-        />
-      )}
+      {showAdd && <AddUserModal onClose={() => setShowAdd(false)} onCreated={handleCreated} />}
     </div>
   )
 }
