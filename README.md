@@ -249,14 +249,17 @@ docker run --rm -v cotel-data:/data ghcr.io/flopsstuff/cotel:latest --backfill-c
 docker start cotel-cotel-1
 ```
 
-Updates `cost_usd` on every known-model span and recomputes `total_cost_usd` on existing
-`daily_usage` rows. Spans with an unknown or empty model are skipped. The operation is idempotent —
-running it twice yields the same result (cost is recomputed from the stored token counts, not scaled).
+Updates `cost_usd` on every known-model span. Spans with an unknown or empty model are skipped. The
+operation is idempotent — running it twice yields the same result (cost is recomputed from the stored
+token counts, not scaled).
 
-> **Note on `daily_usage`:** the backfill only corrects the cost column of rolled-up aggregate rows;
-> it never changes their `span_count` / token totals and never materialises new rows. Because
-> `daily_usage` does not store cache-token counts, the cost of already-rolled-up days is recomputed
-> from input+output tokens only (a small approximation for days whose raw spans have been purged).
+> **Scope — `spans` only.** The backfill deliberately does not touch `daily_usage`. The retention
+> roll-up derives `total_cost_usd` as `SUM(spans.cost_usd)`, so any day rolled up *after* a backfill
+> is already correct. An **already** rolled-up day cannot be repaired: `daily_usage` keeps only
+> input/output token totals, and in real traffic cache tokens outnumber those ~156:1, so recomputing
+> from the stored counters would recover a small fraction of the true cost — and would quietly lower
+> an otherwise-correct row on a second run. Repairing aggregates requires cache-token columns on
+> `daily_usage` and is tracked separately.
 
 ## Architecture
 

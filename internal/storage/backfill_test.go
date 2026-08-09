@@ -231,83 +231,67 @@ func TestComputeReport_KnownModelZeroTokens_NotUnknown(t *testing.T) {
 	}
 }
 
-// B4: the daily_usage backfill must only correct total_cost_usd. It must never
-// change span_count / token totals and must never materialise new rows from
-// recent (not-yet-rolled-up) spans.
-func TestBackfillCostUSD_DailyUsage_PreservesCountersAndDoesNotMaterialize(t *testing.T) {
+// The backfill must leave daily_usage completely alone. Roll-up derives
+// total_cost_usd as SUM(spans.cost_usd), so post-backfill roll-ups are correct
+// by construction; an already-rolled-up row cannot be repaired from its stored
+// counters because daily_usage persists no cache tokens. Re-deriving it would
+// only lower a correct row on re-run.
+func TestBackfillCostUSD_DoesNotTouchDailyUsage(t *testing.T) {
 	db, err := Open(":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer db.Close()
 
-	// Existing rolled-up daily_usage row with wrong cost and known counters.
+	// A rolled-up row whose cost was computed under the old (wrong) rates, and a
+	// cache-heavy row whose correct cost is far above its input+output-only cost.
 	if _, err := db.rw.Exec(`
 		INSERT INTO daily_usage (day, session_id, model, tool_name, user_id, span_count,
 		                         total_input_tokens, total_output_tokens, total_cost_usd)
-		VALUES ('2026-07-01', 'sess1', 'claude-opus-4-7', 'tool1', NULL, 10, 1000000, 0, 15.0)`); err != nil {
+		VALUES ('2026-07-01', 'sess1', 'claude-opus-4-7', 'tool1', NULL, 10, 1000000, 0, 15.0),
+		       ('2026-07-02', 'sess2', 'claude-opus-4-8', 'tool1', NULL, 20, 1000,    0, 42.0)`); err != nil {
 		t.Fatal(err)
 	}
-	// A recent raw span NOT represented in daily_usage — must not be materialised.
+	// A recent raw span not represented in daily_usage — must not be materialised.
 	insertCostSpan(t, db, "recent1", "claude-opus-4-8", 1_000_000, 0, 0)
-
-	var before int64
-	db.rw.QueryRow(`SELECT COUNT(*) FROM daily_usage`).Scan(&before)
 
 	if _, err := db.BackfillCostUSD(); err != nil {
 		t.Fatalf("BackfillCostUSD: %v", err)
 	}
 
-	// (a) cost corrected 15 → ~5, counters untouched.
-	var cost float64
-	var spanCount, in, out int64
-	db.rw.QueryRow(`SELECT total_cost_usd, span_count, total_input_tokens, total_output_tokens
-	                FROM daily_usage WHERE day='2026-07-01'`).Scan(&cost, &spanCount, &in, &out)
-	if cost < 4.99 || cost > 5.01 {
-		t.Errorf("total_cost_usd = %.4f, want ~5.0 (corrected from 15.0)", cost)
-	}
-	if spanCount != 10 {
-		t.Errorf("span_count = %d, want 10 (backfill must not touch counters)", spanCount)
-	}
-	if in != 1_000_000 || out != 0 {
-		t.Errorf("token totals changed: in=%d out=%d, want 1000000/0 (backfill must not touch counters)", in, out)
+	// The span itself is still corrected.
+	var spanCost float64
+	db.rw.QueryRow(`SELECT COALESCE(cost_usd,0) FROM spans WHERE span_id='recent1'`).Scan(&spanCost)
+	if spanCost < 4.99 || spanCost > 5.01 {
+		t.Errorf("span cost_usd = %.4f, want ~5.0", spanCost)
 	}
 
-	// (b) no new daily_usage rows materialised from the recent span.
-	var after int64
-	db.rw.QueryRow(`SELECT COUNT(*) FROM daily_usage`).Scan(&after)
-	if after != before {
-		t.Errorf("daily_usage row count changed %d -> %d; backfill must not materialise aggregate rows", before, after)
-	}
-}
-
-func TestBackfillCostUSD_DailyUsageOrphan(t *testing.T) {
-	db, err := Open(":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-
-	// Insert a daily_usage row (simulating already-purged spans) with wrong cost.
-	// tool_name must be non-NULL because it's part of the PK.
-	_, err = db.rw.Exec(`
-		INSERT INTO daily_usage (day, session_id, model, tool_name, user_id, span_count,
-		                         total_input_tokens, total_output_tokens, total_cost_usd)
-		VALUES ('2026-07-01', 'sess1', 'claude-opus-4-7', 'tool1', NULL, 10,
-		        1000000, 0, 15.0)
-	`)
-	if err != nil {
-		t.Fatal(err)
+	// Every daily_usage row is byte-for-byte unchanged.
+	for _, tc := range []struct {
+		day       string
+		cost      float64
+		spanCount int64
+		in        int64
+	}{
+		{"2026-07-01", 15.0, 10, 1_000_000},
+		{"2026-07-02", 42.0, 20, 1_000},
+	} {
+		var cost float64
+		var spanCount, in, out int64
+		db.rw.QueryRow(`SELECT total_cost_usd, span_count, total_input_tokens, total_output_tokens
+		                FROM daily_usage WHERE day=?`, tc.day).Scan(&cost, &spanCount, &in, &out)
+		if cost != tc.cost {
+			t.Errorf("%s total_cost_usd = %.4f, want %.4f (backfill must not touch daily_usage)", tc.day, cost, tc.cost)
+		}
+		if spanCount != tc.spanCount || in != tc.in || out != 0 {
+			t.Errorf("%s counters changed: span_count=%d in=%d out=%d", tc.day, spanCount, in, out)
+		}
 	}
 
-	if _, err := db.BackfillCostUSD(); err != nil {
-		t.Fatal(err)
-	}
-
-	var cost float64
-	db.rw.QueryRow(`SELECT total_cost_usd FROM daily_usage WHERE day='2026-07-01'`).Scan(&cost)
-	// claude-opus-4-7: $5/MTok input → 1M tokens = $5 (corrected from $15)
-	if cost < 4.99 || cost > 5.01 {
-		t.Errorf("daily_usage total_cost_usd = %.4f, want ~5.0", cost)
+	// No rows materialised from the recent raw span.
+	var n int64
+	db.rw.QueryRow(`SELECT COUNT(*) FROM daily_usage`).Scan(&n)
+	if n != 2 {
+		t.Errorf("daily_usage row count = %d, want 2 (backfill must not materialise aggregates)", n)
 	}
 }

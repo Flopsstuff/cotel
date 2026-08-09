@@ -23,7 +23,7 @@ import (
 func main() {
 	dbQuery := flag.String("db-query", "", "run SQL query against DuckDB, print first column of first row, and exit")
 	backfillCost := flag.Bool("backfill-cost", false, "dry-run: show what cost_usd recalculation would change (no writes)")
-	backfillCostApply := flag.Bool("backfill-cost-apply", false, "apply the cost_usd recalculation to all historical spans and daily_usage, then exit")
+	backfillCostApply := flag.Bool("backfill-cost-apply", false, "apply the cost_usd recalculation to all historical spans, then exit")
 	flag.Parse()
 
 	dbPath := env("COTEL_DB_PATH", "/data/cotel.duckdb")
