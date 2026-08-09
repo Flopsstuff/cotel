@@ -215,6 +215,10 @@ so rolling up a day in slices would make each slice overwrite the one before it
 while its raw spans were already deleted — permanently understating that day's
 `span_count`, tokens and cost.
 
+Those are **UTC** calendar days, and the cutoff is UTC midnight, whatever
+timezone the server itself runs in. Aggregates are bucketed by UTC day
+everywhere, so daily figures do not shift with the host's zone.
+
 The practical effect: a raw span survives up to one day longer than
 `COTEL_RETENTION_RAW_DAYS` before it is aggregated away.
 

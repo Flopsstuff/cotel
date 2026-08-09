@@ -101,13 +101,19 @@ func (db *DB) rollupAndPurgeAt(cfg RetentionConfig, now time.Time) error {
 	// correct and the whole operation idempotent, at the cost of spans living
 	// up to one day longer than RawDays.
 	//
+	// That midnight is UTC, never the server's local midnight: the day column
+	// below comes from CAST(start_time AS TIMESTAMP), which renders the stored
+	// TIMESTAMPTZ in UTC whatever the session timezone is, so a bucket is a UTC
+	// calendar day. On a host at any non-zero offset a local midnight lands
+	// inside a bucket and splits it — the very thing this cutoff prevents.
+	//
 	// session_id / model / tool_name are the PK columns and NOT NULL in
 	// daily_usage, but nullable (and often empty) in spans. COALESCE(NULLIF(…))
 	// maps both NULL and '' to UnknownSentinel so the roll-up never aborts on a
 	// NOT NULL violation. GROUP BY uses the SELECT-list positions (1..4) so the
 	// normalised values drive the grouping — '' and NULL collapse into one
 	// 'unknown' bucket rather than two.
-	rollupCutoff := startOfDay(now.AddDate(0, 0, -cfg.RawDays))
+	rollupCutoff := startOfDayUTC(now.AddDate(0, 0, -cfg.RawDays))
 	_, err := db.rw.Exec(`
 		INSERT OR REPLACE INTO daily_usage
 		  (day, session_id, model, tool_name, user_id,
@@ -138,8 +144,10 @@ func (db *DB) rollupAndPurgeAt(cfg RetentionConfig, now time.Time) error {
 		return err
 	}
 
-	// Purge aggregates past AggregateDays.
-	aggCutoff := now.AddDate(0, 0, -cfg.AggregateDays)
+	// Purge aggregates past AggregateDays. Also UTC-snapped: day is a DATE, so
+	// a local-zone instant here would round to a different day than the one the
+	// roll-up wrote and drop (or keep) a day's aggregate a day early or late.
+	aggCutoff := startOfDayUTC(now.AddDate(0, 0, -cfg.AggregateDays))
 	if _, err := db.rw.Exec(`DELETE FROM daily_usage WHERE day < ?`, aggCutoff); err != nil {
 		return err
 	}
@@ -149,11 +157,9 @@ func (db *DB) rollupAndPurgeAt(cfg RetentionConfig, now time.Time) error {
 	return nil
 }
 
-// startOfDay returns midnight at the start of t's calendar day, in t's own
-// location. Callers rely on that location being the same one DuckDB buckets
-// spans into: the roll-up's day column comes from CAST(start_time AS TIMESTAMP),
-// which converts the stored TIMESTAMPTZ using the session timezone, and DuckDB
-// runs in-process so its session timezone is the process's local zone.
-func startOfDay(t time.Time) time.Time {
-	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
+// startOfDayUTC returns midnight UTC at the start of t's UTC calendar day —
+// the boundary daily_usage.day is bucketed on, whatever zone the server runs in.
+func startOfDayUTC(t time.Time) time.Time {
+	u := t.UTC()
+	return time.Date(u.Year(), u.Month(), u.Day(), 0, 0, 0, 0, time.UTC)
 }

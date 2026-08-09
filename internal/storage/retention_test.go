@@ -168,45 +168,76 @@ func TestRollupAndPurge_EmptyAndNullPK(t *testing.T) {
 // instant, so a day is repeatedly visible half-inside and half-outside the
 // window; each roll-up REPLACEs the day's row, so a split day used to keep only
 // the last slice and drop everything rolled up before it.
+//
+// It runs under a matrix of server timezones because two clocks are involved
+// and they disagree: a day bucket is a UTC calendar day, while the worker's own
+// clock is the server's local one. A cutoff snapped to local midnight looks
+// right in UTC and splits a bucket everywhere else.
 func TestRollupAndPurge_BoundaryDayNotSplit(t *testing.T) {
-	db, err := Open(":memory:")
-	if err != nil {
-		t.Fatalf("open in-memory db: %v", err)
-	}
-	defer db.Close()
-
-	// One day, two spans on opposite sides of the cutoffs below.
-	day := time.Date(2026, 1, 15, 0, 0, 0, 0, time.Local)
-	insertBoundarySpan(t, db, "early", day.Add(2*time.Hour), 100, 10, 1000, 200, 0.10)
-	insertBoundarySpan(t, db, "late", day.Add(10*time.Hour), 7, 3, 70, 30, 0.01)
-
-	const rawDays = 30
-	cfg := RetentionConfig{RawDays: rawDays, AggregateDays: 90}
-	want := dayTotals{spans: 2, input: 107, output: 13, cacheRead: 1070, cacheWrite: 230, cost: 0.11}
-
-	// Three worker ticks 6h apart. The first two put the cutoff *inside* the
-	// day (08:00 then 14:00) — that is the split; the third clears it entirely.
-	for i, tick := range []time.Time{
-		day.AddDate(0, 0, rawDays).Add(8 * time.Hour),
-		day.AddDate(0, 0, rawDays).Add(14 * time.Hour),
-		day.AddDate(0, 0, rawDays+1).Add(8 * time.Hour),
-	} {
-		if err := db.rollupAndPurgeAt(cfg, tick); err != nil {
-			t.Fatalf("tick %d (cutoff %s): %v", i+1, tick.AddDate(0, 0, -rawDays), err)
+	forEachServerZone(t, func(t *testing.T) {
+		db, err := Open(":memory:")
+		if err != nil {
+			t.Fatalf("open in-memory db: %v", err)
 		}
-		if got := accountedFor(t, db, day); got != want {
-			t.Errorf("after tick %d (cutoff %s): accounted %+v, want %+v",
-				i+1, tick.AddDate(0, 0, -rawDays).Format(time.RFC3339), got, want)
-		}
-	}
+		defer db.Close()
 
-	// The day must have ended up fully rolled up, not merely still raw.
-	var rawLeft int64
-	if err := db.rw.QueryRow(`SELECT COUNT(*) FROM spans`).Scan(&rawLeft); err != nil {
-		t.Fatalf("count spans: %v", err)
-	}
-	if rawLeft != 0 {
-		t.Errorf("raw spans left after the day fell fully outside the window: got %d, want 0", rawLeft)
+		// One UTC day, three spans spread across it. The 23:30 one sits inside
+		// the hours that a positive-offset server's local midnight would slice
+		// off; without it a UTC+1/+2 host looks correct by accident.
+		day := time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC)
+		insertBoundarySpan(t, db, "early", day.Add(2*time.Hour), 100, 10, 1000, 200, 0.10)
+		insertBoundarySpan(t, db, "midday", day.Add(10*time.Hour), 7, 3, 70, 30, 0.01)
+		insertBoundarySpan(t, db, "night", day.Add(23*time.Hour+30*time.Minute), 5, 2, 50, 20, 0.02)
+
+		const rawDays = 30
+		cfg := RetentionConfig{RawDays: rawDays, AggregateDays: 90}
+		want := dayTotals{spans: 3, input: 112, output: 15, cacheRead: 1120, cacheWrite: 250, cost: 0.13}
+
+		// Three worker ticks 6h apart. The first two put the cutoff *inside* the
+		// day (08:00 then 14:00) — that is the split; the third clears it
+		// entirely. They carry the local zone because that is what time.Now()
+		// hands the worker in production.
+		for i, tick := range []time.Time{
+			day.AddDate(0, 0, rawDays).Add(8 * time.Hour).In(time.Local),
+			day.AddDate(0, 0, rawDays).Add(14 * time.Hour).In(time.Local),
+			day.AddDate(0, 0, rawDays+1).Add(8 * time.Hour).In(time.Local),
+		} {
+			if err := db.rollupAndPurgeAt(cfg, tick); err != nil {
+				t.Fatalf("tick %d (cutoff %s): %v", i+1, tick.AddDate(0, 0, -rawDays), err)
+			}
+			if got := accountedFor(t, db, day); got != want {
+				t.Errorf("after tick %d (cutoff %s): accounted %+v, want %+v",
+					i+1, tick.AddDate(0, 0, -rawDays).Format(time.RFC3339), got, want)
+			}
+		}
+
+		// The day must have ended up fully rolled up, not merely still raw.
+		var rawLeft int64
+		if err := db.rw.QueryRow(`SELECT COUNT(*) FROM spans`).Scan(&rawLeft); err != nil {
+			t.Fatalf("count spans: %v", err)
+		}
+		if rawLeft != 0 {
+			t.Errorf("raw spans left after the day fell fully outside the window: got %d, want 0", rawLeft)
+		}
+	})
+}
+
+// forEachServerZone runs fn with time.Local set to each of a spread of UTC
+// offsets — negative, zero and positive, the last far enough east that local
+// midnight lands a full day away from the UTC one.
+func forEachServerZone(t *testing.T, fn func(*testing.T)) {
+	t.Helper()
+	for _, name := range []string{"UTC", "Europe/Warsaw", "America/Los_Angeles", "Asia/Tokyo", "Pacific/Kiritimati"} {
+		loc, err := time.LoadLocation(name)
+		if err != nil {
+			t.Skipf("timezone database unavailable (%s): %v", name, err)
+		}
+		t.Run(name, func(t *testing.T) {
+			saved := time.Local
+			time.Local = loc
+			defer func() { time.Local = saved }()
+			fn(t)
+		})
 	}
 }
 
@@ -214,41 +245,43 @@ func TestRollupAndPurge_BoundaryDayNotSplit(t *testing.T) {
 // leaves daily_usage byte-identical — a crash between the INSERT and the DELETE
 // must be safe to retry.
 func TestRollupAndPurge_Idempotent(t *testing.T) {
-	db, err := Open(":memory:")
-	if err != nil {
-		t.Fatalf("open in-memory db: %v", err)
-	}
-	defer db.Close()
+	forEachServerZone(t, func(t *testing.T) {
+		db, err := Open(":memory:")
+		if err != nil {
+			t.Fatalf("open in-memory db: %v", err)
+		}
+		defer db.Close()
 
-	day := time.Date(2026, 1, 15, 0, 0, 0, 0, time.Local)
-	insertBoundarySpan(t, db, "a", day.Add(2*time.Hour), 100, 10, 1000, 200, 0.10)
-	insertBoundarySpan(t, db, "b", day.Add(10*time.Hour), 7, 3, 70, 30, 0.01)
+		day := time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC)
+		insertBoundarySpan(t, db, "a", day.Add(2*time.Hour), 100, 10, 1000, 200, 0.10)
+		insertBoundarySpan(t, db, "b", day.Add(10*time.Hour), 7, 3, 70, 30, 0.01)
 
-	const rawDays = 30
-	cfg := RetentionConfig{RawDays: rawDays, AggregateDays: 90}
-	tick := day.AddDate(0, 0, rawDays+1).Add(8 * time.Hour)
+		const rawDays = 30
+		cfg := RetentionConfig{RawDays: rawDays, AggregateDays: 90}
+		tick := day.AddDate(0, 0, rawDays+1).Add(8 * time.Hour).In(time.Local)
 
-	if err := db.rollupAndPurgeAt(cfg, tick); err != nil {
-		t.Fatalf("first roll-up: %v", err)
-	}
-	first := accountedFor(t, db, day)
-
-	for i := 0; i < 3; i++ {
 		if err := db.rollupAndPurgeAt(cfg, tick); err != nil {
-			t.Fatalf("re-run %d: %v", i+1, err)
+			t.Fatalf("first roll-up: %v", err)
 		}
-		if got := accountedFor(t, db, day); got != first {
-			t.Errorf("re-run %d changed the aggregate: got %+v, want %+v", i+1, got, first)
-		}
-	}
+		first := accountedFor(t, db, day)
 
-	var rows int64
-	if err := db.rw.QueryRow(`SELECT COUNT(*) FROM daily_usage`).Scan(&rows); err != nil {
-		t.Fatalf("count daily_usage: %v", err)
-	}
-	if rows != 1 {
-		t.Errorf("daily_usage rows after 4 roll-ups: got %d, want 1", rows)
-	}
+		for i := 0; i < 3; i++ {
+			if err := db.rollupAndPurgeAt(cfg, tick); err != nil {
+				t.Fatalf("re-run %d: %v", i+1, err)
+			}
+			if got := accountedFor(t, db, day); got != first {
+				t.Errorf("re-run %d changed the aggregate: got %+v, want %+v", i+1, got, first)
+			}
+		}
+
+		var rows int64
+		if err := db.rw.QueryRow(`SELECT COUNT(*) FROM daily_usage`).Scan(&rows); err != nil {
+			t.Fatalf("count daily_usage: %v", err)
+		}
+		if rows != 1 {
+			t.Errorf("daily_usage rows after 4 roll-ups: got %d, want 1", rows)
+		}
+	})
 }
 
 type dayTotals struct {
