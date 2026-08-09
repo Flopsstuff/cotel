@@ -1,4 +1,4 @@
--- Schema version: 7
+-- Schema version: 8
 -- Versioned; never silently rename columns.
 
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -71,12 +71,20 @@ CREATE TABLE IF NOT EXISTS daily_usage (
     span_count      BIGINT,
     total_input_tokens  BIGINT,
     total_output_tokens BIGINT,
+    total_cache_read_tokens  BIGINT,
+    total_cache_write_tokens BIGINT,
     total_cost_usd  DOUBLE,
     PRIMARY KEY (day, session_id, model, tool_name)
 );
 
 -- Migration v2 → v3: add user_id to daily_usage.
 ALTER TABLE daily_usage ADD COLUMN IF NOT EXISTS user_id VARCHAR;
+
+-- Migration v7 → v8: preserve cache-token totals through roll-up (FLO-555).
+-- Additive, nullable, no default: rows rolled up before this migration stay NULL
+-- (honestly "unknown", not a fabricated 0); rows rolled up after get real sums.
+ALTER TABLE daily_usage ADD COLUMN IF NOT EXISTS total_cache_read_tokens  BIGINT;
+ALTER TABLE daily_usage ADD COLUMN IF NOT EXISTS total_cache_write_tokens BIGINT;
 
 -- API tokens for OTLP ingest auth (schema version 4) — kept for upgrade safety, not used by new auth
 CREATE TABLE IF NOT EXISTS api_tokens (
@@ -128,3 +136,4 @@ INSERT INTO schema_version (version) VALUES (4) ON CONFLICT DO NOTHING;
 INSERT INTO schema_version (version) VALUES (5) ON CONFLICT DO NOTHING;
 INSERT INTO schema_version (version) VALUES (6) ON CONFLICT DO NOTHING;
 INSERT INTO schema_version (version) VALUES (7) ON CONFLICT DO NOTHING;
+INSERT INTO schema_version (version) VALUES (8) ON CONFLICT DO NOTHING;

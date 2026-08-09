@@ -99,7 +99,8 @@ func (db *DB) RollupAndPurge(cfg RetentionConfig) error {
 	_, err := db.rw.Exec(`
 		INSERT OR REPLACE INTO daily_usage
 		  (day, session_id, model, tool_name, user_id,
-		   span_count, total_input_tokens, total_output_tokens, total_cost_usd)
+		   span_count, total_input_tokens, total_output_tokens,
+		   total_cache_read_tokens, total_cache_write_tokens, total_cost_usd)
 		SELECT
 		  strftime(CAST(start_time AS TIMESTAMP), '%Y-%m-%d')::DATE AS day,
 		  COALESCE(NULLIF(session_id, ''), ?) AS session_id,
@@ -109,6 +110,8 @@ func (db *DB) RollupAndPurge(cfg RetentionConfig) error {
 		  COUNT(*) AS span_count,
 		  COALESCE(SUM(input_tokens), 0),
 		  COALESCE(SUM(output_tokens), 0),
+		  COALESCE(SUM(cache_read_tokens), 0),
+		  COALESCE(SUM(cache_write_tokens), 0),
 		  COALESCE(SUM(cost_usd), 0)
 		FROM spans
 		WHERE start_time < ?

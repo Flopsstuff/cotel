@@ -183,6 +183,22 @@ Raw spans are left untouched (they keep their original empty/NULL value); the
 sentinel only exists in the daily rollup. See
 [ADR-0009](docs/decisions/0009-daily-usage-unknown-sentinel.md).
 
+### Token totals survive roll-up (including cache tokens)
+
+`daily_usage` records `total_input_tokens`, `total_output_tokens`,
+`total_cache_read_tokens`, and `total_cache_write_tokens`. In real Claude Code
+traffic cache tokens are the overwhelming majority of volume (often ~99%), so
+without the cache columns any analysis of data older than the raw-span window
+(`COTEL_RETENTION_RAW_DAYS`, default 30 days) would undercount tokens by two
+orders of magnitude. Cost is unaffected either way — `total_cost_usd` is
+`SUM(spans.cost_usd)` and each span's cost already accounts for all four token
+kinds.
+
+The cache columns were added later (schema v8). Rows rolled up **before** that
+migration keep `NULL` in the two cache columns — honestly "unknown", not `0`, and
+not recoverable (the raw spans were already purged). Rows rolled up **after** the
+migration carry real sums.
+
 ### Retention worker health
 
 The retention worker's last outcome is reported on `GET /api/v1/health` under a

@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Retention roll-up no longer aborts with `NOT NULL constraint failed: daily_usage.model` when a span has an empty or NULL `model`, `session_id`, or `tool_name`. Such spans are now rolled up under an `unknown` sentinel instead of silently stopping all aggregation and purging ([ADR-0009](docs/decisions/0009-daily-usage-unknown-sentinel.md), FLO-553)
 
 ### Added
+- `daily_usage` now preserves cache-token totals through roll-up: new `total_cache_read_tokens` and `total_cache_write_tokens` columns (schema v8) are filled by `RollupAndPurge` and carried through `/api/v1/export` and import. Previously only input/output tokens survived the roll-up, so aggregates older than the raw-span retention window (default 30 days) undercounted total tokens by ~2 orders of magnitude — in real traffic cache tokens are ~99% of volume. Additive, idempotent migration (`ADD COLUMN IF NOT EXISTS`); rows rolled up before the migration keep `NULL` (honestly unknown, not `0`). Export `format_version` stays `1` — additive columns don't bump it (ADR-0005). Cost was already correct (`SUM(spans.cost_usd)`). See FLO-555
 - Retention worker health on `GET /api/v1/health`: a `retention` object (`status` / `last_run_at` / `last_error`); a failed roll-up flips top-level health to `degraded` and logs at `ERROR` level instead of failing silently
 
 ## [0.2.0] - 2026-05-10
