@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { Copy, Check, Plus, Search, ChevronLeft, ChevronRight } from 'lucide-react'
 import { useUsersPage, createUser } from '../api'
 import type { User } from '../api'
-import { Card, DataTable, EmptyState, ErrorState, LoadingSkeleton, SegmentedControl } from '../components'
+import { DataTable, EmptyState, ErrorState, LoadingSkeleton, SegmentedControl } from '../components'
 import type { Column, SortState } from '../components'
 import { getCookie, setCookie } from '../lib/cookie'
 import styles from './Users.module.css'
@@ -234,9 +234,30 @@ export default function Users() {
 
   return (
     <div>
-      <div className={styles.pageHeader}>
+      <div className={styles.toolbar}>
         <h1 className={styles.title}>Users</h1>
-        <button className={styles.primaryBtn} onClick={() => setShowAdd(true)}>
+
+        <div className={styles.searchWrap}>
+          <Search size={14} className={styles.searchIcon} />
+          <input
+            className={styles.searchInput}
+            placeholder="Search by name…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+          {search && (
+            <button className={styles.searchClear} onClick={() => setSearch('')}>×</button>
+          )}
+        </div>
+
+        <SegmentedControl
+          options={RANGE_OPTIONS}
+          value={range}
+          onChange={changeRange}
+          ariaLabel="Range for cost and sessions"
+        />
+
+        <button className={`${styles.primaryBtn} ${styles.addBtn}`} onClick={() => setShowAdd(true)}>
           <Plus size={14} /> Add user
         </button>
       </div>
@@ -247,68 +268,45 @@ export default function Users() {
         <LoadingSkeleton rows={6} height={40} />
       ) : error ? (
         <ErrorState message={error.message} />
+      ) : total === 0 ? (
+        q ? (
+          <div className={styles.noResults}>No users match "{q}"</div>
+        ) : (
+          <EmptyState
+            heading="No users yet"
+            subtext="Add a user to get a token for authenticated OTLP ingest. Anonymous sends are allowed by default."
+          />
+        )
       ) : (
-        <Card>
-          <div className={styles.controlsRow}>
-            <div className={styles.rangeGroup}>
-              <span className={styles.rangeLabel}>Cost &amp; sessions:</span>
-              <SegmentedControl options={RANGE_OPTIONS} value={range} onChange={changeRange} />
-            </div>
-            <div className={styles.searchWrap}>
-              <Search size={14} className={styles.searchIcon} />
-              <input
-                className={styles.searchInput}
-                placeholder="Search by name…"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-              />
-              {search && (
-                <button className={styles.searchClear} onClick={() => setSearch('')}>×</button>
-              )}
-            </div>
-          </div>
+        <>
+          <DataTable<UserVM>
+            columns={columns}
+            rows={rows}
+            sort={{ key: sort as keyof UserVM, dir: order }}
+            onSortChange={handleSortChange}
+            onRowClick={(row) => navigate(`/users/${encodeURIComponent(row.id)}`)}
+          />
 
-          {total === 0 ? (
-            q ? (
-              <div className={styles.noResults}>No users match "{q}"</div>
-            ) : (
-              <EmptyState
-                heading="No users yet"
-                subtext="Add a user to get a token for authenticated OTLP ingest. Anonymous sends are allowed by default."
-              />
-            )
-          ) : (
-            <>
-              <DataTable<UserVM>
-                columns={columns}
-                rows={rows}
-                sort={{ key: sort as keyof UserVM, dir: order }}
-                onSortChange={handleSortChange}
-                onRowClick={(row) => navigate(`/users/${encodeURIComponent(row.id)}`)}
-              />
-
-              {total > PAGE_SIZE && (
-                <div className={styles.pagination}>
-                  <button
-                    className={styles.pageBtn}
-                    disabled={page <= 1}
-                    onClick={() => setPage((p) => Math.max(1, p - 1))}
-                  >
-                    <ChevronLeft size={14} />
-                  </button>
-                  <span className={styles.pageInfo}>{page} / {totalPages}</span>
-                  <button
-                    className={styles.pageBtn}
-                    disabled={page >= totalPages}
-                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                  >
-                    <ChevronRight size={14} />
-                  </button>
-                </div>
-              )}
-            </>
+          {total > PAGE_SIZE && (
+            <div className={styles.pagination}>
+              <button
+                className={styles.pageBtn}
+                disabled={page <= 1}
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+              >
+                <ChevronLeft size={14} />
+              </button>
+              <span className={styles.pageInfo}>{page} / {totalPages}</span>
+              <button
+                className={styles.pageBtn}
+                disabled={page >= totalPages}
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              >
+                <ChevronRight size={14} />
+              </button>
+            </div>
           )}
-        </Card>
+        </>
       )}
 
       {showAdd && <AddUserModal onClose={() => setShowAdd(false)} onCreated={handleCreated} />}
