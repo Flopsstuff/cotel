@@ -101,12 +101,9 @@ func (db *DB) rollupAndPurgeAt(cfg RetentionConfig, now time.Time) error {
 	// to the existing row rather than replacing it. A span dated to a day that was
 	// already rolled up and purged — a backfill or an import of old telemetry —
 	// therefore adds to that day's total instead of overwriting it with itself
-	// alone. The accumulate and the raw-span DELETE run in one transaction so the
-	// spans a cycle folds in are gone atomically with the addition; a crash
-	// between them rolls both back, so a retry never double-counts. (This is the
-	// crash-safety a plain recompute-and-REPLACE gave for free but which accumulate
-	// cannot: REPLACE was idempotent only because it recomputed a whole day from
-	// still-present raw spans, which is exactly the assumption a late span breaks.)
+	// alone. The accumulate and the raw-span DELETE must stay in one transaction:
+	// the spans a cycle folds in have to be gone atomically with the addition, or
+	// a crash between them lets a retry count them twice.
 	//
 	// That midnight is UTC, never the server's local midnight: the day column
 	// below comes from CAST(start_time AS TIMESTAMP), which renders the stored
