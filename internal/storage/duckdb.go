@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"embed"
 	"fmt"
+	"regexp"
+	"strconv"
 	"time"
 
 	_ "github.com/marcboeker/go-duckdb"
@@ -66,14 +68,72 @@ func Open(path string) (*DB, error) {
 	// DuckDB supports one writer; serialise all writes through this connection.
 	rw.SetMaxOpenConns(1)
 
-	ddl, err := schemaFS.ReadFile("schema.sql")
-	if err != nil {
+	if err := ensureSchema(rw); err != nil {
 		return nil, err
 	}
-	if _, err := rw.Exec(string(ddl)); err != nil {
-		return nil, fmt.Errorf("apply schema: %w", err)
-	}
 	return &DB{rw: rw, path: path}, nil
+}
+
+var schemaVersionRe = regexp.MustCompile(`(?i)INSERT\s+INTO\s+schema_version\s*\(\s*version\s*\)\s*VALUES\s*\(\s*(\d+)\s*\)`)
+
+// schemaVersion is the highest version the embedded schema.sql declares. It is
+// derived from the file's own `INSERT INTO schema_version` rows rather than a
+// hand-kept constant, so it can never drift from the migrations actually
+// applied. Adding a migration means adding its version row; that is the single
+// bump the guard keys off.
+func schemaVersion(ddl string) (int, error) {
+	max := 0
+	for _, m := range schemaVersionRe.FindAllStringSubmatch(ddl, -1) {
+		n, err := strconv.Atoi(m[1])
+		if err != nil {
+			return 0, fmt.Errorf("schema.sql: bad version %q: %w", m[1], err)
+		}
+		if n > max {
+			max = n
+		}
+	}
+	if max == 0 {
+		return 0, fmt.Errorf("schema.sql: no `INSERT INTO schema_version` rows found")
+	}
+	return max, nil
+}
+
+// appliedSchemaVersion reports the highest version recorded in the database.
+// ok is false when schema_version is absent (a fresh database, or one created
+// before the version marker existed) — in both cases the full schema must run.
+func appliedSchemaVersion(rw *sql.DB) (version int, ok bool) {
+	var v sql.NullInt64
+	if err := rw.QueryRow(`SELECT max(version) FROM schema_version`).Scan(&v); err != nil {
+		return 0, false // table missing → treat as unversioned
+	}
+	if !v.Valid {
+		return 0, false // table exists but empty
+	}
+	return int(v.Int64), true
+}
+
+// ensureSchema applies schema.sql only when the database is behind the embedded
+// schema. Every statement in schema.sql is idempotent, but running the lot on
+// each start is expensive on a large database — the user backfill alone scans
+// every span (SELECT DISTINCT user_id FROM spans). Guarding on the recorded
+// version turns an unchanged restart into a single cheap query and runs each
+// migration exactly once, on the deploy that introduces it.
+func ensureSchema(rw *sql.DB) error {
+	ddl, err := schemaFS.ReadFile("schema.sql")
+	if err != nil {
+		return err
+	}
+	target, err := schemaVersion(string(ddl))
+	if err != nil {
+		return err
+	}
+	if current, ok := appliedSchemaVersion(rw); ok && current >= target {
+		return nil
+	}
+	if _, err := rw.Exec(string(ddl)); err != nil {
+		return fmt.Errorf("apply schema: %w", err)
+	}
+	return nil
 }
 
 func (db *DB) Close() error { return db.rw.Close() }
