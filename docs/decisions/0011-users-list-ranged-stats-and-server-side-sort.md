@@ -31,6 +31,10 @@ rolls raw spans older than `RawDays` (default 30) into `daily_usage` and deletes
 them; `daily_usage` rows are kept `AggregateDays` (default 90). So a `year` or
 `all` range **cannot** be answered from `spans` alone — the raw rows are gone.
 
+The roll-up cutoff is snapped back to UTC midnight, so a UTC calendar day is
+either fully rolled up or not rolled up at all — never split across the two
+tables. That property is what makes a clean union possible.
+
 ## Options considered
 
 ### Range-scoped stats
@@ -100,15 +104,20 @@ else. A row that jumps to the bottom of every sort is a bug users report as
 raw_floor := (SELECT MIN(start_time) FROM spans)     -- NULL when no raw spans
 
 raw part:  FROM spans        WHERE since IS NULL OR start_time >= since
-agg part:  FROM daily_usage  WHERE day <= CAST(raw_floor AS DATE)
+agg part:  FROM daily_usage  WHERE day < CAST(raw_floor AS DATE)
                                AND (since IS NULL OR day >= CAST(since AS DATE))
 ```
 
-The two parts are disjoint because the roll-up **deletes** the spans it
-aggregates: on the boundary day, the early slice lives only in `daily_usage`
-and the late slice only in `spans`. `<=` (not `<`) on the boundary day is
-therefore exact, not a double count. When `raw_floor` is `NULL` (no raw spans at
-all) the aggregate part is unbounded above.
+The two parts are disjoint and leave no gap. The roll-up consumes whole UTC days
+and deletes the spans it aggregates, so a day that still has any raw span was
+never rolled up: raw covers `[raw_floor_day, today]`, aggregates cover everything
+strictly earlier. When `raw_floor` is `NULL` (no raw spans at all) the aggregate
+part is unbounded above.
+
+`<` rather than `<=` also picks the safer side of the one case that breaks the
+invariant — a backfill or import writing spans dated to an already-rolled-up day.
+That day is then briefly counted from raw only (low) instead of from both (double)
+until the next roll-up folds the new spans into the existing aggregate.
 
 Cost is `SUM` over the union; sessions is `COUNT(DISTINCT session_id)` over the
 union, so a session straddling the boundary counts once.
@@ -141,10 +150,9 @@ no per-row action cluster to mis-click.
   collapse into a single bucket, so a session count over the aggregate tail can
   be low by the number of distinct session-less spans. Raw-window counts are
   unaffected.
-- Reading `daily_usage` also exposes an existing roll-up defect: the worker uses
-  `INSERT OR REPLACE` keyed by `(day, session_id, model, tool_name)` over only
-  the not-yet-purged spans, so a key whose spans straddle two roll-up cycles has
-  its earlier slice **overwritten** instead of summed. Tracked separately; it
-  predates this change and affects export and aggregates equally.
+- `daily_usage` correctness is now a dashboard concern, not just an export one.
+  The whole-day cutoff and accumulating `ON CONFLICT` that the roll-up gained
+  are what this union relies on; changing either breaks the users list quietly,
+  in a table nobody looks at until a total looks wrong.
 - `DataTable` gains an optional controlled-sort mode. Pages that do not pass
   `sort`/`onSortChange` keep sorting client-side exactly as before.
