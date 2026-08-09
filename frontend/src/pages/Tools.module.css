@@ -1,15 +1,16 @@
-.pageHeader {
+.toolbar {
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  margin-bottom: var(--space-4);
   flex-wrap: wrap;
+  margin-bottom: var(--space-5);
 }
 
 .title {
   font-size: var(--text-xl);
   font-weight: 700;
   color: var(--color-text-1);
+  margin: 0;
 }
 
 .userChip {
@@ -26,10 +27,6 @@
   white-space: nowrap;
 }
 
-.chartBlock {
-  margin-bottom: var(--space-4);
-}
-
 .sectionNote {
   font-size: var(--text-sm);
   color: var(--color-text-3);
@@ -44,4 +41,103 @@
   text-overflow: ellipsis;
   display: block;
   max-width: 480px;
+}
+
+.statsNote {
+  font-size: var(--text-sm);
+  color: var(--color-text-3);
+  margin-top: var(--space-3);
+}
+
+.searchWrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  max-width: 360px;
+  flex: 1 1 240px;
+}
+
+.searchIcon {
+  position: absolute;
+  left: var(--space-3);
+  color: var(--color-text-3);
+  pointer-events: none;
+}
+
+.searchInput {
+  width: 100%;
+  padding: var(--space-2) var(--space-3) var(--space-2) calc(var(--space-3) + 14px + var(--space-2));
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+  font-size: var(--text-sm);
+  color: var(--color-text-1);
+  box-sizing: border-box;
+}
+
+.searchInput:focus {
+  border-color: var(--color-accent);
+  outline: none;
+}
+
+.searchClear {
+  position: absolute;
+  right: var(--space-2);
+  background: none;
+  border: none;
+  font-size: 16px;
+  color: var(--color-text-3);
+  cursor: pointer;
+  padding: 0 var(--space-1);
+  line-height: 1;
+}
+
+.searchClear:hover {
+  color: var(--color-text-1);
+}
+
+.noResults {
+  padding: var(--space-6) 0;
+  text-align: center;
+  font-size: var(--text-sm);
+  color: var(--color-text-3);
+}
+
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  padding: var(--space-4) 0 var(--space-2);
+  border-top: 1px solid var(--color-border);
+  margin-top: var(--space-2);
+}
+
+.pageBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-1) var(--space-2);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-2);
+  cursor: pointer;
+}
+
+.pageBtn:hover:not(:disabled) {
+  background: var(--color-surface-2);
+  color: var(--color-text-1);
+}
+
+.pageBtn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.pageInfo {
+  font-size: var(--text-sm);
+  color: var(--color-text-2);
+  min-width: 60px;
+  text-align: center;
 }

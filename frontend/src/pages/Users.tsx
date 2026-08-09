@@ -5,38 +5,14 @@ import { useUsersPage, createUser } from '../api'
 import type { User } from '../api'
 import { DataTable, EmptyState, ErrorState, LoadingSkeleton, SegmentedControl } from '../components'
 import type { Column, SortState } from '../components'
-import { getCookie, setCookie } from '../lib/cookie'
+import { RANGE_OPTIONS, RANGE_SUFFIX, useRangeCookie } from '../lib/range'
 import styles from './Users.module.css'
 
 const ANON_ID = '__anonymous__'
 const PAGE_SIZE = 50
 const RANGE_COOKIE = 'cotel_users_range'
-const COOKIE_MAX_AGE = 60 * 60 * 24 * 365 // one year
 
-type RangeKey = 'all' | 'year' | 'month' | 'week' | 'day'
 type SortKey = 'name' | 'cost' | 'sessions' | 'created_at' | 'last_seen'
-
-const RANGE_OPTIONS = [
-  { value: 'all', label: 'All' },
-  { value: 'year', label: 'Year' },
-  { value: 'month', label: 'Month' },
-  { value: 'week', label: 'Week' },
-  { value: 'day', label: 'Day' },
-]
-
-// Short suffix shown on the range-governed columns so it is obvious the switcher
-// only scopes Cost and Sessions.
-const RANGE_SUFFIX: Record<RangeKey, string> = {
-  all: '',
-  year: '1y',
-  month: '30d',
-  week: '7d',
-  day: '24h',
-}
-
-function isRangeKey(v: string | null): v is RangeKey {
-  return v === 'all' || v === 'year' || v === 'month' || v === 'week' || v === 'day'
-}
 
 interface UserVM {
   id: string
@@ -125,10 +101,7 @@ function NewTokenBanner({ user, onDismiss }: { user: User; onDismiss: () => void
 export default function Users() {
   const navigate = useNavigate()
 
-  const [range, setRange] = useState<RangeKey>(() => {
-    const c = getCookie(RANGE_COOKIE)
-    return isRangeKey(c) ? c : 'month'
-  })
+  const [range, setRange] = useRangeCookie(RANGE_COOKIE)
   const [sort, setSort] = useState<SortKey>('cost')
   const [order, setOrder] = useState<'asc' | 'desc'>('desc')
   const [page, setPage] = useState(1)
@@ -171,9 +144,7 @@ export default function Users() {
   const scoped = (label: string) => (suffix ? `${label} (${suffix})` : label)
 
   const changeRange = (v: string) => {
-    if (!isRangeKey(v)) return
     setRange(v)
-    setCookie(RANGE_COOKIE, v, COOKIE_MAX_AGE)
     setPage(1)
   }
 

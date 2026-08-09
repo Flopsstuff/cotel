@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/Flopsstuff/cotel/internal/storage"
 )
 
 // DB is the read-only database interface used by all handlers.
@@ -130,6 +132,83 @@ func queryInt(r *http.Request, key string, fallback int) int {
 	return fallback
 }
 
+// rangeSince maps a rolling-window range key to its lower bound. "all" has no
+// lower bound (nil). Windows roll from now, not calendar-aligned (ADR-0011).
+func rangeSince(rangeKey string, now time.Time) *time.Time {
+	var t time.Time
+	switch rangeKey {
+	case "all":
+		return nil
+	case "year":
+		t = now.AddDate(0, 0, -365)
+	case "week":
+		t = now.AddDate(0, 0, -7)
+	case "day":
+		t = now.Add(-24 * time.Hour)
+	default: // month
+		t = now.AddDate(0, 0, -30)
+	}
+	return &t
+}
+
+// parseRange reads the range query parameter, falling back to the default
+// "month" for missing or unrecognised values, and returns the normalised key
+// with its lower bound.
+func parseRange(r *http.Request) (string, *time.Time) {
+	rk := r.URL.Query().Get("range")
+	switch rk {
+	case "all", "year", "month", "week", "day":
+	default:
+		rk = "month"
+	}
+	return rk, rangeSince(rk, time.Now())
+}
+
+// parseSortOrder resolves sort/order against a whitelist of sort keys. Unknown
+// values fall back to def / "desc" rather than 400ing.
+func parseSortOrder(r *http.Request, allowed map[string]string, def string) (sort, order string) {
+	sort = r.URL.Query().Get("sort")
+	if _, ok := allowed[sort]; !ok {
+		sort = def
+	}
+	order = strings.ToLower(r.URL.Query().Get("order"))
+	if order != "asc" {
+		order = "desc"
+	}
+	return sort, order
+}
+
+// parsePaging reads the 1-based page and the page size. limit defaults to 0,
+// meaning unpaginated, and is clamped to 500.
+func parsePaging(r *http.Request) (page, limit int) {
+	page = queryInt(r, "page", 1)
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			limit = n
+		}
+	}
+	if limit > 500 {
+		limit = 500
+	}
+	return page, limit
+}
+
+// escapeLike escapes the LIKE/ILIKE wildcards so a search term is matched
+// literally under `ESCAPE '\'`.
+func escapeLike(s string) string {
+	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(s)
+}
+
+// likeFilter builds an ILIKE fragment for column and appends its argument when
+// q is non-empty; both are zero-valued otherwise.
+func likeFilter(column, q string) (clause string, args []any) {
+	q = strings.TrimSpace(q)
+	if q == "" {
+		return "", nil
+	}
+	return " AND " + column + ` ILIKE ? ESCAPE '\'`, []any{"%" + escapeLike(q) + "%"}
+}
+
 // userIDClause returns an additional SQL WHERE fragment and its argument when
 // the request contains a non-empty user_id query parameter. The caller appends
 // the clause directly to the end of their existing WHERE and appends arg to
@@ -138,14 +217,20 @@ func queryInt(r *http.Request, key string, fallback int) int {
 //
 // The special value "__anonymous__" maps to user_id IS NULL (spans with no user_id).
 func userIDClause(r *http.Request) (clause string, arg string) {
+	return userIDClauseOn(r, "")
+}
+
+// userIDClauseOn is userIDClause with the column qualified by a table alias
+// prefix (e.g. "du."), for queries that reference more than one table.
+func userIDClauseOn(r *http.Request, prefix string) (clause string, arg string) {
 	uid := r.URL.Query().Get("user_id")
 	if uid == "" {
 		return "", ""
 	}
 	if uid == "__anonymous__" {
-		return " AND user_id IS NULL", ""
+		return " AND " + prefix + "user_id IS NULL", ""
 	}
-	return " AND user_id = ?", uid
+	return " AND " + prefix + "user_id = ?", uid
 }
 
 // ---- /api/v1/users — delegated to users.go ----
@@ -678,37 +763,191 @@ type toolItem struct {
 
 type toolsResponse struct {
 	Items []toolItem `json:"items"`
+	Total int        `json:"total"`
+	Page  int        `json:"page"`
+	Limit int        `json:"limit"`
+	Range string     `json:"range"`
+	Sort  string     `json:"sort"`
+	Order string     `json:"order"`
+	// DurationStatsSince names the instant from which avg_duration_ms and
+	// fail_rate are actually backed by data, or null when the whole selected
+	// range is covered. Aggregate rows rolled up before schema v9 hold no
+	// duration or failure sums, so they count toward calls but sit outside
+	// those two denominators.
+	DurationStatsSince *string `json:"duration_stats_since"`
 }
 
+// toolSortExprs whitelists sort keys to their SELECT-list alias, so the caller
+// can never inject an ORDER BY expression.
+var toolSortExprs = map[string]string{
+	"name":            "name",
+	"calls":           "calls",
+	"avg_duration_ms": "avg_duration_ms",
+	"fail_count":      "fail_count",
+	"fail_rate":       "fail_rate",
+}
+
+// toolsStatsCTE unions raw spans with rolled-up daily_usage into one row per
+// tool (ADR-0012). The roll-up consumes whole UTC days, so the earliest
+// surviving raw day is fully raw and the aggregate side is bounded by
+// `day < raw_floor` (strict) — `<=` would double count the boundary day.
+//
+// The aggregate side must exclude the roll-up's 'unknown' sentinel: it stands
+// for a NULL or empty tool_name, which the raw side filters out entirely, so
+// without this a phantom tool appears once a range is old enough to be rolled
+// up. Duration and failure sums are NULL on pre-v9 rows; SUM skips them and the
+// matching *_calls denominators count only the rows that carry a sum.
+const toolsStatsCTE = `
+WITH raw_floor AS (
+    SELECT MIN(start_time) AS ts FROM spans
+),
+parts AS (
+    SELECT
+        tool_name AS name,
+        COUNT(*) AS calls,
+        SUM(duration_ms) AS dur_sum,
+        COUNT(*) AS dur_calls,
+        COUNT(*) FILTER (WHERE status_code = 2) AS fails,
+        COUNT(*) AS fail_calls
+    FROM spans
+    WHERE tool_name IS NOT NULL AND tool_name <> ''%[1]s%[2]s
+    GROUP BY tool_name
+    UNION ALL
+    SELECT
+        du.tool_name AS name,
+        CAST(SUM(du.span_count) AS BIGINT) AS calls,
+        SUM(du.total_duration_ms) AS dur_sum,
+        CAST(COALESCE(SUM(du.span_count) FILTER (WHERE du.total_duration_ms IS NOT NULL), 0) AS BIGINT) AS dur_calls,
+        CAST(SUM(du.fail_count) AS BIGINT) AS fails,
+        CAST(COALESCE(SUM(du.span_count) FILTER (WHERE du.fail_count IS NOT NULL), 0) AS BIGINT) AS fail_calls
+    FROM daily_usage du CROSS JOIN raw_floor rf
+    WHERE du.tool_name <> '%[3]s'
+      AND (rf.ts IS NULL OR du.day < CAST(CAST(rf.ts AS TIMESTAMP) AS DATE))%[4]s%[5]s
+    GROUP BY du.tool_name
+),
+tool_stats AS (
+    SELECT
+        name,
+        CAST(SUM(calls) AS BIGINT) AS calls,
+        CASE WHEN SUM(dur_calls) > 0
+             THEN SUM(COALESCE(dur_sum, 0)) / SUM(dur_calls) ELSE 0.0 END AS avg_duration_ms,
+        CAST(SUM(COALESCE(fails, 0)) AS BIGINT) AS fail_count,
+        CASE WHEN SUM(fail_calls) > 0
+             THEN 100.0 * SUM(COALESCE(fails, 0)) / SUM(fail_calls) ELSE 0.0 END AS fail_rate
+    FROM parts
+    GROUP BY name
+)`
+
 func (h *Handler) handleTools(w http.ResponseWriter, r *http.Request) {
-	uidClause, uid := userIDClause(r)
-	args := []any{}
-	if uid != "" {
-		args = append(args, uid)
+	rangeKey, since := parseRange(r)
+	sort, order := parseSortOrder(r, toolSortExprs, "calls")
+	page, limit := parsePaging(r)
+
+	rawUID, rawUIDArg := userIDClause(r)
+	aggUID, aggUIDArg := userIDClauseOn(r, "du.")
+
+	var rawSince, aggSince string
+	filterArgs := []any{}
+	if rawUIDArg != "" {
+		filterArgs = append(filterArgs, rawUIDArg)
 	}
-	rows, _ := h.db.Query(`
-		SELECT
-			tool_name,
-			COUNT(*) AS calls,
-			AVG(duration_ms) AS avg_dur_ms,
-			COUNT(*) FILTER (WHERE status_code = 2) AS fail_count,
-			100.0 * COUNT(*) FILTER (WHERE status_code = 2) / COUNT(*) AS fail_rate
-		FROM spans
-		WHERE tool_name IS NOT NULL AND tool_name <> ''`+uidClause+`
-		GROUP BY tool_name ORDER BY calls DESC
-	`, args...)
+	if since != nil {
+		rawSince = " AND start_time >= ?"
+		filterArgs = append(filterArgs, *since)
+	}
+	if aggUIDArg != "" {
+		filterArgs = append(filterArgs, aggUIDArg)
+	}
+	if since != nil {
+		aggSince = " AND du.day >= CAST(CAST(? AS TIMESTAMP) AS DATE)"
+		filterArgs = append(filterArgs, *since)
+	}
+
+	qFilter, qArgs := likeFilter("name", r.URL.Query().Get("q"))
+	filterArgs = append(filterArgs, qArgs...)
+
+	args := append([]any{}, filterArgs...)
+	limitClause := ""
+	if limit > 0 {
+		limitClause = " LIMIT ? OFFSET ?"
+		args = append(args, limit, (page-1)*limit)
+	}
+
+	cte := fmt.Sprintf(toolsStatsCTE, rawUID, rawSince, storage.UnknownSentinel, aggUID, aggSince)
+	rows, err := h.db.Query(cte+fmt.Sprintf(`
+SELECT name, calls, avg_duration_ms, fail_count, fail_rate, COUNT(*) OVER () AS total
+FROM tool_stats
+WHERE TRUE%s
+ORDER BY %s %s NULLS LAST, name ASC%s
+`, qFilter, toolSortExprs[sort], order, limitClause), args...)
+	if err != nil {
+		jsonError(w, "query failed", http.StatusInternalServerError)
+		return
+	}
 
 	items := []toolItem{}
+	total := 0
 	if rows != nil {
 		defer rows.Close()
 		for rows.Next() {
 			var t toolItem
-			_ = rows.Scan(&t.Name, &t.Calls, &t.AvgDurationMS, &t.FailCount, &t.FailRate)
+			_ = rows.Scan(&t.Name, &t.Calls, &t.AvgDurationMS, &t.FailCount, &t.FailRate, &total)
 			items = append(items, t)
 		}
 	}
+	// COUNT(*) OVER () rides on the result rows, so a page past the end has no
+	// row to read it from. Re-count so total stays the match count either way.
+	if len(items) == 0 {
+		_ = h.db.QueryRow(cte+fmt.Sprintf("\nSELECT COUNT(*) FROM tool_stats WHERE TRUE%s\n", qFilter), filterArgs...).Scan(&total)
+	}
 
-	jsonOK(w, toolsResponse{Items: items})
+	jsonOK(w, toolsResponse{
+		Items:              items,
+		Total:              total,
+		Page:               page,
+		Limit:              limit,
+		Range:              rangeKey,
+		Sort:               sort,
+		Order:              order,
+		DurationStatsSince: h.durationStatsSince(r, since),
+	})
+}
+
+// durationStatsSince returns the instant from which the tool duration and
+// failure figures are complete: the day after the newest in-window aggregate
+// row that predates schema v9. It is nil when no such row exists, or when the
+// gap it describes falls entirely before the selected range.
+func (h *Handler) durationStatsSince(r *http.Request, since *time.Time) *string {
+	aggUID, aggUIDArg := userIDClauseOn(r, "du.")
+	args := []any{}
+	if aggUIDArg != "" {
+		args = append(args, aggUIDArg)
+	}
+	aggSince := ""
+	if since != nil {
+		aggSince = " AND du.day >= CAST(CAST(? AS TIMESTAMP) AS DATE)"
+		args = append(args, *since)
+	}
+
+	var gapEnd sql.NullTime
+	err := h.db.QueryRow(fmt.Sprintf(`
+WITH raw_floor AS (SELECT MIN(start_time) AS ts FROM spans)
+SELECT MAX(du.day)
+FROM daily_usage du CROSS JOIN raw_floor rf
+WHERE du.tool_name <> '%s'
+  AND (rf.ts IS NULL OR du.day < CAST(CAST(rf.ts AS TIMESTAMP) AS DATE))
+  AND (du.total_duration_ms IS NULL OR du.fail_count IS NULL)%s%s
+`, storage.UnknownSentinel, aggUID, aggSince), args...).Scan(&gapEnd)
+	if err != nil || !gapEnd.Valid {
+		return nil
+	}
+
+	coveredFrom := gapEnd.Time.UTC().AddDate(0, 0, 1)
+	if since != nil && !coveredFrom.After(*since) {
+		return nil
+	}
+	s := coveredFrom.Format(time.RFC3339)
+	return &s
 }
 
 // ---- /api/v1/bash-commands ----
@@ -723,51 +962,156 @@ type bashCommandItem struct {
 
 type bashCommandsResponse struct {
 	Items []bashCommandItem `json:"items"`
+	Total int               `json:"total"`
+	Page  int               `json:"page"`
+	Limit int               `json:"limit"`
+	Range string            `json:"range"`
+	Sort  string            `json:"sort"`
+	Order string            `json:"order"`
+	// CoveredSince names the start of the window this block actually answers
+	// for, or null when the selected range is fully covered. A command string is
+	// unbounded, so daily_usage carries no command dimension (ADR-0012) and the
+	// breakdown is raw-only — a range reaching past the raw floor is clamped.
+	CoveredSince *string `json:"covered_since"`
+}
+
+// bashSortExprs whitelists sort keys to their SELECT-list alias.
+var bashSortExprs = map[string]string{
+	"command":         "command",
+	"calls":           "calls",
+	"avg_duration_ms": "avg_duration_ms",
+	"fail_count":      "fail_count",
+	"fail_rate":       "fail_rate",
 }
 
 // handleBashCommands returns per-command breakdown for Bash tool spans.
 // The command is extracted from the span attributes JSON: direct "command" key first,
 // then falling back to the "command" field inside a JSON-encoded "tool_input" value.
+//
+// The tool filter is written as COALESCE(tool_name, '') = 'Bash' rather than the
+// plain equality: under DuckDB 1.1.3 a bare `spans.tool_name = <const>` is pushed
+// into the scan as a table filter and then matches nothing, so the plain form
+// silently answers with an empty breakdown. `spans.service_name` behaves the same
+// way; every other column of the table is fine. Wrapping the column keeps the
+// predicate out of the pushdown — disabling the filter_pushdown optimizer makes
+// the plain form correct too.
 func (h *Handler) handleBashCommands(w http.ResponseWriter, r *http.Request) {
+	rangeKey, since := parseRange(r)
+	sort, order := parseSortOrder(r, bashSortExprs, "calls")
+	page, limit := parsePaging(r)
+
 	uidClause, uid := userIDClause(r)
-	args := []any{}
+	filterArgs := []any{}
 	if uid != "" {
-		args = append(args, uid)
+		filterArgs = append(filterArgs, uid)
 	}
-	rows, _ := h.db.Query(`
-		WITH cmd AS (
-			SELECT
-				COALESCE(
-					attributes->>'command',
-					TRY_CAST(attributes->>'tool_input' AS JSON)->>'command'
-				) AS bash_command,
-				duration_ms,
-				status_code
-			FROM spans
-			WHERE tool_name = 'Bash'`+uidClause+`
-		)
-		SELECT
-			bash_command,
-			COUNT(*) AS calls,
-			AVG(duration_ms) AS avg_dur_ms,
-			COUNT(*) FILTER (WHERE status_code = 2) AS fail_count,
-			100.0 * COUNT(*) FILTER (WHERE status_code = 2) / COUNT(*) AS fail_rate
-		FROM cmd
-		WHERE bash_command IS NOT NULL
-		GROUP BY bash_command ORDER BY calls DESC
-	`, args...)
+	sinceClause := ""
+	if since != nil {
+		sinceClause = " AND start_time >= ?"
+		filterArgs = append(filterArgs, *since)
+	}
+
+	qFilter, qArgs := likeFilter("command", r.URL.Query().Get("q"))
+	filterArgs = append(filterArgs, qArgs...)
+
+	args := append([]any{}, filterArgs...)
+	limitClause := ""
+	if limit > 0 {
+		limitClause = " LIMIT ? OFFSET ?"
+		args = append(args, limit, (page-1)*limit)
+	}
+
+	cte := `
+WITH cmd AS (
+    SELECT
+        COALESCE(
+            attributes->>'command',
+            TRY_CAST(attributes->>'tool_input' AS JSON)->>'command'
+        ) AS command,
+        duration_ms,
+        status_code
+    FROM spans
+    WHERE COALESCE(tool_name, '') = 'Bash'` + uidClause + sinceClause + `
+),
+cmd_stats AS (
+    SELECT
+        command,
+        COUNT(*) AS calls,
+        AVG(duration_ms) AS avg_duration_ms,
+        COUNT(*) FILTER (WHERE status_code = 2) AS fail_count,
+        100.0 * COUNT(*) FILTER (WHERE status_code = 2) / COUNT(*) AS fail_rate
+    FROM cmd
+    WHERE command IS NOT NULL
+    GROUP BY command
+)`
+
+	rows, err := h.db.Query(cte+fmt.Sprintf(`
+SELECT command, calls, avg_duration_ms, fail_count, fail_rate, COUNT(*) OVER () AS total
+FROM cmd_stats
+WHERE TRUE%s
+ORDER BY %s %s NULLS LAST, command ASC%s
+`, qFilter, bashSortExprs[sort], order, limitClause), args...)
+	if err != nil {
+		jsonError(w, "query failed", http.StatusInternalServerError)
+		return
+	}
 
 	items := []bashCommandItem{}
+	total := 0
 	if rows != nil {
 		defer rows.Close()
 		for rows.Next() {
 			var t bashCommandItem
-			_ = rows.Scan(&t.Command, &t.Calls, &t.AvgDurationMS, &t.FailCount, &t.FailRate)
+			_ = rows.Scan(&t.Command, &t.Calls, &t.AvgDurationMS, &t.FailCount, &t.FailRate, &total)
 			items = append(items, t)
 		}
 	}
+	if len(items) == 0 {
+		_ = h.db.QueryRow(cte+fmt.Sprintf("\nSELECT COUNT(*) FROM cmd_stats WHERE TRUE%s\n", qFilter), filterArgs...).Scan(&total)
+	}
 
-	jsonOK(w, bashCommandsResponse{Items: items})
+	jsonOK(w, bashCommandsResponse{
+		Items:        items,
+		Total:        total,
+		Page:         page,
+		Limit:        limit,
+		Range:        rangeKey,
+		Sort:         sort,
+		Order:        order,
+		CoveredSince: h.bashCoveredSince(r, since),
+	})
+}
+
+// bashCoveredSince returns the raw floor when the selected range reaches back
+// past it into days that only survive as aggregates, and nil when the range is
+// fully covered by raw spans.
+func (h *Handler) bashCoveredSince(r *http.Request, since *time.Time) *string {
+	aggUID, aggUIDArg := userIDClauseOn(r, "du.")
+	args := []any{}
+	if aggUIDArg != "" {
+		args = append(args, aggUIDArg)
+	}
+	aggSince := ""
+	if since != nil {
+		aggSince = " AND du.day >= CAST(CAST(? AS TIMESTAMP) AS DATE)"
+		args = append(args, *since)
+	}
+
+	var rawFloor sql.NullTime
+	err := h.db.QueryRow(fmt.Sprintf(`
+WITH raw_floor AS (SELECT MIN(start_time) AS ts FROM spans)
+SELECT (SELECT ts FROM raw_floor)
+FROM raw_floor rf
+WHERE EXISTS (
+    SELECT 1 FROM daily_usage du
+    WHERE (rf.ts IS NULL OR du.day < CAST(CAST(rf.ts AS TIMESTAMP) AS DATE))%s%s
+)
+`, aggUID, aggSince), args...).Scan(&rawFloor)
+	if err != nil || !rawFloor.Valid {
+		return nil
+	}
+	s := rawFloor.Time.UTC().Format(time.RFC3339)
+	return &s
 }
 
 // ---- /api/v1/models ----

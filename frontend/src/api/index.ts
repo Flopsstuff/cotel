@@ -85,6 +85,56 @@ export interface BashCommandItem {
   fail_rate: number
 }
 
+// ListParams is the range/search/sort/paging contract the tools and
+// bash-commands lists share with the users list (ADR-0011, ADR-0012).
+export interface ListParams {
+  range: string
+  q?: string
+  sort: string
+  order: string
+  page: number
+  limit: number
+  user_id?: string
+}
+
+export type ToolsParams = ListParams
+
+interface ListEcho {
+  total: number
+  page: number
+  limit: number
+  range: string
+  sort: string
+  order: string
+}
+
+export interface ToolsResponse extends ListEcho {
+  items: ToolItem[]
+  // Set when the duration and error figures start later than the selected
+  // range, because aggregate rows predating schema v9 carry no such sums.
+  duration_stats_since: string | null
+}
+
+export interface BashCommandsResponse extends ListEcho {
+  items: BashCommandItem[]
+  // Set when the range reaches further back than raw spans go: the breakdown is
+  // computed from spans alone, so it answers for a shorter window than asked.
+  covered_since: string | null
+}
+
+function listQuery(p: ListParams): string {
+  const qs = new URLSearchParams({
+    range: p.range,
+    sort: p.sort,
+    order: p.order,
+    page: String(p.page),
+    limit: String(p.limit),
+  })
+  if (p.q) qs.set('q', p.q)
+  if (p.user_id) qs.set('user_id', p.user_id)
+  return qs.toString()
+}
+
 export interface ModelItem {
   model: string
   span_count: number
@@ -242,13 +292,14 @@ export function useCosts(from?: string, to?: string, userId?: string) {
   return useSWR<CostsResponse>(`/api/v1/costs${qs ? `?${qs}` : ''}`, fetcher)
 }
 
-export function useTools(userId?: string) {
-  const qs = userId ? `?user_id=${encodeURIComponent(userId)}` : ''
-  return useSWR<{ items: ToolItem[] }>(`/api/v1/tools${qs}`, fetcher)
+export function useTools(params: ToolsParams) {
+  return useSWR<ToolsResponse>(`/api/v1/tools?${listQuery(params)}`, fetcher, { keepPreviousData: true })
 }
 
-export function useBashCommands() {
-  return useSWR<{ items: BashCommandItem[] }>('/api/v1/bash-commands', fetcher)
+export function useBashCommands(params: ListParams) {
+  return useSWR<BashCommandsResponse>(`/api/v1/bash-commands?${listQuery(params)}`, fetcher, {
+    keepPreviousData: true,
+  })
 }
 
 export function useModels(userId?: string) {
