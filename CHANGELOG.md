@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-08-09
+
 ### Fixed
 - Pricing table now covers the Claude 5 family (Fable 5, Mythos 5, Opus 5, Sonnet 5) and the missing 4.x models (Opus 4.8, Opus 4.6). Spans from `claude-opus-5` were previously recorded with `cost_usd = 0` because the model was absent from the table
 - Corrected two stale rates: Opus 4.7 ($15.00/$75.00 → $5.00/$25.00) and Haiku 4.5 ($0.80/$4.00 → $1.00/$5.00) per MTok
