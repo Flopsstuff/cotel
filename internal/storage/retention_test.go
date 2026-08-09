@@ -161,6 +161,185 @@ func TestRollupAndPurge_EmptyAndNullPK(t *testing.T) {
 	}
 }
 
+// TestRollupAndPurge_BoundaryDayNotSplit pins the accounting invariant that
+// makes long-term history trustworthy: for any day, the daily_usage aggregate
+// plus the raw spans still in the table must always equal the full truth for
+// that day. The retention worker ticks every 6h while the cutoff is a wall-clock
+// instant, so a day is repeatedly visible half-inside and half-outside the
+// window; each roll-up REPLACEs the day's row, so a split day used to keep only
+// the last slice and drop everything rolled up before it.
+//
+// It runs under a matrix of server timezones because two clocks are involved
+// and they disagree: a day bucket is a UTC calendar day, while the worker's own
+// clock is the server's local one. A cutoff snapped to local midnight looks
+// right in UTC and splits a bucket everywhere else.
+func TestRollupAndPurge_BoundaryDayNotSplit(t *testing.T) {
+	forEachServerZone(t, func(t *testing.T) {
+		db, err := Open(":memory:")
+		if err != nil {
+			t.Fatalf("open in-memory db: %v", err)
+		}
+		defer db.Close()
+
+		// One UTC day, three spans spread across it. The 23:30 one sits inside
+		// the hours that a positive-offset server's local midnight would slice
+		// off; without it a UTC+1/+2 host looks correct by accident.
+		day := time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC)
+		insertBoundarySpan(t, db, "early", day.Add(2*time.Hour), 100, 10, 1000, 200, 0.10)
+		insertBoundarySpan(t, db, "midday", day.Add(10*time.Hour), 7, 3, 70, 30, 0.01)
+		insertBoundarySpan(t, db, "night", day.Add(23*time.Hour+30*time.Minute), 5, 2, 50, 20, 0.02)
+
+		const rawDays = 30
+		cfg := RetentionConfig{RawDays: rawDays, AggregateDays: 90}
+		want := dayTotals{spans: 3, input: 112, output: 15, cacheRead: 1120, cacheWrite: 250, cost: 0.13}
+
+		// Three worker ticks 6h apart. The first two put the cutoff *inside* the
+		// day (08:00 then 14:00) — that is the split; the third clears it
+		// entirely. They carry the local zone because that is what time.Now()
+		// hands the worker in production.
+		for i, tick := range []time.Time{
+			day.AddDate(0, 0, rawDays).Add(8 * time.Hour).In(time.Local),
+			day.AddDate(0, 0, rawDays).Add(14 * time.Hour).In(time.Local),
+			day.AddDate(0, 0, rawDays+1).Add(8 * time.Hour).In(time.Local),
+		} {
+			if err := db.rollupAndPurgeAt(cfg, tick); err != nil {
+				t.Fatalf("tick %d (cutoff %s): %v", i+1, tick.AddDate(0, 0, -rawDays), err)
+			}
+			if got := accountedFor(t, db, day); got != want {
+				t.Errorf("after tick %d (cutoff %s): accounted %+v, want %+v",
+					i+1, tick.AddDate(0, 0, -rawDays).Format(time.RFC3339), got, want)
+			}
+		}
+
+		// The day must have ended up fully rolled up, not merely still raw.
+		var rawLeft int64
+		if err := db.rw.QueryRow(`SELECT COUNT(*) FROM spans`).Scan(&rawLeft); err != nil {
+			t.Fatalf("count spans: %v", err)
+		}
+		if rawLeft != 0 {
+			t.Errorf("raw spans left after the day fell fully outside the window: got %d, want 0", rawLeft)
+		}
+	})
+}
+
+// forEachServerZone runs fn with time.Local set to each of a spread of UTC
+// offsets — negative, zero and positive, the last far enough east that local
+// midnight lands a full day away from the UTC one.
+func forEachServerZone(t *testing.T, fn func(*testing.T)) {
+	t.Helper()
+	for _, name := range []string{"UTC", "Europe/Warsaw", "America/Los_Angeles", "Asia/Tokyo", "Pacific/Kiritimati"} {
+		loc, err := time.LoadLocation(name)
+		if err != nil {
+			t.Skipf("timezone database unavailable (%s): %v", name, err)
+		}
+		t.Run(name, func(t *testing.T) {
+			saved := time.Local
+			time.Local = loc
+			defer func() { time.Local = saved }()
+			fn(t)
+		})
+	}
+}
+
+// TestRollupAndPurge_Idempotent pins that re-running a roll-up with no new spans
+// leaves daily_usage byte-identical — a crash between the INSERT and the DELETE
+// must be safe to retry.
+func TestRollupAndPurge_Idempotent(t *testing.T) {
+	forEachServerZone(t, func(t *testing.T) {
+		db, err := Open(":memory:")
+		if err != nil {
+			t.Fatalf("open in-memory db: %v", err)
+		}
+		defer db.Close()
+
+		day := time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC)
+		insertBoundarySpan(t, db, "a", day.Add(2*time.Hour), 100, 10, 1000, 200, 0.10)
+		insertBoundarySpan(t, db, "b", day.Add(10*time.Hour), 7, 3, 70, 30, 0.01)
+
+		const rawDays = 30
+		cfg := RetentionConfig{RawDays: rawDays, AggregateDays: 90}
+		tick := day.AddDate(0, 0, rawDays+1).Add(8 * time.Hour).In(time.Local)
+
+		if err := db.rollupAndPurgeAt(cfg, tick); err != nil {
+			t.Fatalf("first roll-up: %v", err)
+		}
+		first := accountedFor(t, db, day)
+
+		for i := 0; i < 3; i++ {
+			if err := db.rollupAndPurgeAt(cfg, tick); err != nil {
+				t.Fatalf("re-run %d: %v", i+1, err)
+			}
+			if got := accountedFor(t, db, day); got != first {
+				t.Errorf("re-run %d changed the aggregate: got %+v, want %+v", i+1, got, first)
+			}
+		}
+
+		var rows int64
+		if err := db.rw.QueryRow(`SELECT COUNT(*) FROM daily_usage`).Scan(&rows); err != nil {
+			t.Fatalf("count daily_usage: %v", err)
+		}
+		if rows != 1 {
+			t.Errorf("daily_usage rows after 4 roll-ups: got %d, want 1", rows)
+		}
+	})
+}
+
+type dayTotals struct {
+	spans                 int64
+	input, output         int64
+	cacheRead, cacheWrite int64
+	cost                  float64
+}
+
+// accountedFor sums what the system still knows about day: the rolled-up
+// aggregate plus any raw spans not yet purged. Roll-up must only ever move
+// usage between the two, never destroy it.
+func accountedFor(t *testing.T, db *DB, day time.Time) dayTotals {
+	t.Helper()
+	var got dayTotals
+	key := day.Format("2006-01-02")
+	err := db.rw.QueryRow(`
+		WITH agg AS (
+		  SELECT COALESCE(SUM(span_count), 0) AS spans,
+		         COALESCE(SUM(total_input_tokens), 0) AS inp,
+		         COALESCE(SUM(total_output_tokens), 0) AS outp,
+		         COALESCE(SUM(total_cache_read_tokens), 0) AS cr,
+		         COALESCE(SUM(total_cache_write_tokens), 0) AS cw,
+		         COALESCE(SUM(total_cost_usd), 0) AS cost
+		  FROM daily_usage WHERE day = CAST(? AS DATE)
+		), raw AS (
+		  SELECT COUNT(*) AS spans,
+		         COALESCE(SUM(input_tokens), 0) AS inp,
+		         COALESCE(SUM(output_tokens), 0) AS outp,
+		         COALESCE(SUM(cache_read_tokens), 0) AS cr,
+		         COALESCE(SUM(cache_write_tokens), 0) AS cw,
+		         COALESCE(SUM(cost_usd), 0) AS cost
+		  FROM spans WHERE strftime(CAST(start_time AS TIMESTAMP), '%Y-%m-%d') = ?
+		)
+		SELECT agg.spans + raw.spans, agg.inp + raw.inp, agg.outp + raw.outp,
+		       agg.cr + raw.cr, agg.cw + raw.cw, round(agg.cost + raw.cost, 6)
+		FROM agg, raw
+	`, key, key).Scan(&got.spans, &got.input, &got.output, &got.cacheRead, &got.cacheWrite, &got.cost)
+	if err != nil {
+		t.Fatalf("account for %s: %v", day.Format("2006-01-02"), err)
+	}
+	return got
+}
+
+func insertBoundarySpan(t *testing.T, db *DB, id string, start time.Time, in, out, cacheRead, cacheWrite int64, cost float64) {
+	t.Helper()
+	if err := db.InsertSpan(Span{
+		TraceID: "trace-" + id, SpanID: "span-" + id, Name: "claude_code.session",
+		StartTime: start, EndTime: start.Add(time.Second),
+		SessionID: "sess", Model: "claude-opus-5", ToolName: "Bash",
+		InputTokens: &in, OutputTokens: &out,
+		CacheReadTokens: &cacheRead, CacheWriteTokens: &cacheWrite,
+		CostUSD: &cost,
+	}); err != nil {
+		t.Fatalf("insert span %s: %v", id, err)
+	}
+}
+
 // rawInsert writes a span straight to the table so NULL (not empty-string) can
 // be stored in model/session_id/tool_name — InsertSpan binds Go strings, which
 // can never be SQL NULL.

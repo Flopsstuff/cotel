@@ -202,9 +202,25 @@ Override with environment variables:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `COTEL_RETENTION_RAW_DAYS` | `30` | Delete raw spans older than this many days |
+| `COTEL_RETENTION_RAW_DAYS` | `30` | Delete raw spans older than this many days (rounded down to a whole day — see below) |
 | `COTEL_RETENTION_AGGREGATE_DAYS` | `90` | Delete daily aggregate rows older than this many days |
 | `COTEL_RETENTION_INTERVAL` | `6h` | How often the retention worker runs (Go duration string, e.g. `1h`, `30m`) |
+
+### Roll-up consumes whole days only
+
+The worker ticks several times a day, but it only ever rolls up and purges
+**complete** calendar days: the raw-span cutoff is snapped back to midnight
+before use. `daily_usage` is keyed by day and rewritten with `INSERT OR REPLACE`,
+so rolling up a day in slices would make each slice overwrite the one before it
+while its raw spans were already deleted — permanently understating that day's
+`span_count`, tokens and cost.
+
+Those are **UTC** calendar days, and the cutoff is UTC midnight, whatever
+timezone the server itself runs in. Aggregates are bucketed by UTC day
+everywhere, so daily figures do not shift with the host's zone.
+
+The practical effect: a raw span survives up to one day longer than
+`COTEL_RETENTION_RAW_DAYS` before it is aggregated away.
 
 ### Unattributed usage — the `unknown` sentinel
 
@@ -266,7 +282,7 @@ go test ./...
 | `COTEL_DB_PATH` | `/data/cotel.duckdb` | DuckDB file path |
 | `COTEL_INGEST_ADDR` | `:4318` | Ingest listener address |
 | `COTEL_DASH_ADDR` | `:8080` | Dashboard listener address |
-| `COTEL_RETENTION_RAW_DAYS` | `30` | Raw span retention in days |
+| `COTEL_RETENTION_RAW_DAYS` | `30` | Raw span retention in days (roll-up consumes whole days, so spans survive up to a day longer) |
 | `COTEL_RETENTION_AGGREGATE_DAYS` | `90` | Daily aggregate retention in days |
 | `COTEL_RETENTION_INTERVAL` | `6h` | Retention worker tick interval (Go duration) |
 | `CLOUDFLARE_TUNNEL_TOKEN` | _(unset)_ | When set, starts `cloudflared tunnel run` before cotel; enables public HTTPS access via Cloudflare Tunnel |
