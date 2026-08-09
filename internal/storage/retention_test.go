@@ -284,6 +284,64 @@ func TestRollupAndPurge_Idempotent(t *testing.T) {
 	})
 }
 
+// TestRollupAndPurge_LateSpanAccumulates pins the fix for a late-arriving span:
+// a span whose day was already rolled up and purged, ingested afterwards (a
+// backfill or an import of old telemetry), must be added to that day's existing
+// aggregate on the next cycle — not REPLACE it. Before the fix the second
+// roll-up recomputed the day from the single late span alone and overwrote the
+// correct total, silently corrupting historical cost.
+func TestRollupAndPurge_LateSpanAccumulates(t *testing.T) {
+	db, err := Open(":memory:")
+	if err != nil {
+		t.Fatalf("open in-memory db: %v", err)
+	}
+	defer db.Close()
+
+	day := time.Date(2026, 1, 15, 0, 0, 0, 0, time.Local)
+	insertBoundarySpan(t, db, "first", day.Add(2*time.Hour), 100, 10, 1000, 200, 0.10)
+
+	const rawDays = 30
+	cfg := RetentionConfig{RawDays: rawDays, AggregateDays: 90}
+	tick := day.AddDate(0, 0, rawDays+1).Add(8 * time.Hour)
+
+	// Roll up the day; its only raw span is aggregated then purged.
+	if err := db.rollupAndPurgeAt(cfg, tick); err != nil {
+		t.Fatalf("first roll-up: %v", err)
+	}
+
+	// A late span dated to the same already-rolled-up day arrives afterwards,
+	// sharing the aggregate's PK (same session/model/tool).
+	insertBoundarySpan(t, db, "late", day.Add(10*time.Hour), 7, 3, 70, 30, 0.01)
+
+	if err := db.rollupAndPurgeAt(cfg, tick); err != nil {
+		t.Fatalf("second roll-up (late span): %v", err)
+	}
+
+	// The aggregate must be the sum of both spans, not just the late one.
+	want := dayTotals{spans: 2, input: 107, output: 13, cacheRead: 1070, cacheWrite: 230, cost: 0.11}
+	if got := accountedFor(t, db, day); got != want {
+		t.Errorf("late span overwrote the day: accounted %+v, want %+v", got, want)
+	}
+
+	// Accumulation must not fork a second aggregate row for the day.
+	var rows int64
+	if err := db.rw.QueryRow(`SELECT COUNT(*) FROM daily_usage WHERE day = CAST(? AS DATE)`,
+		day.Format("2006-01-02")).Scan(&rows); err != nil {
+		t.Fatalf("count daily_usage rows for day: %v", err)
+	}
+	if rows != 1 {
+		t.Errorf("daily_usage rows for the day: got %d, want 1", rows)
+	}
+
+	// With the late span now purged, re-running must not double-count it.
+	if err := db.rollupAndPurgeAt(cfg, tick); err != nil {
+		t.Fatalf("idempotent re-run: %v", err)
+	}
+	if got := accountedFor(t, db, day); got != want {
+		t.Errorf("re-run changed the aggregate: accounted %+v, want %+v", got, want)
+	}
+}
+
 type dayTotals struct {
 	spans                 int64
 	input, output         int64
