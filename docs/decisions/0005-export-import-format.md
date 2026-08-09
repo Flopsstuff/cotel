@@ -77,13 +77,22 @@ A single `.zip` file containing:
     "daily_usage": {
       "row_count": 42,
       "columns": ["day","session_id","model","tool_name","user_id",
-                  "span_count","total_input_tokens","total_output_tokens","total_cost_usd"]
+                  "span_count","total_input_tokens","total_output_tokens",
+                  "total_cache_read_tokens","total_cache_write_tokens","total_cost_usd"]
     }
   }
 }
 ```
 
 `format_version` bumps **only** on breaking changes (column rename, column removal, type change). Adding optional columns does **not** bump the version.
+
+> **`daily_usage` column additions (FLO-555).** `total_cache_read_tokens` and
+> `total_cache_write_tokens` were appended to `daily_usage` after v1 shipped. This
+> is an additive change, so `format_version` stays `1`: the importer reads columns
+> by header name, so an old archive without them imports as NULL and a new archive
+> imports cleanly into an old cotel (the unknown columns are dropped). A row rolled
+> up before the migration carries an empty cell (→ SQL NULL), which is honest —
+> the cache totals for that day are genuinely unknown, not zero.
 
 ---
 

@@ -16,19 +16,23 @@ func TestRollupAndPurge(t *testing.T) {
 	old := time.Now().AddDate(0, 0, -35)
 	inp := int64(100)
 	out := int64(50)
+	cacheRead := int64(900000) // cache tokens dwarf input/output in real traffic
+	cacheWrite := int64(30000)
 	cost := 0.01
 	if err := db.InsertSpan(Span{
-		TraceID:      "trace-001",
-		SpanID:       "span-001",
-		Name:         "claude_code.session",
-		StartTime:    old,
-		EndTime:      old.Add(time.Second),
-		SessionID:    "test-session",
-		Model:        "claude-sonnet-4-6",
-		ToolName:     "Bash",
-		InputTokens:  &inp,
-		OutputTokens: &out,
-		CostUSD:      &cost,
+		TraceID:          "trace-001",
+		SpanID:           "span-001",
+		Name:             "claude_code.session",
+		StartTime:        old,
+		EndTime:          old.Add(time.Second),
+		SessionID:        "test-session",
+		Model:            "claude-sonnet-4-6",
+		ToolName:         "Bash",
+		InputTokens:      &inp,
+		OutputTokens:     &out,
+		CacheReadTokens:  &cacheRead,
+		CacheWriteTokens: &cacheWrite,
+		CostUSD:          &cost,
 	}); err != nil {
 		t.Fatalf("insert span: %v", err)
 	}
@@ -47,16 +51,20 @@ func TestRollupAndPurge(t *testing.T) {
 		t.Errorf("spans: got %d rows, want 0 after purge", spanCount)
 	}
 
-	// daily_usage must have a rolled-up row with correct aggregates.
+	// daily_usage must have a rolled-up row with correct aggregates, including
+	// the cache-token totals (FLO-555) — the whole point of the roll-up before
+	// this fix dropped ~99% of the real token volume.
 	var spanCountAgg int64
-	var totalInput, totalOutput int64
+	var totalInput, totalOutput, totalCacheRead, totalCacheWrite int64
 	var totalCost float64
 	row := db.rw.QueryRow(`
-		SELECT span_count, total_input_tokens, total_output_tokens, total_cost_usd
+		SELECT span_count, total_input_tokens, total_output_tokens,
+		       total_cache_read_tokens, total_cache_write_tokens, total_cost_usd
 		FROM daily_usage
 		WHERE session_id = 'test-session' AND model = 'claude-sonnet-4-6'
 	`)
-	if err := row.Scan(&spanCountAgg, &totalInput, &totalOutput, &totalCost); err != nil {
+	if err := row.Scan(&spanCountAgg, &totalInput, &totalOutput,
+		&totalCacheRead, &totalCacheWrite, &totalCost); err != nil {
 		t.Fatalf("query daily_usage: %v", err)
 	}
 	if spanCountAgg != 1 {
@@ -67,6 +75,12 @@ func TestRollupAndPurge(t *testing.T) {
 	}
 	if totalOutput != 50 {
 		t.Errorf("total_output_tokens: got %d, want 50", totalOutput)
+	}
+	if totalCacheRead != 900000 {
+		t.Errorf("total_cache_read_tokens: got %d, want 900000", totalCacheRead)
+	}
+	if totalCacheWrite != 30000 {
+		t.Errorf("total_cache_write_tokens: got %d, want 30000", totalCacheWrite)
 	}
 	if totalCost < 0.009 || totalCost > 0.011 {
 		t.Errorf("total_cost_usd: got %f, want ~0.01", totalCost)

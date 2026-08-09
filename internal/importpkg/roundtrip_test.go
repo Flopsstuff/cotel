@@ -218,18 +218,22 @@ func TestIntegration_DailyUsageOnly(t *testing.T) {
 	oldDay := time.Date(old.Year(), old.Month(), old.Day(), 0, 0, 0, 0, time.UTC)
 
 	inp := int64(200)
+	cacheRead := int64(2010923802) // prod-scale: cache tokens are ~99% of volume
+	cacheWrite := int64(30237088)
 	cost := 0.05
 	if err := db.InsertSpan(storage.Span{
-		SpanID:      "span-old-1",
-		TraceID:     "trace-old-1",
-		Name:        "op.old",
-		StartTime:   oldDay.Add(time.Hour),
-		EndTime:     oldDay.Add(time.Hour + time.Second),
-		Model:       "claude-test",
-		SessionID:   "sess-old",
-		ToolName:    "Bash",
-		InputTokens: &inp,
-		CostUSD:     &cost,
+		SpanID:           "span-old-1",
+		TraceID:          "trace-old-1",
+		Name:             "op.old",
+		StartTime:        oldDay.Add(time.Hour),
+		EndTime:          oldDay.Add(time.Hour + time.Second),
+		Model:            "claude-test",
+		SessionID:        "sess-old",
+		ToolName:         "Bash",
+		InputTokens:      &inp,
+		CacheReadTokens:  &cacheRead,
+		CacheWriteTokens: &cacheWrite,
+		CostUSD:          &cost,
 	}); err != nil {
 		t.Fatalf("InsertSpan: %v", err)
 	}
@@ -296,7 +300,30 @@ func TestIntegration_DailyUsageOnly(t *testing.T) {
 		t.Fatalf("ExportDailyUsage from db2: %v", err)
 	}
 	if len(imported) == 0 {
-		t.Error("expected daily_usage rows in db2 after import, got 0")
+		t.Fatal("expected daily_usage rows in db2 after import, got 0")
+	}
+
+	// Cache-token totals must survive roll-up → export → import unchanged
+	// (FLO-555). Before the fix they were dropped at roll-up, so the exported
+	// aggregate carried ~0.6% of the real token volume.
+	var got storage.DailyUsageRow
+	for _, r := range imported {
+		if r.SessionID == "sess-old" {
+			got = r
+			break
+		}
+	}
+	if got.TotalCacheReadTokens == nil {
+		t.Fatalf("total_cache_read_tokens: got NULL, want %d", cacheRead)
+	}
+	if *got.TotalCacheReadTokens != cacheRead {
+		t.Errorf("total_cache_read_tokens: got %d, want %d", *got.TotalCacheReadTokens, cacheRead)
+	}
+	if got.TotalCacheWriteTokens == nil {
+		t.Fatalf("total_cache_write_tokens: got NULL, want %d", cacheWrite)
+	}
+	if *got.TotalCacheWriteTokens != cacheWrite {
+		t.Errorf("total_cache_write_tokens: got %d, want %d", *got.TotalCacheWriteTokens, cacheWrite)
 	}
 }
 

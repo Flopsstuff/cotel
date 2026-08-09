@@ -15,7 +15,12 @@ type DailyUsageRow struct {
 	SpanCount         int64
 	TotalInputTokens  int64
 	TotalOutputTokens int64
-	TotalCostUSD      float64
+	// Cache-token totals are pointers so a pre-migration daily_usage row (rolled
+	// up before FLO-555 added these columns) round-trips as NULL, not a
+	// fabricated 0. Rows rolled up after the migration carry a concrete value.
+	TotalCacheReadTokens  *int64
+	TotalCacheWriteTokens *int64
+	TotalCostUSD          float64
 }
 
 // ExportSpans returns all spans with start_time in [from, to).
@@ -65,7 +70,8 @@ func (db *DB) ExportSpans(from, to time.Time) ([]Span, error) {
 func (db *DB) ExportDailyUsage(from, to time.Time) ([]DailyUsageRow, error) {
 	rows, err := db.rw.Query(`
 		SELECT day, session_id, model, tool_name, user_id,
-		       span_count, total_input_tokens, total_output_tokens, total_cost_usd
+		       span_count, total_input_tokens, total_output_tokens,
+		       total_cache_read_tokens, total_cache_write_tokens, total_cost_usd
 		FROM daily_usage
 		WHERE day >= CAST(? AS DATE) AND day < CAST(? AS DATE)
 		ORDER BY day`, from, to)
@@ -80,7 +86,8 @@ func (db *DB) ExportDailyUsage(from, to time.Time) ([]DailyUsageRow, error) {
 		var sessionID, model, toolName, userID sql.NullString
 		if err := rows.Scan(
 			&r.Day, &sessionID, &model, &toolName, &userID,
-			&r.SpanCount, &r.TotalInputTokens, &r.TotalOutputTokens, &r.TotalCostUSD,
+			&r.SpanCount, &r.TotalInputTokens, &r.TotalOutputTokens,
+			&r.TotalCacheReadTokens, &r.TotalCacheWriteTokens, &r.TotalCostUSD,
 		); err != nil {
 			return nil, err
 		}
@@ -152,8 +159,9 @@ func (db *DB) ImportSpans(spans []Span) (int, error) {
 const importDailyUsageSQL = `
 INSERT OR IGNORE INTO daily_usage (
   day, session_id, model, tool_name, user_id,
-  span_count, total_input_tokens, total_output_tokens, total_cost_usd
-) VALUES (?,?,?,?,?,?,?,?,?)`
+  span_count, total_input_tokens, total_output_tokens,
+  total_cache_read_tokens, total_cache_write_tokens, total_cost_usd
+) VALUES (?,?,?,?,?,?,?,?,?,?,?)`
 
 // ImportDailyUsage bulk-inserts daily_usage rows, skipping any whose PK
 // (day, session_id, model, tool_name) already exists.
@@ -179,7 +187,8 @@ func (db *DB) ImportDailyUsage(rows []DailyUsageRow) (int, error) {
 		res, err := stmt.Exec(
 			r.Day, nullableStr(r.SessionID), nullableStr(r.Model), nullableStr(r.ToolName),
 			nullableStr(r.UserID),
-			r.SpanCount, r.TotalInputTokens, r.TotalOutputTokens, r.TotalCostUSD,
+			r.SpanCount, r.TotalInputTokens, r.TotalOutputTokens,
+			r.TotalCacheReadTokens, r.TotalCacheWriteTokens, r.TotalCostUSD,
 		)
 		if err != nil {
 			return 0, err

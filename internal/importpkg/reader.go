@@ -210,6 +210,9 @@ func parseDailyUsageCSV(r io.Reader) ([]storage.DailyUsageRow, error) {
 		if v := col(row, idx, "total_output_tokens"); v != "" {
 			du.TotalOutputTokens, _ = strconv.ParseInt(v, 10, 64)
 		}
+		// Absent column (old export) or empty cell (pre-migration row) → nil → NULL.
+		du.TotalCacheReadTokens = nullInt64(col(row, idx, "total_cache_read_tokens"))
+		du.TotalCacheWriteTokens = nullInt64(col(row, idx, "total_cache_write_tokens"))
 		if v := col(row, idx, "total_cost_usd"); v != "" {
 			du.TotalCostUSD, _ = strconv.ParseFloat(v, 64)
 		}

@@ -46,7 +46,8 @@ var SpansColumns = []string{
 
 var DailyUsageColumns = []string{
 	"day", "session_id", "model", "tool_name", "user_id",
-	"span_count", "total_input_tokens", "total_output_tokens", "total_cost_usd",
+	"span_count", "total_input_tokens", "total_output_tokens",
+	"total_cache_read_tokens", "total_cache_write_tokens", "total_cost_usd",
 }
 
 // DayRange returns the [start, end) UTC bounds for the calendar day containing date.
@@ -173,7 +174,10 @@ func writeDailyUsageCSV(w io.Writer, rows []storage.DailyUsageRow) error {
 		row[5] = strconv.FormatInt(r.SpanCount, 10)
 		row[6] = strconv.FormatInt(r.TotalInputTokens, 10)
 		row[7] = strconv.FormatInt(r.TotalOutputTokens, 10)
-		row[8] = strconv.FormatFloat(r.TotalCostUSD, 'f', -1, 64)
+		// nil (pre-migration row) → empty cell → NULL on re-import, not 0.
+		row[8] = nullInt64Str(r.TotalCacheReadTokens)
+		row[9] = nullInt64Str(r.TotalCacheWriteTokens)
+		row[10] = strconv.FormatFloat(r.TotalCostUSD, 'f', -1, 64)
 		if err := cw.Write(row); err != nil {
 			return err
 		}
