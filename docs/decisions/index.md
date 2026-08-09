@@ -16,3 +16,4 @@ New ADRs go in this directory as `NNNN-short-title.md`, numbered sequentially.
 | [ADR-0006](./0006-cloudflare-tunnel-and-token-auth) | Cloudflare Tunnel + In-App Bearer Tokens for OTLP Auth | Accepted |
 | [ADR-0007](./0007-github-intake-security) | GitHub Issue Intake Security Hardening | Accepted |
 | [ADR-0008](./0008-per-agent-telemetry-identity) | Per-agent telemetry identity must not live in shared settings.json env | Accepted |
+| [ADR-0009](./0009-daily-usage-unknown-sentinel) | `daily_usage` roll-up normalises empty/NULL keys to an `unknown` sentinel | Accepted |
