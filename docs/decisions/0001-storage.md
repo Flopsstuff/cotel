@@ -55,9 +55,9 @@ Reasons:
 ## Known engine trap: virtual generated columns and secondary indexes
 
 `spans` declares `duration_ms` as a VIRTUAL generated column and carries four
-secondary indexes. That combination makes DuckDB answer some `WHERE col =
-<constant>` predicates with **zero rows** instead of the matching ones — a
-silent wrong result, not an error and not a slowdown.
+secondary indexes. That combination makes DuckDB answer some constant-equality
+predicates — `WHERE tool_name = 'Bash'` — with **zero rows** instead of the
+matching ones: a silent wrong result, not an error and not a slowdown.
 
 A virtual generated column takes a logical slot but no storage slot, so every
 column declared after it has logical index = physical index + 1. A column is
