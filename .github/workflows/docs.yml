@@ -44,7 +44,7 @@ jobs:
         run: npm run build
 
       - name: Setup Pages
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        # TEMP proof: run on PR to verify pages:read; revert before merge
         uses: actions/configure-pages@v6
 
       - name: Upload artifact
