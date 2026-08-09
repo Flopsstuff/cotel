@@ -14,12 +14,23 @@ Tokens are plain bearer strings stored in the database. They are always retrieva
 
 ## Dashboard walkthrough
 
-### Opening the Users page
+### The Users list
 
-Click the **people icon** in the left sidebar. The Users page shows:
+Click the **people icon** in the left sidebar. The Users page is a single list with one row per user (plus an **Anonymous** row when unattributed spans exist). Columns:
 
-- A bar chart of cost attributed to each user (top 10 by cost)
-- A table listing all users with their token, creation date, last-seen timestamp, and total cost
+| Column | Meaning |
+|---|---|
+| **Name** | The user's display name |
+| **Cost** | Spend within the selected range |
+| **Sessions** | Distinct sessions within the selected range |
+| **Created** | When the user was created (all-time) |
+| **Last seen** | Most recent span (all-time) |
+
+There is no token column and no per-row buttons — a row is a single click through to that user's own page.
+
+**Range switcher.** A segmented control above the list scopes **Cost** and **Sessions** to a rolling window — All / Year / Month / Week / Day, defaulting to **Month** (last 30 days). The two columns it governs show the active window in their headers (e.g. `Cost (30d)`). Created and Last seen are always all-time. Your choice is remembered between visits via the `cotel_users_range` cookie.
+
+**Sorting, search, pagination.** Every column header sorts the *entire* user set (not just the visible page) through the API; click again to flip direction. The search box filters by name. The list pages at 50 rows; controls appear only when there are more.
 
 ### Creating a user
 
@@ -27,27 +38,20 @@ Click the **people icon** in the left sidebar. The Users page shows:
 2. Enter a display name — use something that identifies the sender, such as a machine hostname, agent name, or developer alias (e.g. `alice`, `prod-box`, `ci-runner`).
 3. Click **Create**.
 
-A banner appears showing the new user's token. Copy it now — you will paste it into Claude Code settings in the next step. The token remains visible in the table afterwards via the copy button, so you can retrieve it any time.
+A banner appears showing the new user's token. Copy it now — you will paste it into Claude Code settings in the next step. You can retrieve the token again any time from the user's page.
 
-### Copying a token
+### The per-user page
 
-In the user table, each row has a token cell with a copy button (clipboard icon). Click it to copy the full `cotel_…` token to your clipboard.
+Click any row to open `/users/<id>`. This page shows the user's name, their range-scoped **Cost** and **Sessions** (with the same range switcher as the list), all-time **Created** and **Last seen**, and the actions:
 
-### Rotating a token
+- **Token** with a copy button — the full `cotel_…` string, retrievable any time.
+- **Rotate token** — generates a new token and immediately revokes the old one. Any Claude Code instance using the old token will start receiving `401 Unauthorized` until updated. Copy the new token and update `OTEL_EXPORTER_OTLP_HEADERS` in every `settings.json` that used the old one.
+- **Delete user** — opens a modal with two choices: *Delete user only* (revokes the token; history stays attributed to the name and is reversible by re-creating the user) or *Delete user + history* (permanently removes the user and all their telemetry; type the name to confirm). After deletion you return to the list.
+- **View activity** and **View sessions** — jump to the dashboard and Sessions views filtered to this user.
 
-Rotating generates a new token and immediately revokes the old one. Any Claude Code instance using the old token will start receiving `401 Unauthorized` responses until updated.
+### The Anonymous user
 
-1. In the user table, click the **rotate** button (circular arrow icon) on the row you want to rotate.
-2. Confirm the prompt.
-3. Copy the new token from the table.
-4. Update `OTEL_EXPORTER_OTLP_HEADERS` in every Claude Code `settings.json` that was using the old token.
-
-### Deleting a user
-
-Deleting a user removes the token and the user record permanently. Historical spans are **not** deleted — they remain attributed to the user name in the database.
-
-1. Click the **delete** button (trash icon) on the user row.
-2. Confirm the prompt.
+Unattributed spans (ingested with allow-anonymous on) roll up under a synthetic **Anonymous** row that sorts and pages inline with real users. Its per-user page has no token and no rotate — only **Delete anonymous data** (permanently removes all unattributed spans) alongside the activity and sessions links.
 
 ## Configuring Claude Code
 

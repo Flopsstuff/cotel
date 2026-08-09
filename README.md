@@ -14,7 +14,7 @@ One Docker container. OTLP ingest on `:4318`, interactive analytics dashboard on
 - **Costs** — cumulative spend chart + breakdown table by model
 - **Tools** — call counts, average duration, and error rate per tool (`Bash`, `Read`, `Edit`, …)
 - **Models** — token and cost breakdown across all Claude model variants
-- **Users** — named users, API tokens, search, pagination, and click-through to per-user analytics
+- **Users** — one sortable, searchable list with per-user cost and sessions scoped to a range switcher (All / Year / Month / Week / Day, default 30 days); click any row for that user's page — token, rotate, delete, and links into their activity and sessions
 - **Setup** — step-by-step onboarding guide with copy-paste `settings.json` snippets pre-filled with your ingest URL and token
 - **Export / Import** — download all data as a versioned ZIP/CSV archive; restore it on a fresh instance
 - **Cloudflare Tunnel** — publish cotel over HTTPS with a single env var; bearer-token auth for OTLP, Zero Trust for the dashboard
@@ -56,7 +56,7 @@ Restart Claude Code. Telemetry starts flowing immediately.
 
 cotel ships with token-based authentication for OTLP ingest. Tokens are tied to named users.
 
-Open the dashboard → **Users** (people icon in the sidebar) → **Add user**. Give the user a name (e.g. the machine or agent name sending telemetry). Copy the token — it is always accessible from the Users table. Rotating or deleting a user revokes its token immediately.
+Open the dashboard → **Users** (people icon in the sidebar) → **Add user**. Give the user a name (e.g. the machine or agent name sending telemetry) and copy the token from the banner. The token is retrievable any time from that user's page (click the row); rotating or deleting a user revokes its token immediately.
 
 By default, cotel accepts spans without an `Authorization` header (allow-anonymous mode). To enforce strict auth: open **Setup** → **Settings** tab → disable **Allow anonymous OTLP**. Requests without a valid token then receive `401 Unauthorized`.
 
