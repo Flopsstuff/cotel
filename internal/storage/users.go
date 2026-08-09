@@ -249,6 +249,7 @@ anon AS (
         (SELECT last_seen FROM seen WHERE user_id IS NULL) AS last_seen
     FROM (SELECT 1) d
     WHERE EXISTS (SELECT 1 FROM spans WHERE user_id IS NULL)
+       OR EXISTS (SELECT 1 FROM daily_usage WHERE user_id IS NULL)
 ),
 all_users AS (
     SELECT * FROM named

@@ -300,6 +300,48 @@ func TestListUsersPage_AnonymousSortsInline(t *testing.T) {
 	}
 }
 
+// TestListUsersPage_AnonymousSurvivesRollup covers the anonymous bucket after
+// retention has purged its raw spans: the cost lives only in daily_usage, and
+// the row must still be listed — GetUserWithStats reports it either way, so
+// gating the list row on raw spans alone would make the two endpoints disagree.
+func TestListUsersPage_AnonymousSurvivesRollup(t *testing.T) {
+	db := openTestUserDB(t)
+	mustCreateTestUser(t, db, "alice")
+	today := time.Now().UTC().Truncate(24 * time.Hour)
+
+	// alice's raw span is the only one left, so raw_floor lands on today.
+	addRangeSpan(t, db, "a-raw", "alice", "sess-alice", today.Add(12*time.Hour), 10)
+	// Anonymous data exists only as a strictly-earlier aggregate.
+	addDailyUsageRow(t, db, today.AddDate(0, 0, -2), "", "sess-anon", "m1", 50)
+
+	users, total, err := db.ListUsersPage(ListUsersOptions{Sort: "cost", Order: "desc"})
+	if err != nil {
+		t.Fatalf("ListUsersPage: %v", err)
+	}
+	if total != 2 {
+		t.Errorf("total: want 2 (alice + anonymous), got %d", total)
+	}
+	u, ok := userByName(users, "Anonymous")
+	if !ok {
+		t.Fatalf("anonymous row dropped after roll-up: got %v", userNames(users))
+	}
+	if u.TotalCostUSD != 50 {
+		t.Errorf("anonymous cost: want 50, got %v", u.TotalCostUSD)
+	}
+	if u.Sessions != 1 {
+		t.Errorf("anonymous sessions: want 1, got %v", u.Sessions)
+	}
+
+	one, err := db.GetUserWithStats(AnonymousUserID, nil)
+	if err != nil {
+		t.Fatalf("GetUserWithStats(anonymous): %v", err)
+	}
+	if one.TotalCostUSD != u.TotalCostUSD || one.Sessions != u.Sessions {
+		t.Errorf("detail disagrees with list: detail %v/%v, list %v/%v",
+			one.TotalCostUSD, one.Sessions, u.TotalCostUSD, u.Sessions)
+	}
+}
+
 // TestListUsersPage_LimitZeroReturnsAll confirms limit=0 disables paging.
 func TestListUsersPage_LimitZeroReturnsAll(t *testing.T) {
 	db := openTestUserDB(t)
