@@ -130,7 +130,8 @@ func (db *DB) rollupAndPurgeAt(cfg RetentionConfig, now time.Time) error {
 		INSERT INTO daily_usage
 		  (day, session_id, model, tool_name, user_id,
 		   span_count, total_input_tokens, total_output_tokens,
-		   total_cache_read_tokens, total_cache_write_tokens, total_cost_usd)
+		   total_cache_read_tokens, total_cache_write_tokens, total_cost_usd,
+		   total_duration_ms, fail_count)
 		SELECT
 		  strftime(CAST(start_time AS TIMESTAMP), '%Y-%m-%d')::DATE AS day,
 		  COALESCE(NULLIF(session_id, ''), ?) AS session_id,
@@ -142,7 +143,9 @@ func (db *DB) rollupAndPurgeAt(cfg RetentionConfig, now time.Time) error {
 		  COALESCE(SUM(output_tokens), 0),
 		  COALESCE(SUM(cache_read_tokens), 0),
 		  COALESCE(SUM(cache_write_tokens), 0),
-		  COALESCE(SUM(cost_usd), 0)
+		  COALESCE(SUM(cost_usd), 0),
+		  COALESCE(SUM(duration_ms), 0),
+		  COUNT(*) FILTER (WHERE status_code = 2)
 		FROM spans
 		WHERE start_time < ?
 		GROUP BY 1, 2, 3, 4
@@ -153,6 +156,8 @@ func (db *DB) rollupAndPurgeAt(cfg RetentionConfig, now time.Time) error {
 		  total_cache_read_tokens  = COALESCE(daily_usage.total_cache_read_tokens, 0) + excluded.total_cache_read_tokens,
 		  total_cache_write_tokens = COALESCE(daily_usage.total_cache_write_tokens, 0) + excluded.total_cache_write_tokens,
 		  total_cost_usd           = daily_usage.total_cost_usd + excluded.total_cost_usd,
+		  total_duration_ms        = COALESCE(daily_usage.total_duration_ms, 0) + excluded.total_duration_ms,
+		  fail_count               = COALESCE(daily_usage.fail_count, 0) + excluded.fail_count,
 		  user_id                  = COALESCE(daily_usage.user_id, excluded.user_id)
 	`, UnknownSentinel, UnknownSentinel, UnknownSentinel, rollupCutoff); err != nil {
 		return err

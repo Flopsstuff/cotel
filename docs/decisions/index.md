@@ -18,3 +18,5 @@ New ADRs go in this directory as `NNNN-short-title.md`, numbered sequentially.
 | [ADR-0008](./0008-per-agent-telemetry-identity) | Per-agent telemetry identity must not live in shared settings.json env | Accepted |
 | [ADR-0009](./0009-daily-usage-unknown-sentinel) | `daily_usage` roll-up normalises empty/NULL keys to an `unknown` sentinel | Accepted |
 | [ADR-0010](./0010-schema-version-guard) | Guard schema migrations behind a recorded version | Accepted |
+| [ADR-0011](./0011-users-list-ranged-stats-and-server-side-sort) | Users list — time-ranged stats, server-side sort and pagination | Accepted |
+| [ADR-0012](./0012-tools-list-ranged-stats-and-server-side-sort) | Tools list — time-ranged stats, server-side sort and pagination | Accepted |
