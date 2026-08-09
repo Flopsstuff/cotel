@@ -252,7 +252,7 @@ func TestBackfillCostUSD_DoesNotTouchDailyUsage(t *testing.T) {
 		       ('2026-07-02', 'sess2', 'claude-opus-4-8', 'tool1', NULL, 20, 1000,    0, 42.0)`); err != nil {
 		t.Fatal(err)
 	}
-	// A recent raw span not represented in daily_usage — must not be materialised.
+	// A recent raw span not represented in daily_usage - must not be materialised.
 	insertCostSpan(t, db, "recent1", "claude-opus-4-8", 1_000_000, 0, 0)
 
 	if _, err := db.BackfillCostUSD(); err != nil {

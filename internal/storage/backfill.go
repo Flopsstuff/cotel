@@ -156,7 +156,7 @@ func (db *DB) DryRunBackfill() (BackfillReport, error) {
 // construction. Repairing an already-rolled-up row is impossible anyway:
 // daily_usage persists only input/output token totals, and on real data cache
 // tokens are ~156x that volume, so a recompute from the stored counters would
-// recover only a small fraction of the true cost — and would silently lower a
+// recover only a small fraction of the true cost - and would silently lower a
 // correct row on re-run. Making aggregates recomputable needs cache-token
 // columns on daily_usage; that is tracked separately, not bolted onto a
 // backfill. See FLO-552 review.

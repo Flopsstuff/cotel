@@ -253,11 +253,11 @@ Updates `cost_usd` on every known-model span. Spans with an unknown or empty mod
 operation is idempotent — running it twice yields the same result (cost is recomputed from the stored
 token counts, not scaled).
 
-> **Scope — `spans` only.** The backfill deliberately does not touch `daily_usage`. The retention
+> **Scope - `spans` only.** The backfill deliberately does not touch `daily_usage`. The retention
 > roll-up derives `total_cost_usd` as `SUM(spans.cost_usd)`, so any day rolled up *after* a backfill
 > is already correct. An **already** rolled-up day cannot be repaired: `daily_usage` keeps only
 > input/output token totals, and in real traffic cache tokens outnumber those ~156:1, so recomputing
-> from the stored counters would recover a small fraction of the true cost — and would quietly lower
+> from the stored counters would recover a small fraction of the true cost - and would quietly lower
 > an otherwise-correct row on a second run. Repairing aggregates requires cache-token columns on
 > `daily_usage` and is tracked separately.
 
