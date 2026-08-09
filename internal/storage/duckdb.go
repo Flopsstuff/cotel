@@ -1,8 +1,10 @@
 package storage
 
 import (
+	"crypto/sha256"
 	"database/sql"
 	"embed"
+	"encoding/hex"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -76,11 +78,9 @@ func Open(path string) (*DB, error) {
 
 var schemaVersionRe = regexp.MustCompile(`(?i)INSERT\s+INTO\s+schema_version\s*\(\s*version\s*\)\s*VALUES\s*\(\s*(\d+)\s*\)`)
 
-// schemaVersion is the highest version the embedded schema.sql declares. It is
-// derived from the file's own `INSERT INTO schema_version` rows rather than a
-// hand-kept constant, so it can never drift from the migrations actually
-// applied. Adding a migration means adding its version row; that is the single
-// bump the guard keys off.
+// schemaVersion is the highest version schema.sql declares, read from the
+// file's own `INSERT INTO schema_version` rows. A new migration must add its
+// version row.
 func schemaVersion(ddl string) (int, error) {
 	max := 0
 	for _, m := range schemaVersionRe.FindAllStringSubmatch(ddl, -1) {
@@ -112,12 +112,32 @@ func appliedSchemaVersion(rw *sql.DB) (version int, ok bool) {
 	return int(v.Int64), true
 }
 
-// ensureSchema applies schema.sql only when the database is behind the embedded
-// schema. Every statement in schema.sql is idempotent, but running the lot on
-// each start is expensive on a large database — the user backfill alone scans
-// every span (SELECT DISTINCT user_id FROM spans). Guarding on the recorded
-// version turns an unchanged restart into a single cheap query and runs each
-// migration exactly once, on the deploy that introduces it.
+const schemaSHAKey = "schema_sql_sha256"
+
+// appliedSchemaSHA returns the sha256 of the schema.sql last applied, or "" when
+// none is recorded (settings table absent, or an older DB written before the
+// hash was tracked). "" never equals a real hash, so it forces a re-apply.
+func appliedSchemaSHA(rw *sql.DB) string {
+	var v string
+	if err := rw.QueryRow(`SELECT value FROM settings WHERE key = ?`, schemaSHAKey).Scan(&v); err != nil {
+		return ""
+	}
+	return v
+}
+
+func recordSchemaSHA(rw *sql.DB, sha string) error {
+	_, err := rw.Exec(`
+		INSERT INTO settings (key, value, updated_at) VALUES (?, ?, now())
+		ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = now()
+	`, schemaSHAKey, sha)
+	return err
+}
+
+// ensureSchema applies schema.sql unless the database already records both the
+// target version and the exact file hash. The hash is the safety net: any edit
+// the version scheme misses (forgotten or malformed version row) changes it and
+// forces a full, idempotent re-apply, so a stale schema is never silently
+// skipped — the guard fails toward doing too much, never too little.
 func ensureSchema(rw *sql.DB) error {
 	ddl, err := schemaFS.ReadFile("schema.sql")
 	if err != nil {
@@ -127,11 +147,16 @@ func ensureSchema(rw *sql.DB) error {
 	if err != nil {
 		return err
 	}
-	if current, ok := appliedSchemaVersion(rw); ok && current >= target {
+	sum := sha256.Sum256(ddl)
+	sha := hex.EncodeToString(sum[:])
+	if current, ok := appliedSchemaVersion(rw); ok && current >= target && appliedSchemaSHA(rw) == sha {
 		return nil
 	}
 	if _, err := rw.Exec(string(ddl)); err != nil {
 		return fmt.Errorf("apply schema: %w", err)
+	}
+	if err := recordSchemaSHA(rw, sha); err != nil {
+		return fmt.Errorf("record schema hash: %w", err)
 	}
 	return nil
 }

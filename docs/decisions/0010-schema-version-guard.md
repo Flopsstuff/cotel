@@ -25,20 +25,28 @@ version). Nothing read it back — the file was replayed blind.
 
 ## Decision
 
-Read the highest recorded version and skip `schema.sql` entirely when the
-database is already at or beyond the version the embedded file declares.
+Skip `schema.sql` entirely only when the database records **both** the target
+version and the exact hash of the embedded file. Otherwise apply the full,
+idempotent file and record both markers.
 
 - The **target** version is parsed from `schema.sql` itself — the highest
   `INSERT INTO schema_version (version) VALUES (N)` — not a hand-maintained Go
   constant. Adding a migration means adding its version row (the existing
-  convention); that single bump is what the guard keys off, so the guard can
-  never drift from the migrations the file actually contains.
+  convention).
+- The **hash** (`sha256` of `schema.sql`, stored in `settings` under
+  `schema_sql_sha256`) is the safety net. Migrations here live in one mutable
+  file rather than one file per version, so "edit the file, forget the version
+  row" — or write a version row the parser doesn't match — is a live failure
+  mode. Version-only, that silently skips the new migration on every existing
+  database forever (works locally on a fresh DB, fails only in prod). Any edit
+  to the file changes its hash, so the guard falls through to a re-apply
+  instead: it fails toward doing too much idempotent work, never toward skipping.
 - **Fresh database** (no `schema_version` table) and **pre-marker database**
-  (tables exist, table absent) both fail the version read and fall through to a
-  full, idempotent apply — which then records every version row, so the next
-  start takes the fast path.
-- A **stale** database (recorded version behind the file) also applies the full
-  file, running the new migration exactly once.
+  (tables exist, marker absent) both fail the version read and fall through to a
+  full, idempotent apply — which records the version rows and the hash, so the
+  next start takes the fast path.
+- A **stale** database (recorded version behind the file, or a mismatched hash)
+  also applies the full file, running any new migration exactly once.
 
 The schema stays a one-way door: migrations are additive only and version
 numbers are never reused.
@@ -72,10 +80,15 @@ here and tracked separately.
 
 ## Consequences
 
-- An unchanged restart runs one `SELECT max(version)` instead of the full DDL
-  (~165 ms → ~9 ms). Correct hygiene; negligible against the WAL-replay cost.
+- An unchanged restart runs two cheap reads (`SELECT max(version)` plus the hash
+  lookup) instead of the full DDL (~165 ms → ~9 ms). Correct hygiene; negligible
+  against the WAL-replay cost.
 - Migrations now run once, on the deploy that introduces them, instead of every
   boot — so a future expensive migration cannot silently tax every restart.
+- Any edit to `schema.sql`, including a comment-only one, changes the hash and
+  triggers one idempotent re-apply on the next boot. That is the intended
+  trade-off: a spurious ~165 ms re-run is cheaper than the failure mode it rules
+  out (a real migration silently skipped).
 - `schema.sql` remains the single source of truth for the target version; the
   `-- Schema version: N` header is documentation, kept honest by a test that
   asserts it equals the highest inserted version.

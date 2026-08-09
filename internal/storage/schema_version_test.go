@@ -1,7 +1,9 @@
 package storage
 
 import (
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"path/filepath"
 	"regexp"
@@ -29,6 +31,16 @@ func embeddedVersion(t *testing.T) int {
 		t.Fatalf("schemaVersion: %v", err)
 	}
 	return v
+}
+
+func embeddedSHA(t *testing.T) string {
+	t.Helper()
+	ddl, err := schemaFS.ReadFile("schema.sql")
+	if err != nil {
+		t.Fatalf("read schema.sql: %v", err)
+	}
+	sum := sha256.Sum256(ddl)
+	return hex.EncodeToString(sum[:])
 }
 
 // Fresh database: no version marker → full schema applied, version recorded.
@@ -150,6 +162,44 @@ func TestEnsureSchema_StaleVersionReapplies(t *testing.T) {
 
 	if v, err := db2.GetSetting("allow_anonymous"); err != nil || v != "true" {
 		t.Fatalf("stale db not re-migrated: allow_anonymous = %q, err=%v", v, err)
+	}
+	if got, want := appliedVersion(t, db2), embeddedVersion(t); got != want {
+		t.Fatalf("recorded version = %d, want %d", got, want)
+	}
+}
+
+// Current version but a stale recorded file hash → DDL must re-apply. This is
+// the safety net for any schema.sql edit the version scheme fails to notice.
+func TestEnsureSchema_StaleSHAReapplies(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "stalesha.duckdb")
+
+	db, err := Open(path)
+	if err != nil {
+		t.Fatalf("first open: %v", err)
+	}
+	// Version stays current; only the recorded hash is wrong, and we drop a seed
+	// the full schema would restore.
+	if err := db.SetSetting(schemaSHAKey, "stale"); err != nil {
+		t.Fatalf("corrupt sha: %v", err)
+	}
+	if _, err := db.rw.Exec(`DELETE FROM settings WHERE key = 'allow_anonymous'`); err != nil {
+		t.Fatalf("delete seed: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	db2, err := Open(path)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer db2.Close()
+
+	if v, err := db2.GetSetting("allow_anonymous"); err != nil || v != "true" {
+		t.Fatalf("stale-hash db not re-applied: allow_anonymous = %q, err=%v", v, err)
+	}
+	if got := appliedSchemaSHA(db2.rw); got != embeddedSHA(t) {
+		t.Fatalf("recorded sha = %q, want embedded sha after re-apply", got)
 	}
 	if got, want := appliedVersion(t, db2), embeddedVersion(t); got != want {
 		t.Fatalf("recorded version = %d, want %d", got, want)
