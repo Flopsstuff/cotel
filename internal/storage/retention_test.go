@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"database/sql"
 	"testing"
 	"time"
 )
@@ -83,6 +84,156 @@ func TestRollupAndPurge(t *testing.T) {
 	}
 	if totalCost < 0.009 || totalCost > 0.011 {
 		t.Errorf("total_cost_usd: got %f, want ~0.01", totalCost)
+	}
+}
+
+// TestRollupAndPurge_DurationAndFailCount verifies that a rolled-up day keeps
+// SUM(duration_ms) and the count of ERROR spans (status_code = 2).
+func TestRollupAndPurge_DurationAndFailCount(t *testing.T) {
+	db, err := Open(":memory:")
+	if err != nil {
+		t.Fatalf("open in-memory db: %v", err)
+	}
+	defer db.Close()
+
+	day := time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC)
+	insertDurationSpan(t, db, "ok", day.Add(2*time.Hour), 100*time.Millisecond, 1)
+	insertDurationSpan(t, db, "err", day.Add(3*time.Hour), 250*time.Millisecond, 2)
+	insertDurationSpan(t, db, "unset", day.Add(4*time.Hour), 50*time.Millisecond, 0)
+
+	const rawDays = 30
+	cfg := RetentionConfig{RawDays: rawDays, AggregateDays: 90}
+	tick := day.AddDate(0, 0, rawDays+1).Add(8 * time.Hour)
+	if err := db.rollupAndPurgeAt(cfg, tick); err != nil {
+		t.Fatalf("RollupAndPurge: %v", err)
+	}
+
+	var totalDuration float64
+	var failCount int64
+	if err := db.rw.QueryRow(`
+		SELECT total_duration_ms, fail_count FROM daily_usage
+		WHERE day = CAST(? AS DATE) AND session_id = 'sess' AND model = 'claude-opus-5' AND tool_name = 'Bash'
+	`, day.Format("2006-01-02")).Scan(&totalDuration, &failCount); err != nil {
+		t.Fatalf("query daily_usage: %v", err)
+	}
+	if totalDuration < 399.9 || totalDuration > 400.1 {
+		t.Errorf("total_duration_ms: got %f, want 400", totalDuration)
+	}
+	if failCount != 1 {
+		t.Errorf("fail_count: got %d, want 1", failCount)
+	}
+}
+
+// TestRollupAndPurge_DurationAndFailAccumulate pins that a second roll-up cycle
+// folding more spans into an existing day adds to total_duration_ms and
+// fail_count rather than replacing them.
+func TestRollupAndPurge_DurationAndFailAccumulate(t *testing.T) {
+	db, err := Open(":memory:")
+	if err != nil {
+		t.Fatalf("open in-memory db: %v", err)
+	}
+	defer db.Close()
+
+	day := time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC)
+	insertDurationSpan(t, db, "first", day.Add(2*time.Hour), 100*time.Millisecond, 2)
+
+	const rawDays = 30
+	cfg := RetentionConfig{RawDays: rawDays, AggregateDays: 90}
+	tick := day.AddDate(0, 0, rawDays+1).Add(8 * time.Hour)
+	if err := db.rollupAndPurgeAt(cfg, tick); err != nil {
+		t.Fatalf("first roll-up: %v", err)
+	}
+
+	insertDurationSpan(t, db, "late", day.Add(10*time.Hour), 50*time.Millisecond, 1)
+	if err := db.rollupAndPurgeAt(cfg, tick); err != nil {
+		t.Fatalf("second roll-up: %v", err)
+	}
+
+	var totalDuration float64
+	var failCount, spanCount int64
+	if err := db.rw.QueryRow(`
+		SELECT span_count, total_duration_ms, fail_count FROM daily_usage
+		WHERE day = CAST(? AS DATE) AND session_id = 'sess'
+	`, day.Format("2006-01-02")).Scan(&spanCount, &totalDuration, &failCount); err != nil {
+		t.Fatalf("query daily_usage: %v", err)
+	}
+	if spanCount != 2 {
+		t.Errorf("span_count: got %d, want 2", spanCount)
+	}
+	if totalDuration < 149.9 || totalDuration > 150.1 {
+		t.Errorf("total_duration_ms: got %f, want 150", totalDuration)
+	}
+	if failCount != 1 {
+		t.Errorf("fail_count: got %d, want 1 (only the first span was ERROR)", failCount)
+	}
+}
+
+// TestRollupAndPurge_DurationAndFailCoalesceNULL pins that accumulating into a
+// pre-migration aggregate row (NULL duration/fail columns) yields the new
+// span's values instead of poisoning the sum to NULL.
+func TestRollupAndPurge_DurationAndFailCoalesceNULL(t *testing.T) {
+	db, err := Open(":memory:")
+	if err != nil {
+		t.Fatalf("open in-memory db: %v", err)
+	}
+	defer db.Close()
+
+	day := time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC)
+	if _, err := db.rw.Exec(`
+		INSERT INTO daily_usage (
+		  day, session_id, model, tool_name, user_id,
+		  span_count, total_input_tokens, total_output_tokens, total_cost_usd,
+		  total_duration_ms, fail_count
+		) VALUES (CAST(? AS DATE), 'sess', 'claude-opus-5', 'Bash', NULL,
+		  5, 0, 0, 0, NULL, NULL)
+	`, day.Format("2006-01-02")); err != nil {
+		t.Fatalf("seed pre-migration daily_usage row: %v", err)
+	}
+
+	insertDurationSpan(t, db, "late", day.Add(10*time.Hour), 75*time.Millisecond, 2)
+
+	const rawDays = 30
+	cfg := RetentionConfig{RawDays: rawDays, AggregateDays: 90}
+	tick := day.AddDate(0, 0, rawDays+1).Add(8 * time.Hour)
+	if err := db.rollupAndPurgeAt(cfg, tick); err != nil {
+		t.Fatalf("roll-up into NULL columns: %v", err)
+	}
+
+	var totalDuration sql.NullFloat64
+	var failCount sql.NullInt64
+	var spanCount int64
+	if err := db.rw.QueryRow(`
+		SELECT span_count, total_duration_ms, fail_count FROM daily_usage
+		WHERE day = CAST(? AS DATE) AND session_id = 'sess'
+	`, day.Format("2006-01-02")).Scan(&spanCount, &totalDuration, &failCount); err != nil {
+		t.Fatalf("query daily_usage: %v", err)
+	}
+	if spanCount != 6 {
+		t.Errorf("span_count: got %d, want 6", spanCount)
+	}
+	if !totalDuration.Valid {
+		t.Fatal("total_duration_ms is NULL after COALESCE accumulate, want 75")
+	}
+	if totalDuration.Float64 < 74.9 || totalDuration.Float64 > 75.1 {
+		t.Errorf("total_duration_ms: got %f, want 75", totalDuration.Float64)
+	}
+	if !failCount.Valid {
+		t.Fatal("fail_count is NULL after COALESCE accumulate, want 1")
+	}
+	if failCount.Int64 != 1 {
+		t.Errorf("fail_count: got %d, want 1", failCount.Int64)
+	}
+}
+
+func insertDurationSpan(t *testing.T, db *DB, id string, start time.Time, dur time.Duration, status int32) {
+	t.Helper()
+	if err := db.InsertSpan(Span{
+		TraceID: "trace-" + id, SpanID: "span-" + id, Name: "claude_code.tool",
+		StartTime: start, EndTime: start.Add(dur),
+		SessionID: "sess", Model: "claude-opus-5", ToolName: "Bash",
+		StatusCode: status,
+	}); err != nil {
+		t.Fatalf("insert span %s: %v", id, err)
 	}
 }
 
