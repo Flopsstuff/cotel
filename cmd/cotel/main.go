@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log"
@@ -8,9 +9,11 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/Flopsstuff/cotel/internal/api"
@@ -60,7 +63,7 @@ func main() {
 
 	openStart := time.Now()
 	log.Printf("opening db %s", dbPath)
-	db, err := storage.Open(dbPath)
+	db, err := storage.Open(dbPath, storage.WithWALAutocheckpoint(env("COTEL_WAL_AUTOCHECKPOINT", storage.DefaultWALAutocheckpoint)))
 	if err != nil {
 		log.Fatalf("open storage: %v", err)
 	}
@@ -90,10 +93,32 @@ func main() {
 	srv.dash.set(dashMux)
 	log.Printf("ready: serving live traffic on ingest %s and dashboard %s", srv.ingestAddr, srv.dashAddr)
 
-	// Block forever; the serve goroutines own the listeners. A fatal serve error
+	// Block until a stop signal, then checkpoint before exiting. A deploy sends
+	// SIGTERM; without folding the WAL here the next start replays it, which is
+	// the multi-minute cold-start cost on a large DB. A fatal serve error still
 	// terminates the process via log.Fatalf inside serveGate.
-	select {}
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	sig := <-sigCh
+	log.Printf("received %s: stopping listeners and checkpointing before shutdown", sig)
+	srv.Close() // quiesce ingest so no writes race the checkpoint
+
+	ckStart := time.Now()
+	ctx, cancel := context.WithTimeout(context.Background(), shutdownCheckpointTimeout)
+	defer cancel()
+	if err := db.Checkpoint(ctx); err != nil {
+		// Never hang on a stuck checkpoint - log and let the deferred Close and
+		// process exit proceed. A hard kill mid-checkpoint just replays next time.
+		log.Printf("checkpoint on shutdown failed (exiting anyway): %v", err)
+	} else {
+		log.Printf("checkpoint complete in %s; exiting", time.Since(ckStart).Round(time.Millisecond))
+	}
 }
+
+// shutdownCheckpointTimeout bounds the shutdown CHECKPOINT so it stays inside the
+// container stop grace period (docker-compose stop_grace_period) and a stuck
+// checkpoint degrades to a hard kill + WAL replay rather than a hung stop.
+const shutdownCheckpointTimeout = 8 * time.Second
 
 // readyGate is an http.Handler that returns 503 until its real handler is
 // installed via set, then delegates every request to it. It lets a listener

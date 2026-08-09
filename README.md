@@ -181,6 +181,38 @@ db ready: schema/migrations applied in 2m58s
 ready: serving live traffic on ingest :4318 and dashboard :8080
 ```
 
+### Stopping — checkpoint on shutdown
+
+Since the slow part of a start is replaying the WAL, the fix is to not leave a WAL
+to replay: cotel checkpoints on the way out. A file whose WAL has been folded into
+the main database opens in milliseconds. On `SIGTERM`/`SIGINT`
+(what `docker stop` and a deploy send) it stops accepting ingest, runs a DuckDB
+`CHECKPOINT` to fold the WAL into the main file, and exits:
+
+```
+received terminated: stopping listeners and checkpointing before shutdown
+checkpoint complete in 30ms; exiting
+```
+
+Because the running process has already applied the log in memory, this checkpoint
+is cheap and completes well inside the container's stop grace period (Docker's
+default 10s). The next start then finds an empty WAL and is ready in a second or
+two instead of minutes. The container entrypoint forwards the stop signal to
+cotel and waits for it, so the checkpoint runs before the container is torn down.
+
+Two caveats:
+
+- **The first deploy that ships this behaviour still pays the full replay** — the
+  process being killed is the *old* binary without a shutdown handler. The win
+  starts from the restart after that. (A merge to `main` is itself a deploy.)
+- **A hard kill is safe but slow to recover.** `docker kill`, an OOM, or a
+  `SIGKILL` after the grace period expires skips the checkpoint. Nothing is
+  corrupted and committed spans are not lost — DuckDB replays the WAL on the next
+  open — but that open pays the replay again. `COTEL_WAL_AUTOCHECKPOINT` (below)
+  bounds how large the WAL, and therefore that worst-case replay, can get: it
+  folds the log into the main file once it passes the threshold, so a hard kill
+  finds little left to replay.
+
 ### Health check
 
 The image ships a Docker `HEALTHCHECK` that probes the dashboard `/healthz`
@@ -305,6 +337,7 @@ go test ./...
 | `COTEL_RETENTION_RAW_DAYS` | `30` | Raw span retention in days (roll-up consumes whole days, so spans survive up to a day longer) |
 | `COTEL_RETENTION_AGGREGATE_DAYS` | `90` | Daily aggregate retention in days |
 | `COTEL_RETENTION_INTERVAL` | `6h` | Retention worker tick interval (Go duration) |
+| `COTEL_WAL_AUTOCHECKPOINT` | `4MB` | DuckDB `checkpoint_threshold`: the write-ahead log is folded into the main file once it grows past this size. Lower values bound how much WAL an ungraceful kill leaves to replay on the next open; higher values checkpoint less often during ingest. DuckDB's own default is `16MB`. |
 | `CLOUDFLARE_TUNNEL_TOKEN` | _(unset)_ | When set, starts `cloudflared tunnel run` before cotel; enables public HTTPS access via Cloudflare Tunnel |
 | `COTEL_PUBLIC_INGEST_URL` | _(unset)_ | Absolute `http`/`https` URL of the public OTLP ingest endpoint (e.g. `https://cotel-ingest.yourdomain.com`). When set, the Setup page substitutes this URL into the copy-paste Claude Code snippets. |
 

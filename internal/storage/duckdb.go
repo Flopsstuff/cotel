@@ -1,17 +1,47 @@
 package storage
 
 import (
+	"context"
 	"crypto/sha256"
 	"database/sql"
 	"embed"
 	"encoding/hex"
 	"fmt"
+	"log"
 	"regexp"
 	"strconv"
 	"time"
 
 	_ "github.com/marcboeker/go-duckdb"
 )
+
+// DefaultWALAutocheckpoint caps how large the write-ahead log grows before
+// DuckDB folds it into the main file. DuckDB's own default is 16MB. Opening a
+// file with an un-checkpointed WAL replays it, and on a large database that
+// replay - not the schema migration - is what makes a cold start take minutes.
+// A graceful stop checkpoints and avoids replay entirely; this cap only matters
+// for an ungraceful kill (OOM, SIGKILL after the grace period), where it bounds
+// how much durable WAL the next open has to replay. Chosen below the WAL a
+// retention roll-up leaves (~6MB) so that purge is folded promptly. The cost is
+// slightly more frequent checkpoints during ingest, which is cheap at cotel's
+// write rate (~6MB of WAL/day).
+const DefaultWALAutocheckpoint = "4MB"
+
+// walSizeRe matches a DuckDB byte-size literal like "4MB" or "512KB".
+var walSizeRe = regexp.MustCompile(`(?i)^[0-9]+\s*(b|kb|mb|gb|tb)?$`)
+
+// Option configures Open.
+type Option func(*openConfig)
+
+type openConfig struct {
+	walAutocheckpoint string
+}
+
+// WithWALAutocheckpoint overrides DuckDB's checkpoint_threshold. Empty leaves
+// the DuckDB default (16MB). See DefaultWALAutocheckpoint for the trade-off.
+func WithWALAutocheckpoint(size string) Option {
+	return func(c *openConfig) { c.walAutocheckpoint = size }
+}
 
 func nullableStr(s string) sql.NullString {
 	return sql.NullString{String: s, Valid: s != ""}
@@ -58,7 +88,11 @@ func OpenReadOnly(path string) (*ReadDB, error) {
 
 func (r *ReadDB) Close() error { return r.db.Close() }
 
-func Open(path string) (*DB, error) {
+func Open(path string, opts ...Option) (*DB, error) {
+	var cfg openConfig
+	for _, o := range opts {
+		o(&cfg)
+	}
 	dsn := path
 	if path == ":memory:" {
 		dsn = "" // go-duckdb uses "" for in-memory, not ":memory:"
@@ -69,6 +103,17 @@ func Open(path string) (*DB, error) {
 	}
 	// DuckDB supports one writer; serialise all writes through this connection.
 	rw.SetMaxOpenConns(1)
+
+	if cfg.walAutocheckpoint != "" {
+		// PRAGMA takes a literal, not a bind parameter, so validate before
+		// interpolating to keep the statement injection-safe. A rejected value
+		// must not take down startup - warn and fall back to the DuckDB default.
+		if !walSizeRe.MatchString(cfg.walAutocheckpoint) {
+			log.Printf("warning: ignoring invalid wal_autocheckpoint=%q (want e.g. 4MB), using DuckDB default", cfg.walAutocheckpoint)
+		} else if _, err := rw.Exec(fmt.Sprintf("PRAGMA wal_autocheckpoint='%s'", cfg.walAutocheckpoint)); err != nil {
+			log.Printf("warning: could not set wal_autocheckpoint=%q, using DuckDB default: %v", cfg.walAutocheckpoint, err)
+		}
+	}
 
 	if err := ensureSchema(rw); err != nil {
 		return nil, err
@@ -162,6 +207,18 @@ func ensureSchema(rw *sql.DB) error {
 }
 
 func (db *DB) Close() error { return db.rw.Close() }
+
+// Checkpoint folds the write-ahead log into the main database file so the next
+// open does not have to replay it. The write connection has already applied the
+// log in memory, so this is cheap in steady state; it is the shutdown counterpart
+// to the replay a cold open would otherwise pay. Honours ctx so a hung checkpoint
+// cannot stall shutdown past the container stop grace period.
+func (db *DB) Checkpoint(ctx context.Context) error {
+	if _, err := db.rw.ExecContext(ctx, "CHECKPOINT"); err != nil {
+		return fmt.Errorf("checkpoint: %w", err)
+	}
+	return nil
+}
 
 // Span represents a decoded OTLP span ready for storage.
 type Span struct {
