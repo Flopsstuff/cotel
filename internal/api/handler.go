@@ -989,9 +989,12 @@ var bashSortExprs = map[string]string{
 // then falling back to the "command" field inside a JSON-encoded "tool_input" value.
 //
 // The tool filter is written as COALESCE(tool_name, '') = 'Bash' rather than the
-// plain equality: DuckDB 1.8 pushes a bare column = constant on spans into an ART
-// index scan that returns no rows at all, so the plain form silently answers with
-// an empty breakdown. Wrapping the column keeps the filter out of that plan.
+// plain equality: under DuckDB 1.1.3 a bare `spans.tool_name = <const>` is pushed
+// into the scan as a table filter and then matches nothing, so the plain form
+// silently answers with an empty breakdown. `spans.service_name` behaves the same
+// way; every other column of the table is fine. Wrapping the column keeps the
+// predicate out of the pushdown — disabling the filter_pushdown optimizer makes
+// the plain form correct too.
 func (h *Handler) handleBashCommands(w http.ResponseWriter, r *http.Request) {
 	rangeKey, since := parseRange(r)
 	sort, order := parseSortOrder(r, bashSortExprs, "calls")
