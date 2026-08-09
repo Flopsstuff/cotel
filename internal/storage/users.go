@@ -142,27 +142,82 @@ func (db *DB) ListUsersPage(opts ListUsersOptions) ([]UserWithStats, int, error)
 	}
 
 	var rawSince, aggSince string
-	args := []any{}
+	filterArgs := []any{}
 	if opts.Since != nil {
 		rawSince = " AND start_time >= ?"
 		aggSince = " AND du.day >= CAST(CAST(? AS TIMESTAMP) AS DATE)"
-		args = append(args, *opts.Since, *opts.Since)
+		filterArgs = append(filterArgs, *opts.Since, *opts.Since)
 	}
 
 	var qFilter string
 	if q := strings.TrimSpace(opts.Query); q != "" {
 		qFilter = " AND name ILIKE ? ESCAPE '\\'"
-		args = append(args, "%"+escapeLike(q)+"%")
+		filterArgs = append(filterArgs, "%"+escapeLike(q)+"%")
 	}
 
 	limitClause := ""
+	args := append([]any{}, filterArgs...)
 	if limit > 0 {
 		limitClause = " LIMIT ? OFFSET ?"
 		args = append(args, limit, (page-1)*limit)
 	}
 
-	query := fmt.Sprintf(`
-WITH `+rangeUsageCTE+`,
+	cte := fmt.Sprintf(usersPageCTE, rawSince, aggSince, AnonymousUserID)
+	query := cte + fmt.Sprintf(`
+SELECT id, name, token, created_at, cost, sessions, last_seen,
+       COUNT(*) OVER () AS total
+FROM all_users
+WHERE TRUE%s
+ORDER BY %s %s NULLS LAST, name ASC%s
+`, qFilter, sortExpr, order, limitClause)
+
+	rows, err := db.rw.Query(query, args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	var out []UserWithStats
+	var total int
+	for rows.Next() {
+		var u UserWithStats
+		var token sql.NullString
+		var createdAt, lastSeen sql.NullTime
+		if err := rows.Scan(
+			&u.ID, &u.Name, &token, &createdAt,
+			&u.TotalCostUSD, &u.Sessions, &lastSeen, &total,
+		); err != nil {
+			return nil, 0, err
+		}
+		if token.Valid {
+			u.Token = token.String
+		}
+		if createdAt.Valid {
+			u.CreatedAt = createdAt.Time
+		}
+		if lastSeen.Valid {
+			ls := lastSeen.Time
+			u.LastSeen = &ls
+		}
+		out = append(out, u)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+
+	// COUNT(*) OVER () rides on the result rows, so a page past the end yields no
+	// row to read it from. Re-count so total stays the match count regardless of page.
+	if len(out) == 0 {
+		countQuery := cte + fmt.Sprintf("\nSELECT COUNT(*) FROM all_users WHERE TRUE%s\n", qFilter)
+		if err := db.rw.QueryRow(countQuery, filterArgs...).Scan(&total); err != nil {
+			return nil, 0, err
+		}
+	}
+	return out, total, nil
+}
+
+const usersPageCTE = `
+WITH ` + rangeUsageCTE + `,
 usage_agg AS (
     SELECT user_id,
            COALESCE(SUM(cost), 0) AS cost,
@@ -199,49 +254,7 @@ all_users AS (
     SELECT * FROM named
     UNION ALL
     SELECT * FROM anon
-)
-SELECT id, name, token, created_at, cost, sessions, last_seen,
-       COUNT(*) OVER () AS total
-FROM all_users
-WHERE TRUE%s
-ORDER BY %s %s NULLS LAST, name ASC%s
-`, rawSince, aggSince, AnonymousUserID, qFilter, sortExpr, order, limitClause)
-
-	rows, err := db.rw.Query(query, args...)
-	if err != nil {
-		return nil, 0, err
-	}
-	defer rows.Close()
-
-	var out []UserWithStats
-	var total int
-	for rows.Next() {
-		var u UserWithStats
-		var token sql.NullString
-		var createdAt, lastSeen sql.NullTime
-		if err := rows.Scan(
-			&u.ID, &u.Name, &token, &createdAt,
-			&u.TotalCostUSD, &u.Sessions, &lastSeen, &total,
-		); err != nil {
-			return nil, 0, err
-		}
-		if token.Valid {
-			u.Token = token.String
-		}
-		if createdAt.Valid {
-			u.CreatedAt = createdAt.Time
-		}
-		if lastSeen.Valid {
-			ls := lastSeen.Time
-			u.LastSeen = &ls
-		}
-		out = append(out, u)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, 0, err
-	}
-	return out, total, nil
-}
+)`
 
 // GetUserWithStats returns a single user with range-scoped cost/session stats
 // (since = nil means all-time). id may be the __anonymous__ pseudo-user, which

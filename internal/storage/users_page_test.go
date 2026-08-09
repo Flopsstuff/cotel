@@ -318,6 +318,34 @@ func TestListUsersPage_LimitZeroReturnsAll(t *testing.T) {
 	}
 }
 
+// TestListUsersPage_PagePastEndKeepsTotal pins that total stays the match count
+// on an out-of-range page, so a client can still tell how many pages exist.
+func TestListUsersPage_PagePastEndKeepsTotal(t *testing.T) {
+	db := openTestUserDB(t)
+	for _, name := range []string{"u1", "u2", "u3"} {
+		mustCreateTestUser(t, db, name)
+	}
+
+	users, total, err := db.ListUsersPage(ListUsersOptions{Limit: 2, Page: 99})
+	if err != nil {
+		t.Fatalf("ListUsersPage: %v", err)
+	}
+	if len(users) != 0 {
+		t.Errorf("page past end: want 0 rows, got %d", len(users))
+	}
+	if total != 3 {
+		t.Errorf("page past end: want total=3, got %d", total)
+	}
+
+	_, qTotal, err := db.ListUsersPage(ListUsersOptions{Query: "u1", Limit: 2, Page: 99})
+	if err != nil {
+		t.Fatalf("ListUsersPage(q): %v", err)
+	}
+	if qTotal != 1 {
+		t.Errorf("page past end with q: want total=1, got %d", qTotal)
+	}
+}
+
 // TestGetUserWithStats covers named users, range scoping, anonymous, and 404s.
 func TestGetUserWithStats(t *testing.T) {
 	db := openTestUserDB(t)
