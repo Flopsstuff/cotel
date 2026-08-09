@@ -50,10 +50,12 @@ jobs:
       - name: Start services
         run: docker compose up -d
 
-      - name: Wait for ingest (max 30 s)
+      # Ports now bind before the DB opens and answer 503 until it is ready, so
+      # we must wait on actual readiness (/healthz → 200), not just a bound port.
+      - name: Wait for readiness (max 60 s)
         run: |
-          timeout 30 bash -c \
-            'until curl -s -o /dev/null http://localhost:4318/; do sleep 1; done'
+          timeout 60 bash -c \
+            'until curl -sf -o /dev/null http://localhost:8080/healthz; do sleep 1; done'
 
       - name: POST sample OTLP payload
         run: |

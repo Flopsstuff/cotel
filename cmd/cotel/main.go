@@ -4,11 +4,13 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/Flopsstuff/cotel/internal/api"
@@ -22,9 +24,16 @@ import (
 
 func main() {
 	dbQuery := flag.String("db-query", "", "run SQL query against DuckDB, print first column of first row, and exit")
+	healthcheck := flag.Bool("healthcheck", false, "probe the local dashboard /healthz and exit 0 (ready) or 1; used by the container HEALTHCHECK")
 	flag.Parse()
 
 	dbPath := env("COTEL_DB_PATH", "/data/cotel.duckdb")
+	ingestAddr := env("COTEL_INGEST_ADDR", ":4318")
+	dashAddr := env("COTEL_DASH_ADDR", ":8080")
+
+	if *healthcheck {
+		os.Exit(runHealthcheck(dashAddr))
+	}
 
 	if *dbQuery != "" {
 		ro, err := storage.OpenReadOnly(dbPath)
@@ -40,11 +49,26 @@ func main() {
 		return
 	}
 
+	// Bind and start serving BEFORE the (potentially multi-minute) storage.Open.
+	// On a large production DB, WAL replay + schema migration inside storage.Open
+	// can block for minutes; binding first means the ingest port accepts
+	// connections throughout and returns a retryable 503 instead of resetting the
+	// connection — OTLP clients retry, so no telemetry is silently dropped. See
+	// FLO-556.
+	srv, err := startGatedServers(ingestAddr, dashAddr)
+	if err != nil {
+		log.Fatalf("%v", err)
+	}
+	log.Printf("listening on ingest %s and dashboard %s (storage initialising, serving 503 until ready)", srv.ingestAddr, srv.dashAddr)
+
+	openStart := time.Now()
+	log.Printf("opening db %s", dbPath)
 	db, err := storage.Open(dbPath)
 	if err != nil {
 		log.Fatalf("open storage: %v", err)
 	}
 	defer db.Close()
+	log.Printf("db ready: schema/migrations applied in %s", time.Since(openStart).Round(time.Millisecond))
 
 	retentionCfg := storage.RetentionConfig{
 		RawDays:       envInt("COTEL_RETENTION_RAW_DAYS", storage.DefaultRetention.RawDays),
@@ -64,20 +88,118 @@ func main() {
 	dashMux.Handle("/api/v1/", apiHandler)
 	dashMux.Handle("/", dashboard.New(ro))
 
-	ingestAddr := env("COTEL_INGEST_ADDR", ":4318")
-	dashAddr := env("COTEL_DASH_ADDR", ":8080")
+	// Open the gates: from here the ports serve live traffic instead of 503.
+	srv.ingest.set(ingestMux)
+	srv.dash.set(dashMux)
+	log.Printf("ready: serving live traffic on ingest %s and dashboard %s", srv.ingestAddr, srv.dashAddr)
 
+	// Block forever; the serve goroutines own the listeners. A fatal serve error
+	// terminates the process via log.Fatalf inside serveGate.
+	select {}
+}
+
+// readyGate is an http.Handler that returns 503 until its real handler is
+// installed via set, then delegates every request to it. It lets a listener
+// bind and accept connections during slow startup (WAL replay + schema
+// migration) so clients get a retryable 503 rather than a connection reset.
+type readyGate struct {
+	h atomic.Pointer[http.Handler]
+}
+
+func (g *readyGate) set(h http.Handler) { g.h.Store(&h) }
+
+func (g *readyGate) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if hp := g.h.Load(); hp != nil {
+		(*hp).ServeHTTP(w, r)
+		return
+	}
+	// Retry-After tells well-behaved OTLP/HTTP exporters to back off and retry,
+	// which is exactly what turns a "deploy restart" into a no-loss event.
+	w.Header().Set("Retry-After", "5")
+	http.Error(w, "cotel: storage initialising, retry shortly", http.StatusServiceUnavailable)
+}
+
+// gatedServers holds the two readiness gates and their resolved listen
+// addresses. The gates start closed (503) and are opened by main once storage
+// is ready.
+type gatedServers struct {
+	ingest, dash         *readyGate
+	ingestAddr, dashAddr string
+	servers              []*http.Server
+}
+
+// startGatedServers binds both listeners and starts serving their gates in the
+// background immediately, before the caller runs the blocking storage.Open.
+// Binding here (not after Open) is the whole point: the ports accept
+// connections during initialisation. Returns the resolved addresses so callers
+// (and tests) can reach the ports even when :0 was requested.
+func startGatedServers(ingestAddr, dashAddr string) (*gatedServers, error) {
+	ingestLn, err := net.Listen("tcp", ingestAddr)
+	if err != nil {
+		return nil, fmt.Errorf("listen ingest %s: %w", ingestAddr, err)
+	}
+	dashLn, err := net.Listen("tcp", dashAddr)
+	if err != nil {
+		ingestLn.Close() //nolint:errcheck
+		return nil, fmt.Errorf("listen dashboard %s: %w", dashAddr, err)
+	}
+
+	gs := &gatedServers{
+		ingest:     &readyGate{},
+		dash:       &readyGate{},
+		ingestAddr: ingestLn.Addr().String(),
+		dashAddr:   dashLn.Addr().String(),
+	}
+	gs.servers = append(gs.servers,
+		serveGate("ingest", ingestLn, gs.ingest),
+		serveGate("dashboard", dashLn, gs.dash),
+	)
+	return gs, nil
+}
+
+// Close shuts down both HTTP servers. Unused by main (which serves forever) but
+// used by tests to stop the background serve goroutines cleanly.
+func (gs *gatedServers) Close() {
+	for _, s := range gs.servers {
+		s.Close() //nolint:errcheck
+	}
+}
+
+// serveGate serves gate on ln in a background goroutine. A real serve error is
+// fatal (matches the pre-FLO-556 behaviour of a failed ListenAndServe); a clean
+// shutdown via (*http.Server).Close returns ErrServerClosed and is ignored.
+func serveGate(name string, ln net.Listener, gate *readyGate) *http.Server {
+	srv := &http.Server{Handler: gate}
 	go func() {
-		log.Printf("ingest listening on %s", ingestAddr)
-		if err := http.ListenAndServe(ingestAddr, ingestMux); err != nil {
-			log.Fatalf("ingest: %v", err)
+		if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("%s: %v", name, err)
 		}
 	}()
+	return srv
+}
 
-	log.Printf("dashboard listening on %s", dashAddr)
-	if err := http.ListenAndServe(dashAddr, dashMux); err != nil {
-		log.Fatalf("dashboard: %v", err)
+// runHealthcheck probes the local dashboard /healthz and returns a process exit
+// code: 0 when ready (HTTP 200), 1 otherwise. Self-contained so the container
+// HEALTHCHECK needs no curl/wget in the runtime image. While storage is still
+// opening, the gate returns 503, so the container reports "starting" until the
+// DB is ready.
+func runHealthcheck(dashAddr string) int {
+	host := dashAddr
+	if strings.HasPrefix(host, ":") {
+		host = "127.0.0.1" + host
 	}
+	client := &http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Get("http://" + host + "/healthz")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "healthcheck: %v\n", err)
+		return 1
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode != http.StatusOK {
+		fmt.Fprintf(os.Stderr, "healthcheck: /healthz returned %d\n", resp.StatusCode)
+		return 1
+	}
+	return 0
 }
 
 func env(key, fallback string) string {

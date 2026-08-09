@@ -143,6 +143,45 @@ Replace `cotel-ingest.yourdomain.com` with your actual OTLP hostname, and `cotel
 
 > **HTTP-only:** cotel speaks OTLP/HTTP (`application/x-protobuf` and `application/json`). There is no gRPC listener on port 4317. If spans are silently dropped, ensure `OTEL_EXPORTER_OTLP_PROTOCOL=http/json` (or `http/protobuf`) is set — the OTel SDK default is `grpc`, which will fail against cotel.
 
+## Startup and deploys
+
+On boot, cotel opens the DuckDB file (WAL replay + schema migration) before it
+can serve queries. On a large production database this can take **minutes**. To
+avoid dropping telemetry during that window (and on every deploy — a merge to
+`main` restarts the container), both ports **bind and start accepting
+connections immediately**, before the database is opened:
+
+- While storage is initialising, the ingest (`:4318`) and dashboard (`:8080`)
+  ports answer every request with **`503 Service Unavailable`** and a
+  `Retry-After: 5` header. OTLP/HTTP exporters retry on 503, so spans are held
+  by the client and delivered once cotel is ready — nothing is lost. (The old
+  behaviour bound the ports only *after* the open finished, so clients got a
+  connection reset and their spans were dropped.)
+- Once the database is ready the gates open and both ports serve live traffic.
+
+Startup is logged so the open duration is visible (no more guessing from a bare
+`Up` container):
+
+```
+listening on ingest :4318 and dashboard :8080 (storage initialising, serving 503 until ready)
+opening db /data/cotel.duckdb
+db ready: schema/migrations applied in 2m58s
+ready: serving live traffic on ingest :4318 and dashboard :8080
+```
+
+### Health check
+
+The image ships a Docker `HEALTHCHECK` that probes the dashboard `/healthz`
+(`GET`, returns `200` only once the database is open). During the initial open
+the check returns non-zero, so the container reports **`health: starting`**
+rather than a misleading healthy state while ingest is still dark; it flips to
+`healthy` when the database is ready. The probe is the cotel binary itself
+(`cotel -healthcheck`), so no extra tooling is needed in the runtime image:
+
+```bash
+docker inspect --format '{{.State.Health.Status}}' cotel   # starting → healthy
+```
+
 ## Data
 
 Data lives in the named volume (`cotel-data`) at `/data/cotel.duckdb`. You can query it directly:
