@@ -22,7 +22,7 @@
 # `env` block, which every Claude Code launch reads. The identity header must NOT
 # live there: settings.json `env` is applied at startup and OVERRIDES the
 # inherited per-agent process env, so a hardcoded header there clobbers this one.
-# (Root cause of FLO-486.)
+# (settings.json `env` is applied at startup and overrides the inherited per-agent process env.)
 #
 # The token cannot be derived — it is minted in the cotel dashboard
 # (Users -> Add user, one user per agent) and is a `cotel_<64 hex>` string. Pass

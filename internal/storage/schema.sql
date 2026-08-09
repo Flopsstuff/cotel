@@ -80,7 +80,7 @@ CREATE TABLE IF NOT EXISTS daily_usage (
 -- Migration v2 → v3: add user_id to daily_usage.
 ALTER TABLE daily_usage ADD COLUMN IF NOT EXISTS user_id VARCHAR;
 
--- Migration v7 → v8: preserve cache-token totals through roll-up (FLO-555).
+-- Migration v7 → v8: preserve cache-token totals through roll-up.
 -- Additive, nullable, no default: rows rolled up before this migration stay NULL
 -- (honestly "unknown", not a fabricated 0); rows rolled up after get real sums.
 ALTER TABLE daily_usage ADD COLUMN IF NOT EXISTS total_cache_read_tokens  BIGINT;

@@ -118,8 +118,8 @@ func TestHealth(t *testing.T) {
 	}
 }
 
-// TestHealthRetention verifies /health surfaces retention-worker degradation
-// (FLO-553): a fresh DB reports retention "unknown"; a recorded error flips the
+// TestHealthRetention verifies /health surfaces retention-worker degradation:
+// a fresh DB reports retention "unknown"; a recorded error flips the
 // top-level status to "degraded" and echoes the error text.
 func TestHealthRetention(t *testing.T) {
 	t.Run("unknown before first run", func(t *testing.T) {

@@ -161,7 +161,7 @@ type healthResponse struct {
 }
 
 // retentionHealth surfaces the outcome of the last retention-worker cycle so a
-// silently-failing roll-up (e.g. the NOT NULL crash from FLO-553) is observable.
+// silently-failing roll-up (e.g. a NOT NULL constraint crash) is observable.
 type retentionHealth struct {
 	Status    string `json:"status"`               // "ok" | "error" | "unknown"
 	LastRunAt string `json:"last_run_at,omitempty"`

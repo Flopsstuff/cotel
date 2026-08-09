@@ -52,8 +52,7 @@ func TestRollupAndPurge(t *testing.T) {
 	}
 
 	// daily_usage must have a rolled-up row with correct aggregates, including
-	// the cache-token totals (FLO-555) — the whole point of the roll-up before
-	// this fix dropped ~99% of the real token volume.
+	// cache-token totals — the roll-up before the fix dropped ~99% of the real token volume.
 	var spanCountAgg int64
 	var totalInput, totalOutput, totalCacheRead, totalCacheWrite int64
 	var totalCost float64
@@ -87,10 +86,9 @@ func TestRollupAndPurge(t *testing.T) {
 	}
 }
 
-// TestRollupAndPurge_EmptyAndNullPK reproduces FLO-553: a span whose model
-// (or session_id / tool_name) is NULL or empty must not abort the roll-up with
-// "NOT NULL constraint failed: daily_usage.model". Before the fix this test
-// fails on the very first RollupAndPurge call; after the fix the span is rolled
+// TestRollupAndPurge_EmptyAndNullPK verifies that a span whose model
+// (or session_id / tool_name) is NULL or empty does not abort the roll-up with
+// "NOT NULL constraint failed: daily_usage.model". The span must be rolled
 // up under the 'unknown' sentinel and empty/NULL collapse into one bucket.
 func TestRollupAndPurge_EmptyAndNullPK(t *testing.T) {
 	db, err := Open(":memory:")

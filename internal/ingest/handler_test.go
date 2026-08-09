@@ -150,7 +150,7 @@ func TestBetaPayload(t *testing.T) {
 	// Model invocation span: cost must be server-computed from token counts
 	// (fixture has no cost_usd — mirrors real Claude Code beta).
 	// claude-opus-4-7 with 2048 in + 768 out + 512 cache-read + 256 cache-write → ~$0.0313
-	// (corrected 2026-08 Opus 4.7 rates: $5/$25/$0.50/$6.25 per MTok; was $15/$75 pre-FLO-550)
+	// (corrected 2026-08 Opus 4.7 rates: $5/$25/$0.50/$6.25 per MTok; prior rates were $15/$75)
 	var modelSpan *storage.Span
 	for i := range store.spans {
 		if store.spans[i].Name == "claude_code.model_invocation" {

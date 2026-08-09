@@ -1,4 +1,4 @@
-// Integration tests for the full export → import → re-export cycle (FLO-77).
+// Integration tests for the full export → import → re-export cycle.
 package importpkg_test
 
 import (
@@ -303,8 +303,8 @@ func TestIntegration_DailyUsageOnly(t *testing.T) {
 		t.Fatal("expected daily_usage rows in db2 after import, got 0")
 	}
 
-	// Cache-token totals must survive roll-up → export → import unchanged
-	// (FLO-555). Before the fix they were dropped at roll-up, so the exported
+	// Cache-token totals must survive roll-up → export → import unchanged;
+	// before the fix they were dropped at roll-up, so the exported
 	// aggregate carried ~0.6% of the real token volume.
 	var got storage.DailyUsageRow
 	for _, r := range imported {
@@ -328,8 +328,8 @@ func TestIntegration_DailyUsageOnly(t *testing.T) {
 }
 
 // TestIntegration_DailyUsagePreMigrationNULL pins the NULL honesty of the
-// cache-token columns added in FLO-555. A daily_usage row rolled up before that
-// migration has no cache totals at all, and the raw spans behind it are already
+// cache-token columns. A daily_usage row rolled up before the migration adding
+// these columns has no cache totals at all, and the raw spans behind it are already
 // purged — so the value is genuinely unknown and must stay NULL through
 // export → import. Fabricating a 0 would be indistinguishable from "this day
 // really used no cache tokens", which is the lie this test exists to prevent.

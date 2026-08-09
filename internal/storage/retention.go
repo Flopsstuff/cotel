@@ -27,7 +27,7 @@ var DefaultRetention = RetentionConfig{
 // (e.g. `SELECT SUM(span_count) FROM daily_usage WHERE model = 'unknown'`).
 //
 // This is the shared "span without a model" representation agreed with the
-// cost-recalculation work (FLO-552): such a span is reported as *uncovered*,
+// cost-recalculation work: such a span is reported as *uncovered*,
 // never priced as zero. Raw spans are left untouched (they keep NULL/'') — the
 // sentinel exists only in the rollup so the dashboard's raw-span views are
 // unaffected.

@@ -74,7 +74,7 @@ func TestComputeOpus5AllTokenTypes(t *testing.T) {
 }
 
 func TestComputeOpus5TierSuffixNonZero(t *testing.T) {
-	// Regression for FLO-550: the whole fleet rides "claude-opus-5[1m]", which
+	// Regression guard: the whole fleet rides "claude-opus-5[1m]", which
 	// was absent from the table, so Compute() returned cost_usd = 0 for every
 	// span. The "[1m]" suffix must be stripped to "claude-opus-5" and yield a
 	// NON-ZERO cost.

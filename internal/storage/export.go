@@ -16,7 +16,7 @@ type DailyUsageRow struct {
 	TotalInputTokens  int64
 	TotalOutputTokens int64
 	// Cache-token totals are pointers so a pre-migration daily_usage row (rolled
-	// up before FLO-555 added these columns) round-trips as NULL, not a
+	// up before these columns existed) round-trips as NULL, not a
 	// fabricated 0. Rows rolled up after the migration carry a concrete value.
 	TotalCacheReadTokens  *int64
 	TotalCacheWriteTokens *int64
