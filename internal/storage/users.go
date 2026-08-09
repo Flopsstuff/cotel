@@ -112,7 +112,7 @@ usage AS (
     UNION ALL
     SELECT du.user_id, du.session_id, du.total_cost_usd AS cost
     FROM daily_usage du CROSS JOIN raw_floor rf
-    WHERE (rf.ts IS NULL OR du.day <= CAST(rf.ts AS DATE))%s
+    WHERE (rf.ts IS NULL OR du.day <= CAST(CAST(rf.ts AS TIMESTAMP) AS DATE))%s
 )`
 
 // ListUsersPage returns a sorted, optionally paged slice of users with
@@ -144,7 +144,7 @@ func (db *DB) ListUsersPage(opts ListUsersOptions) ([]UserWithStats, int, error)
 	args := []any{}
 	if opts.Since != nil {
 		rawSince = " AND start_time >= ?"
-		aggSince = " AND du.day >= CAST(? AS DATE)"
+		aggSince = " AND du.day >= CAST(CAST(? AS TIMESTAMP) AS DATE)"
 		args = append(args, *opts.Since, *opts.Since)
 	}
 
@@ -304,7 +304,7 @@ func (db *DB) principalStats(isAnon bool, name string, since *time.Time) (float6
 		args = append(args, name)
 	}
 	if since != nil {
-		aggSince = " AND du.day >= CAST(? AS DATE)"
+		aggSince = " AND du.day >= CAST(CAST(? AS TIMESTAMP) AS DATE)"
 		args = append(args, *since)
 	}
 
@@ -317,7 +317,7 @@ usage AS (
     UNION ALL
     SELECT du.session_id, du.total_cost_usd AS cost
     FROM daily_usage du CROSS JOIN raw_floor rf
-    WHERE %s AND (rf.ts IS NULL OR du.day <= CAST(rf.ts AS DATE))%s
+    WHERE %s AND (rf.ts IS NULL OR du.day <= CAST(CAST(rf.ts AS TIMESTAMP) AS DATE))%s
 )
 SELECT COALESCE(SUM(cost), 0), COUNT(DISTINCT session_id) FROM usage
 `, rawPrincipal, rawSince, aggPrincipal, aggSince)

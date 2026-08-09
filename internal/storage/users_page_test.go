@@ -137,6 +137,36 @@ func TestListUsersPage_UnionBoundaryNoDoubleCount(t *testing.T) {
 	}
 }
 
+// TestListUsersPage_AggregateRangeLowerBound checks that the range lower bound
+// is applied to daily_usage (day >= since) as well as raw spans.
+func TestListUsersPage_AggregateRangeLowerBound(t *testing.T) {
+	db := openTestUserDB(t)
+	mustCreateTestUser(t, db, "alice")
+	now := time.Now()
+
+	addRangeSpan(t, db, "s-now", "alice", "sess-now", now.Add(-1*time.Hour), 1)
+	addDailyUsageRow(t, db, now.AddDate(0, 0, -10), "alice", "sess-mid", "m1", 50)
+	addDailyUsageRow(t, db, now.AddDate(0, 0, -40), "alice", "sess-old", "m1", 100)
+
+	month, _, err := db.ListUsersPage(ListUsersOptions{Since: ptrTime(now.AddDate(0, 0, -30))})
+	if err != nil {
+		t.Fatalf("month: %v", err)
+	}
+	u, _ := userByName(month, "alice")
+	if u.TotalCostUSD != 51 || u.Sessions != 2 { // now (1) + mid (50); old excluded
+		t.Errorf("month: want cost 51 sessions 2, got %v/%v", u.TotalCostUSD, u.Sessions)
+	}
+
+	all, _, err := db.ListUsersPage(ListUsersOptions{})
+	if err != nil {
+		t.Fatalf("all: %v", err)
+	}
+	ua, _ := userByName(all, "alice")
+	if ua.TotalCostUSD != 151 || ua.Sessions != 3 {
+		t.Errorf("all: want cost 151 sessions 3, got %v/%v", ua.TotalCostUSD, ua.Sessions)
+	}
+}
+
 // TestListUsersPage_SortAllKeys sorts by every key in both directions.
 func TestListUsersPage_SortAllKeys(t *testing.T) {
 	db := openTestUserDB(t)
