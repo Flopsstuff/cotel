@@ -97,10 +97,11 @@ func escapeLike(s string) string {
 }
 
 // rangeUsageCTE is the shared union of raw spans and rolled-up daily_usage that
-// answers range-scoped cost/sessions (ADR-0011). Raw spans cover every day they
-// still exist for; daily_usage covers strictly earlier days. The split is exact
-// because the roll-up deletes the spans it aggregates, so the boundary day
-// (raw_floor) lives half in each source with no overlap.
+// answers range-scoped cost/sessions (ADR-0011). The roll-up snaps its cutoff to
+// UTC midnight and consumes whole days, so the earliest surviving raw day
+// (raw_floor) is fully raw and daily_usage holds only strictly-earlier days. The
+// aggregate side is therefore bounded by `day < raw_floor` (strict): `<=` would
+// double count the floor day.
 const rangeUsageCTE = `
 raw_floor AS (
     SELECT MIN(start_time) AS ts FROM spans
@@ -112,7 +113,7 @@ usage AS (
     UNION ALL
     SELECT du.user_id, du.session_id, du.total_cost_usd AS cost
     FROM daily_usage du CROSS JOIN raw_floor rf
-    WHERE (rf.ts IS NULL OR du.day <= CAST(CAST(rf.ts AS TIMESTAMP) AS DATE))%s
+    WHERE (rf.ts IS NULL OR du.day < CAST(CAST(rf.ts AS TIMESTAMP) AS DATE))%s
 )`
 
 // ListUsersPage returns a sorted, optionally paged slice of users with
@@ -317,7 +318,7 @@ usage AS (
     UNION ALL
     SELECT du.session_id, du.total_cost_usd AS cost
     FROM daily_usage du CROSS JOIN raw_floor rf
-    WHERE %s AND (rf.ts IS NULL OR du.day <= CAST(CAST(rf.ts AS TIMESTAMP) AS DATE))%s
+    WHERE %s AND (rf.ts IS NULL OR du.day < CAST(CAST(rf.ts AS TIMESTAMP) AS DATE))%s
 )
 SELECT COALESCE(SUM(cost), 0), COUNT(DISTINCT session_id) FROM usage
 `, rawPrincipal, rawSince, aggPrincipal, aggSince)

@@ -104,22 +104,23 @@ func TestListUsersPage_RangeScopesStats(t *testing.T) {
 	}
 }
 
-// TestListUsersPage_UnionBoundaryNoDoubleCount seeds a boundary day whose early
-// slice lives only in daily_usage and late slice only in spans, plus a strictly
-// earlier aggregate day. The boundary day must be included exactly once (CAST <=
-// raw_floor, not <) and a session straddling the boundary counted once.
+// TestListUsersPage_UnionBoundaryNoDoubleCount models the snapped (whole-day)
+// roll-up: raw_floor's day is fully raw, so a daily_usage row on that same day is
+// stale and must be excluded by the strict `day < raw_floor` bound (else it would
+// double count against the raw floor-day spans). A strictly-earlier aggregate day
+// is included.
 func TestListUsersPage_UnionBoundaryNoDoubleCount(t *testing.T) {
 	db := openTestUserDB(t)
 	mustCreateTestUser(t, db, "alice")
 	now := time.Now()
-	boundary := now.AddDate(0, 0, -5)
+	floor := now.AddDate(0, 0, -5)
 
-	// Late slice of the boundary day: the only raw span, so raw_floor == boundary.
-	addRangeSpan(t, db, "b-late", "alice", "sess-boundary", boundary.Add(18*time.Hour), 3)
-	// Early slice of the same boundary day, already rolled up (same session).
-	addDailyUsageRow(t, db, boundary, "alice", "sess-boundary", "m1", 5)
-	// A strictly earlier aggregate day.
-	addDailyUsageRow(t, db, boundary.AddDate(0, 0, -2), "alice", "sess-older", "m1", 7)
+	// The only raw span, so raw_floor's day is floor's day.
+	addRangeSpan(t, db, "b-raw", "alice", "sess-floor", floor.Add(6*time.Hour), 3)
+	// Stale aggregate on the same day as raw_floor — must be excluded by `<`.
+	addDailyUsageRow(t, db, floor, "alice", "sess-floor-agg", "m1", 5)
+	// A strictly-earlier aggregate day — included.
+	addDailyUsageRow(t, db, floor.AddDate(0, 0, -2), "alice", "sess-older", "m1", 7)
 
 	users, _, err := db.ListUsersPage(ListUsersOptions{})
 	if err != nil {
@@ -129,10 +130,10 @@ func TestListUsersPage_UnionBoundaryNoDoubleCount(t *testing.T) {
 	if !ok {
 		t.Fatal("alice missing")
 	}
-	if u.TotalCostUSD != 15 { // 3 (raw) + 5 (agg boundary) + 7 (agg older)
-		t.Errorf("cost: want 15 (no drop, no double count), got %v", u.TotalCostUSD)
+	if u.TotalCostUSD != 10 { // 3 (raw floor day) + 7 (earlier agg); floor-day agg 5 excluded
+		t.Errorf("cost: want 10 (strict boundary, no double count), got %v", u.TotalCostUSD)
 	}
-	if u.Sessions != 2 { // {sess-boundary, sess-older}; straddling session counts once
+	if u.Sessions != 2 { // {sess-floor (raw), sess-older (agg)}
 		t.Errorf("sessions: want 2, got %v", u.Sessions)
 	}
 }
