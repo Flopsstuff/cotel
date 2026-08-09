@@ -166,14 +166,19 @@ function CostsSection({ userId }: { userId?: string }) {
 }
 
 function ToolsSection({ userId }: { userId?: string }) {
-  const { data, isLoading, error } = useTools(userId)
+  const { data, isLoading, error } = useTools({
+    range: 'all',
+    sort: 'calls',
+    order: 'desc',
+    page: 1,
+    limit: 5,
+    user_id: userId,
+  })
 
   if (isLoading) return <LoadingSkeleton rows={5} height={36} />
   if (error) return <ErrorState message={error.message} />
   if (!data || data.items.length === 0)
     return <EmptyState heading="No tool data" subtext="Tool usage will appear once sessions are recorded." />
-
-  const top5 = data.items.slice().sort((a, b) => b.calls - a.calls).slice(0, 5)
 
   return (
     <DataTable<ToolItem>
@@ -193,7 +198,7 @@ function ToolsSection({ userId }: { userId?: string }) {
           render: (v) => failRateBadge(Number(v)),
         },
       ]}
-      rows={top5}
+      rows={data.items}
     />
   )
 }
