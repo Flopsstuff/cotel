@@ -82,6 +82,12 @@ Per-command breakdown of `Bash` tool calls. The command text is read from the
 `command` span attribute, falling back to `command` inside a JSON-encoded
 `tool_input`.
 
+**Claude Code does not send either attribute.** Its tool spans carry `tool_name`,
+`tool_use_id` and `duration_ms` only — which tool ran, not what it ran — so
+against Claude Code telemetry this endpoint returns an empty `items` list and the
+dashboard's Bash commands section stays empty. The endpoint is kept for OTLP
+producers that do send a `command` attribute; cotel's ingest is generic.
+
 | Sort key | Orders by |
 |---|---|
 | `command` | Command text |

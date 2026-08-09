@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Search, ChevronLeft, ChevronRight } from 'lucide-react'
 import { useTools, useBashCommands } from '../api'
-import { Card, DataTable, EmptyState, ErrorState, LoadingSkeleton, SegmentedControl, failRateBadge } from '../components'
+import { DataTable, EmptyState, ErrorState, LoadingSkeleton, SegmentedControl, failRateBadge } from '../components'
 import type { ToolItem, BashCommandItem } from '../api'
 import type { Column, SortState } from '../components'
 import { RANGE_OPTIONS, useRangeCookie } from '../lib/range'
@@ -78,7 +78,7 @@ export default function Tools() {
     user_id: userId,
   })
 
-  const { data: bashData, isLoading: bashLoading } = useBashCommands({
+  const { data: bashData, error: bashError, isLoading: bashLoading } = useBashCommands({
     range,
     sort: bashSort,
     order: bashOrder,
@@ -174,62 +174,67 @@ export default function Tools() {
         <LoadingSkeleton rows={8} height={40} />
       ) : error ? (
         <ErrorState message={error.message} />
-      ) : (
-        <Card title="All Tools">
-          {total === 0 ? (
-            q ? (
-              <div className={styles.noResults}>No tools match "{q}"</div>
-            ) : (
-              <EmptyState
-                heading="No tool data"
-                subtext="Tool usage will appear here once sessions are recorded in the selected range."
-              />
-            )
-          ) : (
-            <>
-              <DataTable<ToolItem>
-                columns={toolColumns}
-                rows={data!.items}
-                sort={{ key: sort as keyof ToolItem, dir: order }}
-                onSortChange={handleSortChange}
-              />
-              {data?.duration_stats_since && (
-                <p className={styles.statsNote}>
-                  Duration and error figures start from {formatDay(data.duration_stats_since)} — earlier
-                  days were rolled up before those totals were recorded, so they count toward Calls only.
-                </p>
-              )}
-              <Pagination page={page} total={total} onChange={setPage} />
-            </>
-          )}
-        </Card>
-      )}
-
-      {bashLoading && !bashData ? (
-        <Card title="Bash Command Breakdown">
-          <LoadingSkeleton rows={4} height={36} />
-        </Card>
-      ) : bashTotal > 0 ? (
-        <Card title="Bash Command Breakdown">
-          <p className={styles.sectionNote}>
-            Each distinct command passed to the Bash tool. Commands are extracted from the{' '}
-            <code>command</code> span attribute.
-          </p>
-          <DataTable<BashCommandItem>
-            columns={bashColumns}
-            rows={bashData!.items}
-            sort={{ key: bashSort as keyof BashCommandItem, dir: bashOrder }}
-            onSortChange={handleBashSortChange}
+      ) : total === 0 ? (
+        q ? (
+          <div className={styles.noResults}>No tools match "{q}"</div>
+        ) : (
+          <EmptyState
+            heading="No tool data"
+            subtext="Tool usage will appear here once sessions are recorded in the selected range."
           />
-          {bashData?.covered_since && (
+        )
+      ) : (
+        <>
+          <DataTable<ToolItem>
+            columns={toolColumns}
+            rows={data!.items}
+            sort={{ key: sort as keyof ToolItem, dir: order }}
+            onSortChange={handleSortChange}
+          />
+          {data?.duration_stats_since && (
             <p className={styles.statsNote}>
-              This breakdown starts from {formatDay(bashData.covered_since)} — older activity is kept
-              only as daily totals, which carry no command detail.
+              Duration and error figures start from {formatDay(data.duration_stats_since)} — earlier
+              days were rolled up before those totals were recorded, so they count toward Calls only.
             </p>
           )}
-          <Pagination page={bashPage} total={bashTotal} onChange={setBashPage} />
-        </Card>
-      ) : null}
+          <Pagination page={page} total={total} onChange={setPage} />
+        </>
+      )}
+
+      <section className={styles.section}>
+        <h2 className={styles.sectionTitle}>Bash commands</h2>
+        <p className={styles.sectionNote}>
+          Each distinct command passed to the Bash tool, read from the <code>command</code> span
+          attribute.
+        </p>
+
+        {bashLoading && !bashData ? (
+          <LoadingSkeleton rows={4} height={36} />
+        ) : bashError ? (
+          <ErrorState message={bashError.message} />
+        ) : bashTotal === 0 ? (
+          <EmptyState
+            heading="No command detail in this data"
+            subtext="Claude Code reports which tool ran, not what it ran — its Bash spans carry no command text. This fills in only for spans from a producer that sends the attribute."
+          />
+        ) : (
+          <>
+            <DataTable<BashCommandItem>
+              columns={bashColumns}
+              rows={bashData!.items}
+              sort={{ key: bashSort as keyof BashCommandItem, dir: bashOrder }}
+              onSortChange={handleBashSortChange}
+            />
+            {bashData?.covered_since && (
+              <p className={styles.statsNote}>
+                This breakdown starts from {formatDay(bashData.covered_since)} — older activity is kept
+                only as daily totals, which carry no command detail.
+              </p>
+            )}
+            <Pagination page={bashPage} total={bashTotal} onChange={setBashPage} />
+          </>
+        )}
+      </section>
     </div>
   )
 }
