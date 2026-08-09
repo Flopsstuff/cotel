@@ -23,6 +23,9 @@ jobs:
   build:
     name: Build VitePress docs
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: read
     steps:
       - uses: actions/checkout@v5
 
@@ -41,18 +44,18 @@ jobs:
         run: npm run build
 
       - name: Setup Pages
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         uses: actions/configure-pages@v6
 
       - name: Upload artifact
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         uses: actions/upload-pages-artifact@v5
         with:
           path: docs/.vitepress/dist
 
   deploy:
     name: Deploy to GitHub Pages
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     permissions:
       pages: write
       id-token: write
