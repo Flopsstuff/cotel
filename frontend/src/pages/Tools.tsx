@@ -78,7 +78,7 @@ export default function Tools() {
     user_id: userId,
   })
 
-  const { data: bashData, isLoading: bashLoading } = useBashCommands({
+  const { data: bashData, error: bashError, isLoading: bashLoading } = useBashCommands({
     range,
     sort: bashSort,
     order: bashOrder,
@@ -210,6 +210,8 @@ export default function Tools() {
 
         {bashLoading && !bashData ? (
           <LoadingSkeleton rows={4} height={36} />
+        ) : bashError ? (
+          <ErrorState message={bashError.message} />
         ) : bashTotal === 0 ? (
           <EmptyState
             heading="No command detail in this data"
