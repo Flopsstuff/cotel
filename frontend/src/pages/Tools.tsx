@@ -143,39 +143,40 @@ export default function Tools() {
 
   return (
     <div>
-      <div className={styles.pageHeader}>
+      <div className={styles.toolbar}>
         <h1 className={styles.title}>Tools</h1>
         {userId && (
           <button className={styles.userChip} onClick={clearUserFilter}>
             Filtered by: <strong>{userId}</strong> ×
           </button>
         )}
+
+        <div className={styles.searchWrap}>
+          <Search size={14} className={styles.searchIcon} />
+          <input
+            className={styles.searchInput}
+            placeholder="Search tools…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+          {search && <button className={styles.searchClear} onClick={() => setSearch('')}>×</button>}
+        </div>
+
+        <SegmentedControl
+          options={RANGE_OPTIONS}
+          value={range}
+          onChange={changeRange}
+          ariaLabel="Range for tool statistics"
+        />
       </div>
 
-      {error ? (
+      {isLoading && !data ? (
+        <LoadingSkeleton rows={8} height={40} />
+      ) : error ? (
         <ErrorState message={error.message} />
       ) : (
         <Card title="All Tools">
-          <div className={styles.controlsRow}>
-            <div className={styles.rangeGroup}>
-              <span className={styles.rangeLabel}>Stats range:</span>
-              <SegmentedControl options={RANGE_OPTIONS} value={range} onChange={changeRange} />
-            </div>
-            <div className={styles.searchWrap}>
-              <Search size={14} className={styles.searchIcon} />
-              <input
-                className={styles.searchInput}
-                placeholder="Search tools…"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-              />
-              {search && <button className={styles.searchClear} onClick={() => setSearch('')}>×</button>}
-            </div>
-          </div>
-
-          {isLoading && !data ? (
-            <LoadingSkeleton rows={8} height={40} />
-          ) : total === 0 ? (
+          {total === 0 ? (
             q ? (
               <div className={styles.noResults}>No tools match "{q}"</div>
             ) : (
