@@ -3,6 +3,7 @@ package storage
 import (
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/Flopsstuff/cotel/internal/pricing"
 )
@@ -39,14 +40,15 @@ type ModelCostRow struct {
 
 // spanRow holds raw data read from the spans table for cost computation.
 type spanRow struct {
-	id       string
-	model    string
-	in       int64
-	out      int64
-	cr       int64
-	cw       int64
-	oldCost  float64
-	isEmpty  bool // model is NULL or ""
+	id      string
+	model   string
+	in      int64
+	out     int64
+	cr      int64
+	cw      int64
+	oldCost float64
+	newCost float64 // recomputed cost; only meaningful in the toWrite slice
+	isEmpty bool    // model is NULL or ""
 }
 
 // readAllSpans fetches every span needed for a backfill (all model/token data).
@@ -95,12 +97,14 @@ func computeReport(rows []spanRow) (BackfillReport, []spanRow) {
 			rep.EmptyModel++
 			continue
 		}
-		newCost := pricing.Compute(r.model, r.in, r.out, r.cr, r.cw)
-		if newCost == 0 {
-			// Compute returned 0 for a non-empty model → model unknown to pricing table.
+		if !pricing.Known(r.model) {
+			// Genuinely unpriced model — leave the stored cost untouched. Classify
+			// by Known(), not by Compute() == 0: a priced model with zero billable
+			// tokens also computes 0 and must NOT be counted as unknown.
 			rep.UnknownModel++
 			continue
 		}
+		newCost := pricing.Compute(r.model, r.in, r.out, r.cr, r.cw)
 		acc := byModel[r.model]
 		if acc == nil {
 			acc = &accum{}
@@ -114,9 +118,7 @@ func computeReport(rows []spanRow) (BackfillReport, []spanRow) {
 			rep.SpansToUpdate++
 			rep.TotalDeltaUSD += newCost - r.oldCost
 			toWrite = append(toWrite, spanRow{id: r.id, model: r.model, oldCost: r.oldCost,
-				in: r.in, out: r.out, cr: r.cr, cw: r.cw})
-			// Store new cost so caller can use it.
-			toWrite[len(toWrite)-1].oldCost = newCost // reuse field as newCost sentinel
+				newCost: newCost, in: r.in, out: r.out, cr: r.cr, cw: r.cw})
 		}
 	}
 
@@ -144,8 +146,9 @@ func (db *DB) DryRunBackfill() (BackfillReport, error) {
 }
 
 // BackfillCostUSD recalculates cost_usd for every span whose model is known to
-// pricing.Compute(), then re-aggregates daily_usage. Spans with unknown or
-// empty models are left untouched and counted in the returned report.
+// pricing.Compute(), then corrects only total_cost_usd on existing daily_usage
+// rows (never their counters, never materialising new rows). Spans with unknown
+// or empty models are left untouched and counted in the returned report.
 // Running it twice yields the same result (idempotent).
 func (db *DB) BackfillCostUSD() (BackfillReport, error) {
 	allRows, err := db.readAllSpans()
@@ -173,9 +176,7 @@ func (db *DB) BackfillCostUSD() (BackfillReport, error) {
 
 	var spansDone int64
 	for _, u := range updates {
-		// u.oldCost was repurposed above to store newCost. Re-compute to be safe.
-		newCost := pricing.Compute(u.model, u.in, u.out, u.cr, u.cw)
-		if _, execErr := stmt.Exec(newCost, u.id); execErr != nil {
+		if _, execErr := stmt.Exec(u.newCost, u.id); execErr != nil {
 			err = fmt.Errorf("backfill: update span %s: %w", u.id, execErr)
 			return rep, err
 		}
@@ -188,100 +189,107 @@ func (db *DB) BackfillCostUSD() (BackfillReport, error) {
 	log.Printf("backfill: updated %d spans (unknown=%d empty=%d)",
 		spansDone, rep.UnknownModel, rep.EmptyModel)
 
-	// --- Phase 2: re-aggregate daily_usage from spans still in the raw table ---
-	_, err = db.rw.Exec(`
-		INSERT OR REPLACE INTO daily_usage
-		  (day, session_id, model, tool_name, user_id,
-		   span_count, total_input_tokens, total_output_tokens, total_cost_usd)
-		SELECT
-		  strftime(CAST(start_time AS TIMESTAMP), '%Y-%m-%d')::DATE AS day,
-		  session_id, model, tool_name,
-		  MAX(user_id) AS user_id,
-		  COUNT(*),
-		  COALESCE(SUM(input_tokens), 0),
-		  COALESCE(SUM(output_tokens), 0),
-		  COALESCE(SUM(cost_usd), 0)
-		FROM spans
-		WHERE model IS NOT NULL AND model != ''
-		  AND session_id IS NOT NULL
-		  AND tool_name IS NOT NULL
-		GROUP BY day, session_id, model, tool_name
-	`)
-	if err != nil {
-		return rep, fmt.Errorf("backfill: re-aggregate daily_usage from spans: %w", err)
+	// --- Phase 2: correct total_cost_usd on existing daily_usage rows ---
+	//
+	// This is a cost-only, non-destructive UPDATE. It must NEVER touch span_count
+	// or the token totals, and must NEVER materialise new rows: daily_usage is
+	// created solely by the retention roll-up, and re-deriving it from the raw
+	// spans here would (a) clobber span_count/token totals via INSERT OR REPLACE,
+	// (b) prematurely materialise ~RawDays of aggregates that /api/v1/export must
+	// not yet contain, and (c) corrupt the roll-up boundary day (partly rolled up,
+	// partly raw) by overwriting its aggregate with only the surviving raw slice.
+	//
+	// So we recompute each existing row's cost from its OWN stored token totals and
+	// update only total_cost_usd, keyed by the real primary key. Rolled-up rows no
+	// longer have their raw spans, so cache tokens are unavailable — daily aggregate
+	// cost is therefore input+output only (a small, documented approximation). This
+	// is idempotent: the cost is recomputed from stored tokens, not scaled.
+	if err = db.backfillDailyUsageCost(); err != nil {
+		return rep, err
 	}
 
-	// --- Phase 3: correct daily_usage rows whose raw spans were already purged ---
-	dailyRows, err := db.rw.Query(`
-		SELECT rowid, model, total_input_tokens, total_output_tokens
+	return rep, nil
+}
+
+// dailyCostRow is one existing daily_usage row keyed by its full primary key.
+type dailyCostRow struct {
+	day       time.Time
+	sessionID *string
+	model     string
+	toolName  *string
+	in        int64
+	out       int64
+}
+
+// backfillDailyUsageCost recomputes total_cost_usd for every existing known-model
+// daily_usage row from its stored token totals, updating only that one column.
+func (db *DB) backfillDailyUsageCost() error {
+	rows, err := db.rw.Query(`
+		SELECT day, session_id, model, tool_name,
+		       COALESCE(total_input_tokens, 0),
+		       COALESCE(total_output_tokens, 0)
 		FROM daily_usage
 		WHERE model IS NOT NULL AND model != ''
-		  AND NOT EXISTS (
-		      SELECT 1 FROM spans s
-		      WHERE strftime(CAST(s.start_time AS TIMESTAMP), '%Y-%m-%d')::DATE = daily_usage.day
-		        AND (s.session_id IS NOT DISTINCT FROM daily_usage.session_id)
-		        AND (s.model      IS NOT DISTINCT FROM daily_usage.model)
-		        AND (s.tool_name  IS NOT DISTINCT FROM daily_usage.tool_name)
-		  )
 	`)
 	if err != nil {
-		return rep, fmt.Errorf("backfill: read daily_usage orphan rows: %w", err)
+		return fmt.Errorf("backfill: read daily_usage rows: %w", err)
 	}
-
-	type dailyUpdate struct {
-		rowid int64
-		model string
-		in    int64
-		out   int64
-	}
-	var dailyUpdates []dailyUpdate
-	for dailyRows.Next() {
-		var u dailyUpdate
-		if err = dailyRows.Scan(&u.rowid, &u.model, &u.in, &u.out); err != nil {
-			dailyRows.Close()
-			return rep, fmt.Errorf("backfill: scan daily_usage: %w", err)
+	var updates []dailyCostRow
+	for rows.Next() {
+		var r dailyCostRow
+		if err := rows.Scan(&r.day, &r.sessionID, &r.model, &r.toolName, &r.in, &r.out); err != nil {
+			rows.Close()
+			return fmt.Errorf("backfill: scan daily_usage: %w", err)
 		}
-		dailyUpdates = append(dailyUpdates, u)
+		updates = append(updates, r)
 	}
-	if err = dailyRows.Close(); err != nil {
-		return rep, fmt.Errorf("backfill: close daily_usage rows: %w", err)
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("backfill: close daily_usage rows: %w", err)
 	}
 
-	tx2, err := db.rw.Begin()
+	tx, err := db.rw.Begin()
 	if err != nil {
-		return rep, fmt.Errorf("backfill: begin daily tx: %w", err)
+		return fmt.Errorf("backfill: begin daily tx: %w", err)
 	}
+	committed := false
 	defer func() {
-		if err != nil {
-			_ = tx2.Rollback()
+		if !committed {
+			_ = tx.Rollback()
 		}
 	}()
 
-	dstmt, err := tx2.Prepare(`UPDATE daily_usage SET total_cost_usd = ? WHERE rowid = ?`)
+	// Match on the full primary key. IS NOT DISTINCT FROM handles NULL session_id /
+	// tool_name so a NULL-keyed row updates exactly itself and no other.
+	stmt, err := tx.Prepare(`
+		UPDATE daily_usage SET total_cost_usd = ?
+		WHERE day = ?
+		  AND session_id IS NOT DISTINCT FROM ?
+		  AND model IS NOT DISTINCT FROM ?
+		  AND tool_name IS NOT DISTINCT FROM ?`)
 	if err != nil {
-		return rep, fmt.Errorf("backfill: prepare daily update: %w", err)
+		return fmt.Errorf("backfill: prepare daily update: %w", err)
 	}
-	defer dstmt.Close()
+	defer stmt.Close()
 
-	var dailyDone int64
-	for _, u := range dailyUpdates {
+	var done int64
+	for _, u := range updates {
+		if !pricing.Known(u.model) {
+			continue // unknown model — leave stored cost untouched
+		}
+		// daily_usage does not persist cache tokens; cost is input+output only.
 		cost := pricing.Compute(u.model, u.in, u.out, 0, 0)
-		if cost == 0 {
-			continue // unknown model in daily_usage — leave as-is
+		if _, execErr := stmt.Exec(cost, u.day, u.sessionID, u.model, u.toolName); execErr != nil {
+			return fmt.Errorf("backfill: update daily_usage row: %w", execErr)
 		}
-		if _, execErr := dstmt.Exec(cost, u.rowid); execErr != nil {
-			err = fmt.Errorf("backfill: update daily rowid %d: %w", u.rowid, execErr)
-			return rep, err
-		}
-		dailyDone++
+		done++
 	}
 
-	if err = tx2.Commit(); err != nil {
-		return rep, fmt.Errorf("backfill: commit daily_usage: %w", err)
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("backfill: commit daily_usage: %w", err)
 	}
-	log.Printf("backfill: updated %d daily_usage orphan rows", dailyDone)
-
-	return rep, nil
+	committed = true
+	log.Printf("backfill: recomputed total_cost_usd on %d daily_usage rows", done)
+	return nil
 }
 
 // BackfillModelSummary returns per-model cost totals from spans for reporting.

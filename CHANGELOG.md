@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- `--backfill-cost` CLI flag: one-shot command that recalculates `cost_usd` for all spans using current pricing rates and re-aggregates `daily_usage`. Prints per-model before/after totals. Must run inside the server process (same DuckDB exclusive lock). Backfill uses rates current as of the run date. See FLO-551.
+- `--backfill-cost` / `--backfill-cost-apply` CLI flags: one-shot commands that recalculate `cost_usd` for all historical spans from their stored token counts using current pricing rates. `--backfill-cost` is a read-only dry-run (per-model before/after totals, unknown/empty-model spans reported separately and left untouched); `--backfill-cost-apply` writes the corrected span costs and recomputes `total_cost_usd` on existing `daily_usage` rows without touching their counters. Idempotent (recompute from tokens, not scaling). Backfill uses rates current as of the run date. The running server holds an exclusive DuckDB lock, so the dry-run runs against a copy and the apply runs while the server is stopped — see README → Maintenance commands. See FLO-552.
 
 ### Fixed
 - Pricing table now covers the Claude 5 family (Fable 5, Mythos 5, Opus 5, Sonnet 5) and the missing 4.x models (Opus 4.8, Opus 4.6). Spans from `claude-opus-5` were previously recorded with `cost_usd = 0` because the model was absent from the table

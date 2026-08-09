@@ -200,27 +200,63 @@ go test ./...
 If the pricing table was corrected after spans were already ingested, you can recalculate `cost_usd`
 for all historical spans using the current pricing rates.
 
-**Step 1 — dry-run (safe, no writes):**
+> **The running server holds an exclusive DuckDB write lock.** A second process cannot open the
+> database file at all while the container is up — *even read-only* — so the backfill can **not**
+> be run with a plain `docker exec … /usr/local/bin/cotel …` against the live `/data/cotel.duckdb`.
+> Attempting it fails with `Could not set lock on file … Conflicting lock is held`. Use the two
+> procedures below instead: the dry-run reads a throwaway copy (no downtime), and the apply runs
+> against the volume while the server is stopped (brief downtime).
+
+**Step 1 — dry-run against a copy (safe, no writes, no downtime):**
+
+Snapshot the live DB inside the container and run the tool against the copy — the copy is a separate
+file, so it is not affected by the server's lock and the server keeps running untouched:
 
 ```bash
-docker exec cotel-cotel-1 /usr/local/bin/cotel --backfill-cost
+# 1. Copy the live DB (and its WAL) to a throwaway path inside the container.
+docker exec cotel-cotel-1 sh -c \
+  'cp /data/cotel.duckdb /tmp/dryrun.duckdb && cp /data/cotel.duckdb.wal /tmp/dryrun.duckdb.wal 2>/dev/null || true'
+
+# 2. Dry-run against the copy (COTEL_DB_PATH points the tool at it).
+docker exec -e COTEL_DB_PATH=/tmp/dryrun.duckdb cotel-cotel-1 /usr/local/bin/cotel --backfill-cost
+
+# 3. Clean up the copy.
+docker exec cotel-cotel-1 rm -f /tmp/dryrun.duckdb /tmp/dryrun.duckdb.wal
 ```
 
-Prints a per-model table showing old vs new cost and the total delta, without touching the database.
-Spans with an unknown or empty model are listed separately and left untouched.
+Prints a per-model table showing old vs new cost and the total delta, without touching the live
+database. Spans with an unknown or empty model are listed separately and left untouched. The copy is
+a point-in-time snapshot, so the totals are an estimate — in-flight writes since the copy are not
+reflected.
 
 **Step 2 — apply (after reviewing the dry-run output):**
 
+The apply writes to the real database, which requires exclusive access. Stop the server to release
+the lock, run the backfill as a one-off container against the same data volume, then start the server
+again:
+
 ```bash
-docker exec cotel-cotel-1 /usr/local/bin/cotel --backfill-cost-apply
+docker compose stop cotel                                  # release the lock (brief downtime)
+docker compose run --rm cotel --backfill-cost-apply        # one-off: applies, prints summary, exits
+docker compose start cotel                                 # bring the server back up
 ```
 
-Updates `cost_usd` on every known-model span and re-aggregates `daily_usage`. Spans with unknown
-or empty models are skipped. The operation is idempotent — running it twice yields the same result.
+Without Compose, stop the container and run a one-off against the `cotel-data` volume:
 
-> **Note:** The server holds an exclusive DuckDB write lock, so the backfill runs *inside* the
-> container via `docker exec` against the already-open database connection pool. No container
-> restart is required.
+```bash
+docker stop cotel-cotel-1
+docker run --rm -v cotel-data:/data ghcr.io/flopsstuff/cotel:latest --backfill-cost-apply
+docker start cotel-cotel-1
+```
+
+Updates `cost_usd` on every known-model span and recomputes `total_cost_usd` on existing
+`daily_usage` rows. Spans with an unknown or empty model are skipped. The operation is idempotent —
+running it twice yields the same result (cost is recomputed from the stored token counts, not scaled).
+
+> **Note on `daily_usage`:** the backfill only corrects the cost column of rolled-up aggregate rows;
+> it never changes their `span_count` / token totals and never materialises new rows. Because
+> `daily_usage` does not store cache-token counts, the cost of already-rolled-up days is recomputed
+> from input+output tokens only (a small approximation for days whose raw spans have been purged).
 
 ## Architecture
 

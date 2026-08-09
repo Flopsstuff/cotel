@@ -112,6 +112,15 @@ func canonicalID(model string) string {
 	return model
 }
 
+// Known reports whether the model (after stripping tier suffixes) is present in
+// the price table. Callers use this to distinguish a genuinely unpriced model
+// from a priced model that happens to compute a zero cost (e.g. a span with zero
+// billable tokens). Do not infer "unknown model" from Compute() == 0.
+func Known(model string) bool {
+	_, ok := table[canonicalID(model)]
+	return ok
+}
+
 // Compute returns the estimated cost in USD for the given token counts and model.
 // If the model is not in the price table it logs a warning and returns 0 so that
 // an unknown model never causes an ingest failure.
