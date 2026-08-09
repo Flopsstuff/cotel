@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -13,7 +14,8 @@ import (
 // UserStore is the write-capable interface used by user management endpoints.
 type UserStore interface {
 	CreateUser(name string) (storage.User, error)
-	ListUsersWithStats() ([]storage.UserWithStats, error)
+	ListUsersPage(opts storage.ListUsersOptions) ([]storage.UserWithStats, int, error)
+	GetUserWithStats(id string, since *time.Time) (storage.UserWithStats, error)
 	RotateToken(userID string) (storage.User, error)
 	SoftDeleteUser(userID string) error
 	DeleteUserWithHistory(userID string) error
@@ -23,17 +25,55 @@ type UserStore interface {
 }
 
 type userItem struct {
-	ID           string   `json:"id"`
-	Name         string   `json:"name"`
-	Token        string   `json:"token"`
-	CreatedAt    string   `json:"created_at"`
-	TotalCostUSD float64  `json:"cost"`
-	Sessions     int64    `json:"sessions"`
-	LastSeen     *string  `json:"last_seen"`
+	ID           string  `json:"id"`
+	Name         string  `json:"name"`
+	Token        string  `json:"token"`
+	CreatedAt    string  `json:"created_at"`
+	TotalCostUSD float64 `json:"cost"`
+	Sessions     int64   `json:"sessions"`
+	LastSeen     *string `json:"last_seen"`
 }
 
 type usersListResponse struct {
 	Users []userItem `json:"users"`
+	Total int        `json:"total"`
+	Page  int        `json:"page"`
+	Limit int        `json:"limit"`
+	Range string     `json:"range"`
+	Sort  string     `json:"sort"`
+	Order string     `json:"order"`
+}
+
+// usersSince maps a rolling-window range key to its lower bound. "all" has no
+// lower bound (nil). Windows roll from now, not calendar-aligned (ADR-0011).
+func usersSince(rangeKey string, now time.Time) *time.Time {
+	var t time.Time
+	switch rangeKey {
+	case "all":
+		return nil
+	case "year":
+		t = now.AddDate(0, 0, -365)
+	case "week":
+		t = now.AddDate(0, 0, -7)
+	case "day":
+		t = now.Add(-24 * time.Hour)
+	default: // month
+		t = now.AddDate(0, 0, -30)
+	}
+	return &t
+}
+
+// parseUsersRange reads the range query parameter, falling back to the default
+// "month" for missing or unrecognised values, and returns the normalised key
+// with its lower bound.
+func parseUsersRange(r *http.Request) (string, *time.Time) {
+	rk := r.URL.Query().Get("range")
+	switch rk {
+	case "all", "year", "month", "week", "day":
+	default:
+		rk = "month"
+	}
+	return rk, usersSince(rk, time.Now())
 }
 
 func toUserItem(u storage.UserWithStats) userItem {
@@ -71,7 +111,7 @@ func (h *Handler) handleUsers(w http.ResponseWriter, r *http.Request) {
 	}
 	switch r.Method {
 	case http.MethodGet:
-		h.listUsers(w)
+		h.listUsers(w, r)
 	case http.MethodPost:
 		h.createUser(w, r)
 	default:
@@ -79,12 +119,17 @@ func (h *Handler) handleUsers(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleUserByID dispatches DELETE on /api/v1/users/{id}.
-// The special id "__anonymous__" purges all spans with no user_id.
+// handleUserByID dispatches GET (single user) and DELETE on /api/v1/users/{id}.
+// The special id "__anonymous__" resolves to the synthetic anonymous row (GET)
+// or purges all spans with no user_id (DELETE).
 // For named users: ?mode=user_only (default) soft-deletes; ?mode=user_and_history anonymizes spans then hard-deletes.
 func (h *Handler) handleUserByID(w http.ResponseWriter, r *http.Request, id string) {
 	if h.userStore == nil || id == "" {
 		jsonError(w, "not found", http.StatusNotFound)
+		return
+	}
+	if r.Method == http.MethodGet {
+		h.getUser(w, r, id)
 		return
 	}
 	if r.Method != http.MethodDelete {
@@ -148,8 +193,39 @@ func (h *Handler) handleUserRotateToken(w http.ResponseWriter, r *http.Request, 
 	_ = json.NewEncoder(w).Encode(toUserItemPlain(u))
 }
 
-func (h *Handler) listUsers(w http.ResponseWriter) {
-	users, err := h.userStore.ListUsersWithStats()
+func (h *Handler) listUsers(w http.ResponseWriter, r *http.Request) {
+	rangeKey, since := parseUsersRange(r)
+
+	sort := r.URL.Query().Get("sort")
+	switch sort {
+	case "name", "created_at", "last_seen", "cost", "sessions":
+	default:
+		sort = "cost"
+	}
+	order := strings.ToLower(r.URL.Query().Get("order"))
+	if order != "asc" {
+		order = "desc"
+	}
+
+	page := queryInt(r, "page", 1)
+	limit := 0 // default: unpaginated (keeps the UserSearch typeahead whole)
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			limit = n
+		}
+	}
+	if limit > 500 {
+		limit = 500
+	}
+
+	users, total, err := h.userStore.ListUsersPage(storage.ListUsersOptions{
+		Since: since,
+		Query: r.URL.Query().Get("q"),
+		Sort:  sort,
+		Order: order,
+		Page:  page,
+		Limit: limit,
+	})
 	if err != nil {
 		jsonError(w, "query failed", http.StatusInternalServerError)
 		return
@@ -158,7 +234,30 @@ func (h *Handler) listUsers(w http.ResponseWriter) {
 	for _, u := range users {
 		items = append(items, toUserItem(u))
 	}
-	jsonOK(w, usersListResponse{Users: items})
+	jsonOK(w, usersListResponse{
+		Users: items,
+		Total: total,
+		Page:  page,
+		Limit: limit,
+		Range: rangeKey,
+		Sort:  sort,
+		Order: order,
+	})
+}
+
+// getUser handles GET /api/v1/users/{id}: a single user with range-scoped stats.
+func (h *Handler) getUser(w http.ResponseWriter, r *http.Request, id string) {
+	_, since := parseUsersRange(r)
+	u, err := h.userStore.GetUserWithStats(id, since)
+	if errors.Is(err, storage.ErrNotFound) {
+		jsonError(w, "not found", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		jsonError(w, "query failed", http.StatusInternalServerError)
+		return
+	}
+	jsonOK(w, toUserItem(u))
 }
 
 func (h *Handler) createUser(w http.ResponseWriter, r *http.Request) {
