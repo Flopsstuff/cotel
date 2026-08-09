@@ -26,6 +26,7 @@ export default defineConfig({
           text: 'Operations',
           items: [
             { text: 'Users and Authentication', link: '/operations/users-and-auth' },
+            { text: 'JSON API Reference', link: '/operations/api-reference' },
             { text: 'Cloudflare Tunnel — Token Mode', link: '/operations/cloudflare-tunnel-remote' },
             { text: 'Cloudflare Tunnel — Local Config', link: '/operations/cloudflare-tunnel-local' },
             { text: 'Export / Import', link: '/operations/export-import' },
