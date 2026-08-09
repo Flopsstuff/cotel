@@ -112,11 +112,13 @@ func TestListUsersPage_RangeScopesStats(t *testing.T) {
 func TestListUsersPage_UnionBoundaryNoDoubleCount(t *testing.T) {
 	db := openTestUserDB(t)
 	mustCreateTestUser(t, db, "alice")
-	now := time.Now()
-	floor := now.AddDate(0, 0, -5)
+	// Anchor to midnight UTC so the raw span and the floor-day aggregate share a
+	// calendar day regardless of the current time of day.
+	today := time.Now().UTC().Truncate(24 * time.Hour)
+	floor := today.AddDate(0, 0, -5)
 
-	// The only raw span, so raw_floor's day is floor's day.
-	addRangeSpan(t, db, "b-raw", "alice", "sess-floor", floor.Add(6*time.Hour), 3)
+	// The only raw span (noon on floor's day), so raw_floor's day is floor's day.
+	addRangeSpan(t, db, "b-raw", "alice", "sess-floor", floor.Add(12*time.Hour), 3)
 	// Stale aggregate on the same day as raw_floor — must be excluded by `<`.
 	addDailyUsageRow(t, db, floor, "alice", "sess-floor-agg", "m1", 5)
 	// A strictly-earlier aggregate day — included.
