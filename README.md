@@ -210,10 +210,8 @@ Override with environment variables:
 
 The worker ticks several times a day, but it only ever rolls up and purges
 **complete** calendar days: the raw-span cutoff is snapped back to midnight
-before use. `daily_usage` is keyed by day and rewritten with `INSERT OR REPLACE`,
-so rolling up a day in slices would make each slice overwrite the one before it
-while its raw spans were already deleted — permanently understating that day's
-`span_count`, tokens and cost.
+before use. Rolling up a day in slices would risk a slice's raw spans being
+purged before the rest of the day is aggregated.
 
 Those are **UTC** calendar days, and the cutoff is UTC midnight, whatever
 timezone the server itself runs in. Aggregates are bucketed by UTC day
@@ -221,6 +219,16 @@ everywhere, so daily figures do not shift with the host's zone.
 
 The practical effect: a raw span survives up to one day longer than
 `COTEL_RETENTION_RAW_DAYS` before it is aggregated away.
+
+### Late-arriving spans accumulate
+
+A day's aggregate is built by **accumulation**: each roll-up cycle *adds* its sum
+to the existing `daily_usage` row (`ON CONFLICT DO UPDATE`) rather than replacing
+it. So a span dated to a day that was already rolled up and purged — a backfill,
+or an import (`POST /api/v1/import`) of telemetry older than
+`COTEL_RETENTION_RAW_DAYS` — is added to that day's total instead of overwriting
+it with itself alone. The accumulate and the raw-span purge run in a single
+transaction, so a crash between them cannot double-count.
 
 ### Unattributed usage — the `unknown` sentinel
 
