@@ -22,7 +22,8 @@ import (
 
 func main() {
 	dbQuery := flag.String("db-query", "", "run SQL query against DuckDB, print first column of first row, and exit")
-	backfillCost := flag.Bool("backfill-cost", false, "recalculate cost_usd for all spans using current pricing, update daily_usage, then exit")
+	backfillCost := flag.Bool("backfill-cost", false, "dry-run: show what cost_usd recalculation would change (no writes)")
+	backfillCostApply := flag.Bool("backfill-cost-apply", false, "apply the cost_usd recalculation to all historical spans and daily_usage, then exit")
 	flag.Parse()
 
 	dbPath := env("COTEL_DB_PATH", "/data/cotel.duckdb")
@@ -41,34 +42,28 @@ func main() {
 		return
 	}
 
-	if *backfillCost {
+	if *backfillCost || *backfillCostApply {
 		db, err := storage.Open(dbPath)
 		if err != nil {
 			log.Fatalf("open storage: %v", err)
 		}
 		defer db.Close()
-		before, err := db.BackfillModelSummary()
-		if err != nil {
-			log.Fatalf("backfill: pre-summary: %v", err)
+
+		if *backfillCostApply {
+			fmt.Println("=== APPLYING cost_usd backfill ===")
+			rep, err := db.BackfillCostUSD()
+			if err != nil {
+				log.Fatalf("backfill: %v", err)
+			}
+			printBackfillReport(rep, true)
+		} else {
+			fmt.Println("=== DRY RUN (no writes) — pass --backfill-cost-apply to apply ===")
+			rep, err := db.DryRunBackfill()
+			if err != nil {
+				log.Fatalf("backfill dry-run: %v", err)
+			}
+			printBackfillReport(rep, false)
 		}
-		fmt.Println("=== BEFORE ===")
-		for _, r := range before {
-			fmt.Printf("  %-30s  spans=%d  total_cost_usd=%.4f\n", r.Model, r.SpanCount, r.TotalCostUSD)
-		}
-		result, err := db.BackfillCostUSD()
-		if err != nil {
-			log.Fatalf("backfill: %v", err)
-		}
-		after, err := db.BackfillModelSummary()
-		if err != nil {
-			log.Fatalf("backfill: post-summary: %v", err)
-		}
-		fmt.Println("=== AFTER ===")
-		for _, r := range after {
-			fmt.Printf("  %-30s  spans=%d  total_cost_usd=%.4f\n", r.Model, r.SpanCount, r.TotalCostUSD)
-		}
-		fmt.Printf("spans_scanned=%d spans_updated=%d daily_updated=%d\n",
-			result.SpansScanned, result.SpansUpdated, result.DailyUpdated)
 		return
 	}
 
@@ -137,6 +132,31 @@ func envDuration(key string, fallback time.Duration) time.Duration {
 		log.Printf("warning: invalid %s=%q, using default %s", key, v, fallback)
 	}
 	return fallback
+}
+
+// printBackfillReport prints a BackfillReport to stdout.
+func printBackfillReport(rep storage.BackfillReport, applied bool) {
+	verb := "would change"
+	if applied {
+		verb = "changed"
+	}
+	fmt.Printf("\n%-35s  %8s  %12s  %12s  %12s\n",
+		"model", "spans", "old_cost_usd", "new_cost_usd", "delta_usd")
+	fmt.Println(strings.Repeat("-", 82))
+	for _, row := range rep.ModelRows {
+		fmt.Printf("%-35s  %8d  %12.4f  %12.4f  %+12.4f\n",
+			row.Model, row.SpanCount, row.OldCostUSD, row.NewCostUSD, row.DeltaUSD)
+	}
+	fmt.Println(strings.Repeat("-", 82))
+	fmt.Printf("total delta_usd: %+.4f  (spans that %s: %d)\n",
+		rep.TotalDeltaUSD, verb, rep.SpansToUpdate)
+	if rep.UnknownModel > 0 {
+		fmt.Printf("unknown model (skipped): %d spans\n", rep.UnknownModel)
+	}
+	if rep.EmptyModel > 0 {
+		fmt.Printf("empty/null model (skipped): %d spans\n", rep.EmptyModel)
+	}
+	fmt.Println()
 }
 
 // parsePublicIngestURL validates raw as an absolute http/https URL.

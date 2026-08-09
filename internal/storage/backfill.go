@@ -1,63 +1,163 @@
 package storage
 
 import (
-	"database/sql"
 	"fmt"
 	"log"
 
 	"github.com/Flopsstuff/cotel/internal/pricing"
 )
 
-// BackfillResult summarises the changes made by BackfillCostUSD.
-type BackfillResult struct {
-	SpansScanned   int64
-	SpansUpdated   int64
-	DailyUpdated   int64
+// BackfillReport summarises changes from DryRunBackfill or BackfillCostUSD.
+type BackfillReport struct {
+	// Known-model spans, grouped by model.
+	ModelRows []ModelDelta
+	// Spans with a non-empty model value that pricing.Compute does not know — left untouched.
+	UnknownModel int64
+	// Spans with NULL or empty model — left untouched.
+	EmptyModel int64
+	// Sum of (newCost - oldCost) across all spans that would be (or were) updated.
+	TotalDeltaUSD float64
+	// Number of spans where newCost differs from the stored cost_usd.
+	SpansToUpdate int64
 }
 
-// BackfillCostUSD recalculates cost_usd for every span that has a model and at
-// least one token counter, then re-aggregates daily_usage for the same models.
-// It uses current (as of backfill run date) pricing rates — not historical ones.
-// Running it twice yields the same result (idempotent).
-func (db *DB) BackfillCostUSD() (BackfillResult, error) {
-	var res BackfillResult
+// ModelDelta is one row of a per-model cost breakdown.
+type ModelDelta struct {
+	Model      string
+	SpanCount  int64
+	OldCostUSD float64
+	NewCostUSD float64
+	DeltaUSD   float64
+}
 
-	// --- Phase 1: backfill spans ---
+// ModelCostRow is one row of a simple per-model cost summary (used by BackfillModelSummary).
+type ModelCostRow struct {
+	Model        string
+	SpanCount    int64
+	TotalCostUSD float64
+}
+
+// spanRow holds raw data read from the spans table for cost computation.
+type spanRow struct {
+	id       string
+	model    string
+	in       int64
+	out      int64
+	cr       int64
+	cw       int64
+	oldCost  float64
+	isEmpty  bool // model is NULL or ""
+}
+
+// readAllSpans fetches every span needed for a backfill (all model/token data).
+func (db *DB) readAllSpans() ([]spanRow, error) {
 	rows, err := db.rw.Query(`
-		SELECT span_id, model,
+		SELECT span_id,
+		       COALESCE(model, '') AS model,
 		       COALESCE(input_tokens, 0),
 		       COALESCE(output_tokens, 0),
 		       COALESCE(cache_read_tokens, 0),
-		       COALESCE(cache_write_tokens, 0)
+		       COALESCE(cache_write_tokens, 0),
+		       COALESCE(cost_usd, 0)
 		FROM spans
-		WHERE model IS NOT NULL AND model != ''
 	`)
 	if err != nil {
-		return res, fmt.Errorf("backfill: read spans: %w", err)
+		return nil, fmt.Errorf("backfill: read spans: %w", err)
 	}
+	defer rows.Close()
 
-	type spanCost struct {
-		id   string
-		cost float64
-	}
-	var updates []spanCost
+	var out []spanRow
 	for rows.Next() {
-		var id, model string
-		var in, out, cr, cw int64
-		if err := rows.Scan(&id, &model, &in, &out, &cr, &cw); err != nil {
-			rows.Close()
-			return res, fmt.Errorf("backfill: scan span: %w", err)
+		var r spanRow
+		if err := rows.Scan(&r.id, &r.model, &r.in, &r.out, &r.cr, &r.cw, &r.oldCost); err != nil {
+			return nil, fmt.Errorf("backfill: scan span: %w", err)
 		}
-		res.SpansScanned++
-		updates = append(updates, spanCost{id: id, cost: pricing.Compute(model, in, out, cr, cw)})
+		r.isEmpty = r.model == ""
+		out = append(out, r)
 	}
-	if err := rows.Close(); err != nil {
-		return res, fmt.Errorf("backfill: close span rows: %w", err)
+	return out, rows.Err()
+}
+
+// computeReport builds a BackfillReport from raw span data without writing anything.
+func computeReport(rows []spanRow) (BackfillReport, []spanRow) {
+	type accum struct {
+		count      int64
+		oldCostUSD float64
+		newCostUSD float64
+	}
+	byModel := map[string]*accum{}
+
+	var toWrite []spanRow
+	var rep BackfillReport
+
+	for _, r := range rows {
+		if r.isEmpty {
+			rep.EmptyModel++
+			continue
+		}
+		newCost := pricing.Compute(r.model, r.in, r.out, r.cr, r.cw)
+		if newCost == 0 {
+			// Compute returned 0 for a non-empty model → model unknown to pricing table.
+			rep.UnknownModel++
+			continue
+		}
+		acc := byModel[r.model]
+		if acc == nil {
+			acc = &accum{}
+			byModel[r.model] = acc
+		}
+		acc.count++
+		acc.oldCostUSD += r.oldCost
+		acc.newCostUSD += newCost
+
+		if newCost != r.oldCost {
+			rep.SpansToUpdate++
+			rep.TotalDeltaUSD += newCost - r.oldCost
+			toWrite = append(toWrite, spanRow{id: r.id, model: r.model, oldCost: r.oldCost,
+				in: r.in, out: r.out, cr: r.cr, cw: r.cw})
+			// Store new cost so caller can use it.
+			toWrite[len(toWrite)-1].oldCost = newCost // reuse field as newCost sentinel
+		}
 	}
 
+	for model, acc := range byModel {
+		rep.ModelRows = append(rep.ModelRows, ModelDelta{
+			Model:      model,
+			SpanCount:  acc.count,
+			OldCostUSD: acc.oldCostUSD,
+			NewCostUSD: acc.newCostUSD,
+			DeltaUSD:   acc.newCostUSD - acc.oldCostUSD,
+		})
+	}
+	return rep, toWrite
+}
+
+// DryRunBackfill computes what BackfillCostUSD would do without writing anything.
+// It is safe to call while the server is running (read-only).
+func (db *DB) DryRunBackfill() (BackfillReport, error) {
+	rows, err := db.readAllSpans()
+	if err != nil {
+		return BackfillReport{}, err
+	}
+	rep, _ := computeReport(rows)
+	return rep, nil
+}
+
+// BackfillCostUSD recalculates cost_usd for every span whose model is known to
+// pricing.Compute(), then re-aggregates daily_usage. Spans with unknown or
+// empty models are left untouched and counted in the returned report.
+// Running it twice yields the same result (idempotent).
+func (db *DB) BackfillCostUSD() (BackfillReport, error) {
+	allRows, err := db.readAllSpans()
+	if err != nil {
+		return BackfillReport{}, err
+	}
+	rep, updates := computeReport(allRows)
+
+	// --- Phase 1: update spans ---
 	tx, err := db.rw.Begin()
 	if err != nil {
-		return res, fmt.Errorf("backfill: begin tx: %w", err)
+		return rep, fmt.Errorf("backfill: begin tx: %w", err)
 	}
 	defer func() {
 		if err != nil {
@@ -67,30 +167,28 @@ func (db *DB) BackfillCostUSD() (BackfillResult, error) {
 
 	stmt, err := tx.Prepare(`UPDATE spans SET cost_usd = ? WHERE span_id = ?`)
 	if err != nil {
-		return res, fmt.Errorf("backfill: prepare update: %w", err)
+		return rep, fmt.Errorf("backfill: prepare update: %w", err)
 	}
 	defer stmt.Close()
 
+	var spansDone int64
 	for _, u := range updates {
-		r, execErr := stmt.Exec(u.cost, u.id)
-		if execErr != nil {
+		// u.oldCost was repurposed above to store newCost. Re-compute to be safe.
+		newCost := pricing.Compute(u.model, u.in, u.out, u.cr, u.cw)
+		if _, execErr := stmt.Exec(newCost, u.id); execErr != nil {
 			err = fmt.Errorf("backfill: update span %s: %w", u.id, execErr)
-			return res, err
+			return rep, err
 		}
-		n, _ := r.RowsAffected()
-		res.SpansUpdated += n
+		spansDone++
 	}
 
 	if err = tx.Commit(); err != nil {
-		return res, fmt.Errorf("backfill: commit spans: %w", err)
+		return rep, fmt.Errorf("backfill: commit spans: %w", err)
 	}
-	log.Printf("backfill: updated %d/%d spans", res.SpansUpdated, res.SpansScanned)
+	log.Printf("backfill: updated %d spans (unknown=%d empty=%d)",
+		spansDone, rep.UnknownModel, rep.EmptyModel)
 
 	// --- Phase 2: re-aggregate daily_usage from spans still in the raw table ---
-	// Spans within the retention window are still present; re-rolling them
-	// corrects the cost totals for those days without touching purged history.
-	// Excludes spans with NULL session_id/tool_name — the daily_usage PK requires
-	// non-NULL values on those columns, matching the same constraint in retention.go.
 	_, err = db.rw.Exec(`
 		INSERT OR REPLACE INTO daily_usage
 		  (day, session_id, model, tool_name, user_id,
@@ -110,13 +208,10 @@ func (db *DB) BackfillCostUSD() (BackfillResult, error) {
 		GROUP BY day, session_id, model, tool_name
 	`)
 	if err != nil {
-		return res, fmt.Errorf("backfill: re-aggregate daily_usage from spans: %w", err)
+		return rep, fmt.Errorf("backfill: re-aggregate daily_usage from spans: %w", err)
 	}
 
 	// --- Phase 3: correct daily_usage rows whose raw spans were already purged ---
-	// Those rows have total_input_tokens / total_output_tokens but no cache
-	// breakdowns (they were never stored in daily_usage). We recompute from the
-	// input+output portion only; cache is a minority of cost and better than wrong.
 	dailyRows, err := db.rw.Query(`
 		SELECT rowid, model, total_input_tokens, total_output_tokens
 		FROM daily_usage
@@ -130,32 +225,31 @@ func (db *DB) BackfillCostUSD() (BackfillResult, error) {
 		  )
 	`)
 	if err != nil {
-		return res, fmt.Errorf("backfill: read daily_usage orphan rows: %w", err)
+		return rep, fmt.Errorf("backfill: read daily_usage orphan rows: %w", err)
 	}
 
 	type dailyUpdate struct {
 		rowid int64
-		cost  float64
+		model string
+		in    int64
+		out   int64
 	}
 	var dailyUpdates []dailyUpdate
 	for dailyRows.Next() {
-		var rowid, in, out int64
-		var model string
-		if err = dailyRows.Scan(&rowid, &model, &in, &out); err != nil {
+		var u dailyUpdate
+		if err = dailyRows.Scan(&u.rowid, &u.model, &u.in, &u.out); err != nil {
 			dailyRows.Close()
-			return res, fmt.Errorf("backfill: scan daily_usage: %w", err)
+			return rep, fmt.Errorf("backfill: scan daily_usage: %w", err)
 		}
-		// cache tokens not stored — compute input+output cost only
-		cost := pricing.Compute(model, in, out, 0, 0)
-		dailyUpdates = append(dailyUpdates, dailyUpdate{rowid: rowid, cost: cost})
+		dailyUpdates = append(dailyUpdates, u)
 	}
 	if err = dailyRows.Close(); err != nil {
-		return res, fmt.Errorf("backfill: close daily_usage rows: %w", err)
+		return rep, fmt.Errorf("backfill: close daily_usage rows: %w", err)
 	}
 
 	tx2, err := db.rw.Begin()
 	if err != nil {
-		return res, fmt.Errorf("backfill: begin daily tx: %w", err)
+		return rep, fmt.Errorf("backfill: begin daily tx: %w", err)
 	}
 	defer func() {
 		if err != nil {
@@ -165,30 +259,32 @@ func (db *DB) BackfillCostUSD() (BackfillResult, error) {
 
 	dstmt, err := tx2.Prepare(`UPDATE daily_usage SET total_cost_usd = ? WHERE rowid = ?`)
 	if err != nil {
-		return res, fmt.Errorf("backfill: prepare daily update: %w", err)
+		return rep, fmt.Errorf("backfill: prepare daily update: %w", err)
 	}
 	defer dstmt.Close()
 
+	var dailyDone int64
 	for _, u := range dailyUpdates {
-		r, execErr := dstmt.Exec(u.cost, u.rowid)
-		if execErr != nil {
-			err = fmt.Errorf("backfill: update daily rowid %d: %w", u.rowid, execErr)
-			return res, err
+		cost := pricing.Compute(u.model, u.in, u.out, 0, 0)
+		if cost == 0 {
+			continue // unknown model in daily_usage — leave as-is
 		}
-		n, _ := r.RowsAffected()
-		res.DailyUpdated += n
+		if _, execErr := dstmt.Exec(cost, u.rowid); execErr != nil {
+			err = fmt.Errorf("backfill: update daily rowid %d: %w", u.rowid, execErr)
+			return rep, err
+		}
+		dailyDone++
 	}
 
 	if err = tx2.Commit(); err != nil {
-		return res, fmt.Errorf("backfill: commit daily_usage: %w", err)
+		return rep, fmt.Errorf("backfill: commit daily_usage: %w", err)
 	}
-	log.Printf("backfill: updated %d daily_usage rows (orphan history)", res.DailyUpdated)
+	log.Printf("backfill: updated %d daily_usage orphan rows", dailyDone)
 
-	return res, nil
+	return rep, nil
 }
 
 // BackfillModelSummary returns per-model cost totals from spans for reporting.
-// Used to print before/after comparisons.
 func (db *DB) BackfillModelSummary() ([]ModelCostRow, error) {
 	rows, err := db.rw.Query(`
 		SELECT model,
@@ -212,13 +308,4 @@ func (db *DB) BackfillModelSummary() ([]ModelCostRow, error) {
 		out = append(out, r)
 	}
 	return out, rows.Err()
-}
-
-// ModelCostRow is one row of a per-model cost summary.
-type ModelCostRow struct {
-	Model        string
-	SpanCount    int64
-	TotalCostUSD float64
-	// NullSpans is set by the caller when reporting pre-fix state.
-	NullSpans sql.NullInt64
 }

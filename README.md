@@ -193,6 +193,35 @@ go test ./...
 | `CLOUDFLARE_TUNNEL_TOKEN` | _(unset)_ | When set, starts `cloudflared tunnel run` before cotel; enables public HTTPS access via Cloudflare Tunnel |
 | `COTEL_PUBLIC_INGEST_URL` | _(unset)_ | Absolute `http`/`https` URL of the public OTLP ingest endpoint (e.g. `https://cotel-ingest.yourdomain.com`). When set, the Setup page substitutes this URL into the copy-paste Claude Code snippets. |
 
+## Maintenance commands
+
+### Cost backfill
+
+If the pricing table was corrected after spans were already ingested, you can recalculate `cost_usd`
+for all historical spans using the current pricing rates.
+
+**Step 1 — dry-run (safe, no writes):**
+
+```bash
+docker exec cotel-cotel-1 /usr/local/bin/cotel --backfill-cost
+```
+
+Prints a per-model table showing old vs new cost and the total delta, without touching the database.
+Spans with an unknown or empty model are listed separately and left untouched.
+
+**Step 2 — apply (after reviewing the dry-run output):**
+
+```bash
+docker exec cotel-cotel-1 /usr/local/bin/cotel --backfill-cost-apply
+```
+
+Updates `cost_usd` on every known-model span and re-aggregates `daily_usage`. Spans with unknown
+or empty models are skipped. The operation is idempotent — running it twice yields the same result.
+
+> **Note:** The server holds an exclusive DuckDB write lock, so the backfill runs *inside* the
+> container via `docker exec` against the already-open database connection pool. No container
+> restart is required.
+
 ## Architecture
 
 ```

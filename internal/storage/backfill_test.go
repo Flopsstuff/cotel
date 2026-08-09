@@ -30,22 +30,22 @@ func TestBackfillCostUSD_CorrectsZeroAndOverpriced(t *testing.T) {
 	defer db.Close()
 
 	// Span that had no price (model missing from old table) → cost_usd = 0
-	insertCostSpan(t, db,"s1", "claude-opus-4-8", 1_000_000, 0, 0)
+	insertCostSpan(t, db, "s1", "claude-opus-4-8", 1_000_000, 0, 0)
 	// Span overpriced at old 15/75 rate: 1M input * 15 = $15 instead of correct $5
-	insertCostSpan(t, db,"s2", "claude-opus-4-7", 1_000_000, 0, 15.0)
-	// Span with no model — must be untouched (cost stays 0)
-	insertCostSpan(t, db,"s3", "", 1_000_000, 0, 0)
+	insertCostSpan(t, db, "s2", "claude-opus-4-7", 1_000_000, 0, 15.0)
+	// Span with empty model — must be untouched (cost stays 0)
+	insertCostSpan(t, db, "s3", "", 1_000_000, 0, 0)
 
-	res, err := db.BackfillCostUSD()
+	rep, err := db.BackfillCostUSD()
 	if err != nil {
 		t.Fatalf("BackfillCostUSD: %v", err)
 	}
 
-	if res.SpansScanned != 2 {
-		t.Errorf("SpansScanned = %d, want 2", res.SpansScanned)
+	if rep.SpansToUpdate != 2 {
+		t.Errorf("SpansToUpdate = %d, want 2", rep.SpansToUpdate)
 	}
-	if res.SpansUpdated != 2 {
-		t.Errorf("SpansUpdated = %d, want 2", res.SpansUpdated)
+	if rep.EmptyModel != 1 {
+		t.Errorf("EmptyModel = %d, want 1", rep.EmptyModel)
 	}
 
 	var cost1, cost2, cost3 float64
@@ -61,9 +61,38 @@ func TestBackfillCostUSD_CorrectsZeroAndOverpriced(t *testing.T) {
 	if cost2 < 4.99 || cost2 > 5.01 {
 		t.Errorf("s2 cost_usd = %.4f, want ~5.0 (corrected from 15.0)", cost2)
 	}
-	// no-model span unchanged
+	// empty-model span unchanged
 	if cost3 != 0 {
 		t.Errorf("s3 (no model) cost_usd = %.4f, want 0", cost3)
+	}
+}
+
+func TestBackfillCostUSD_UnknownModelSkipped(t *testing.T) {
+	db, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	// Span with a model name not in the pricing table — must NOT be zeroed out.
+	insertCostSpan(t, db, "u1", "gpt-99-turbo", 1_000_000, 0, 3.50)
+
+	rep, err := db.BackfillCostUSD()
+	if err != nil {
+		t.Fatalf("BackfillCostUSD: %v", err)
+	}
+
+	if rep.UnknownModel != 1 {
+		t.Errorf("UnknownModel = %d, want 1", rep.UnknownModel)
+	}
+	if rep.SpansToUpdate != 0 {
+		t.Errorf("SpansToUpdate = %d, want 0 (unknown model must be skipped)", rep.SpansToUpdate)
+	}
+
+	var cost float64
+	db.rw.QueryRow(`SELECT COALESCE(cost_usd,0) FROM spans WHERE span_id='u1'`).Scan(&cost)
+	if cost != 3.50 {
+		t.Errorf("unknown-model span cost_usd = %.4f, want 3.50 (unchanged)", cost)
 	}
 }
 
@@ -74,9 +103,9 @@ func TestBackfillCostUSD_Idempotent(t *testing.T) {
 	}
 	defer db.Close()
 
-	insertCostSpan(t, db,"s1", "claude-opus-4-8", 500_000, 200_000, 0)
+	insertCostSpan(t, db, "s1", "claude-opus-4-8", 500_000, 200_000, 0)
 
-	res1, err := db.BackfillCostUSD()
+	rep1, err := db.BackfillCostUSD()
 	if err != nil {
 		t.Fatalf("first backfill: %v", err)
 	}
@@ -84,7 +113,7 @@ func TestBackfillCostUSD_Idempotent(t *testing.T) {
 	var costAfter1 float64
 	db.rw.QueryRow(`SELECT COALESCE(cost_usd,0) FROM spans WHERE span_id='s1'`).Scan(&costAfter1)
 
-	res2, err := db.BackfillCostUSD()
+	rep2, err := db.BackfillCostUSD()
 	if err != nil {
 		t.Fatalf("second backfill: %v", err)
 	}
@@ -95,8 +124,48 @@ func TestBackfillCostUSD_Idempotent(t *testing.T) {
 	if costAfter1 != costAfter2 {
 		t.Errorf("not idempotent: first=%.6f second=%.6f", costAfter1, costAfter2)
 	}
-	if res1.SpansUpdated != res2.SpansUpdated {
-		t.Errorf("SpansUpdated differs: %d vs %d", res1.SpansUpdated, res2.SpansUpdated)
+	// Second run should find nothing to update (already correct).
+	if rep2.SpansToUpdate != 0 {
+		t.Errorf("second run SpansToUpdate = %d, want 0 (already idempotent)", rep2.SpansToUpdate)
+	}
+	_ = rep1
+}
+
+func TestDryRunBackfill_NoWrites(t *testing.T) {
+	db, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	insertCostSpan(t, db, "s1", "claude-opus-4-8", 1_000_000, 0, 0)
+	insertCostSpan(t, db, "s2", "", 1_000_000, 0, 0) // empty model
+	insertCostSpan(t, db, "s3", "gpt-99", 1_000_000, 0, 7.0) // unknown model
+
+	rep, err := db.DryRunBackfill()
+	if err != nil {
+		t.Fatalf("DryRunBackfill: %v", err)
+	}
+
+	if rep.SpansToUpdate != 1 {
+		t.Errorf("SpansToUpdate = %d, want 1", rep.SpansToUpdate)
+	}
+	if rep.EmptyModel != 1 {
+		t.Errorf("EmptyModel = %d, want 1", rep.EmptyModel)
+	}
+	if rep.UnknownModel != 1 {
+		t.Errorf("UnknownModel = %d, want 1", rep.UnknownModel)
+	}
+
+	// Verify nothing was written.
+	var cost float64
+	db.rw.QueryRow(`SELECT COALESCE(cost_usd,0) FROM spans WHERE span_id='s1'`).Scan(&cost)
+	if cost != 0 {
+		t.Errorf("dry-run wrote to DB: s1 cost_usd = %.4f, want 0", cost)
+	}
+	db.rw.QueryRow(`SELECT COALESCE(cost_usd,0) FROM spans WHERE span_id='s3'`).Scan(&cost)
+	if cost != 7.0 {
+		t.Errorf("dry-run modified unknown model span: s3 cost_usd = %.4f, want 7.0", cost)
 	}
 }
 
