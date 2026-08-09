@@ -77,14 +77,20 @@ A single `.zip` file containing:
     "daily_usage": {
       "row_count": 42,
       "columns": ["day","session_id","model","tool_name","user_id",
-                  "span_count","total_input_tokens","total_output_tokens",
-                  "total_cache_read_tokens","total_cache_write_tokens","total_cost_usd"]
+                  "span_count","total_input_tokens","total_output_tokens","total_cost_usd",
+                  "total_cache_read_tokens","total_cache_write_tokens"]
     }
   }
 }
 ```
 
 `format_version` bumps **only** on breaking changes (column rename, column removal, type change). Adding optional columns does **not** bump the version.
+
+**New columns are appended at the end of the column list, never inserted in the
+middle.** The importer reads by header name, so order does not matter to it — but
+appending means an offset that was correct in an earlier export stays correct, so a
+positional reader degrades to "missing trailing columns" instead of silently
+reading the wrong field.
 
 > **`daily_usage` column additions (FLO-555).** `total_cache_read_tokens` and
 > `total_cache_write_tokens` were appended to `daily_usage` after v1 shipped. This

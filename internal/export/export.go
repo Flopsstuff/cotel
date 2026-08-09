@@ -44,10 +44,13 @@ var SpansColumns = []string{
 	"attributes", "resource_attrs", "ingested_at",
 }
 
+// Additive columns are appended at the END, never inserted mid-list: the
+// importer reads by header name, but a positional reader of an older column
+// keeps working only if earlier offsets never shift.
 var DailyUsageColumns = []string{
 	"day", "session_id", "model", "tool_name", "user_id",
-	"span_count", "total_input_tokens", "total_output_tokens",
-	"total_cache_read_tokens", "total_cache_write_tokens", "total_cost_usd",
+	"span_count", "total_input_tokens", "total_output_tokens", "total_cost_usd",
+	"total_cache_read_tokens", "total_cache_write_tokens",
 }
 
 // DayRange returns the [start, end) UTC bounds for the calendar day containing date.
@@ -174,10 +177,10 @@ func writeDailyUsageCSV(w io.Writer, rows []storage.DailyUsageRow) error {
 		row[5] = strconv.FormatInt(r.SpanCount, 10)
 		row[6] = strconv.FormatInt(r.TotalInputTokens, 10)
 		row[7] = strconv.FormatInt(r.TotalOutputTokens, 10)
+		row[8] = strconv.FormatFloat(r.TotalCostUSD, 'f', -1, 64)
 		// nil (pre-migration row) → empty cell → NULL on re-import, not 0.
-		row[8] = nullInt64Str(r.TotalCacheReadTokens)
-		row[9] = nullInt64Str(r.TotalCacheWriteTokens)
-		row[10] = strconv.FormatFloat(r.TotalCostUSD, 'f', -1, 64)
+		row[9] = nullInt64Str(r.TotalCacheReadTokens)
+		row[10] = nullInt64Str(r.TotalCacheWriteTokens)
 		if err := cw.Write(row); err != nil {
 			return err
 		}

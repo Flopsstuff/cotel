@@ -327,6 +327,103 @@ func TestIntegration_DailyUsageOnly(t *testing.T) {
 	}
 }
 
+// TestIntegration_DailyUsagePreMigrationNULL pins the NULL honesty of the
+// cache-token columns added in FLO-555. A daily_usage row rolled up before that
+// migration has no cache totals at all, and the raw spans behind it are already
+// purged — so the value is genuinely unknown and must stay NULL through
+// export → import. Fabricating a 0 would be indistinguishable from "this day
+// really used no cache tokens", which is the lie this test exists to prevent.
+func TestIntegration_DailyUsagePreMigrationNULL(t *testing.T) {
+	db, err := storage.Open(":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	day := time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC)
+
+	// A pre-migration row: input/output totals present, cache totals absent.
+	if _, err := db.ImportDailyUsage([]storage.DailyUsageRow{{
+		Day:               day,
+		SessionID:         "sess-pre",
+		Model:             "claude-test",
+		ToolName:          "Bash",
+		SpanCount:         3,
+		TotalInputTokens:  200,
+		TotalOutputTokens: 100,
+		TotalCostUSD:      0.05,
+		// TotalCacheReadTokens / TotalCacheWriteTokens deliberately nil.
+	}}); err != nil {
+		t.Fatalf("seed pre-migration row: %v", err)
+	}
+
+	start, end := day, day.Add(24*time.Hour)
+	daily, err := db.ExportDailyUsage(start, end)
+	if err != nil {
+		t.Fatalf("ExportDailyUsage: %v", err)
+	}
+	if len(daily) != 1 {
+		t.Fatalf("expected 1 daily_usage row, got %d", len(daily))
+	}
+	if daily[0].TotalCacheReadTokens != nil || daily[0].TotalCacheWriteTokens != nil {
+		t.Fatalf("NULL cache totals must scan as nil, got read=%v write=%v",
+			daily[0].TotalCacheReadTokens, daily[0].TotalCacheWriteTokens)
+	}
+
+	m := export.Manifest{
+		FormatVersion: export.FormatVersion,
+		CotelVersion:  export.CotelVersion,
+		ExportAt:      time.Now().UTC(),
+		Period:        "day",
+		PeriodStart:   start,
+		PeriodEnd:     end,
+		Tables: map[string]export.TableMeta{
+			"daily_usage": {RowCount: len(daily), Columns: export.DailyUsageColumns},
+		},
+	}
+	var buf bytes.Buffer
+	if err := export.BuildZIP(&buf, m, nil, daily); err != nil {
+		t.Fatalf("BuildZIP: %v", err)
+	}
+	data := buf.Bytes()
+
+	db2, err := storage.Open(":memory:")
+	if err != nil {
+		t.Fatalf("open db2: %v", err)
+	}
+	defer db2.Close()
+
+	_, _, gotDaily, err := importpkg.ReadZIP(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		t.Fatalf("ReadZIP: %v", err)
+	}
+	if _, err := db2.ImportDailyUsage(gotDaily); err != nil {
+		t.Fatalf("ImportDailyUsage into db2: %v", err)
+	}
+
+	imported, err := db2.ExportDailyUsage(start, end)
+	if err != nil {
+		t.Fatalf("ExportDailyUsage from db2: %v", err)
+	}
+	if len(imported) != 1 {
+		t.Fatalf("expected 1 imported daily_usage row, got %d", len(imported))
+	}
+	// The empty CSV cell must land back as SQL NULL, not 0.
+	if imported[0].TotalCacheReadTokens != nil {
+		t.Errorf("total_cache_read_tokens: got %d, want NULL", *imported[0].TotalCacheReadTokens)
+	}
+	if imported[0].TotalCacheWriteTokens != nil {
+		t.Errorf("total_cache_write_tokens: got %d, want NULL", *imported[0].TotalCacheWriteTokens)
+	}
+	// The columns that were present must be unharmed by the NULL handling.
+	if imported[0].TotalInputTokens != 200 {
+		t.Errorf("total_input_tokens: got %d, want 200", imported[0].TotalInputTokens)
+	}
+	if imported[0].TotalCostUSD < 0.049 || imported[0].TotalCostUSD > 0.051 {
+		t.Errorf("total_cost_usd: got %f, want ~0.05", imported[0].TotalCostUSD)
+	}
+}
+
 // TestIntegration_FutureVersion400 uploads a ZIP with format_version=999 and
 // expects the import handler to return 400 with a helpful error message.
 func TestIntegration_FutureVersion400(t *testing.T) {
