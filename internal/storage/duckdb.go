@@ -1,9 +1,13 @@
 package storage
 
 import (
+	"crypto/sha256"
 	"database/sql"
 	"embed"
+	"encoding/hex"
 	"fmt"
+	"regexp"
+	"strconv"
 	"time"
 
 	_ "github.com/marcboeker/go-duckdb"
@@ -66,14 +70,95 @@ func Open(path string) (*DB, error) {
 	// DuckDB supports one writer; serialise all writes through this connection.
 	rw.SetMaxOpenConns(1)
 
-	ddl, err := schemaFS.ReadFile("schema.sql")
-	if err != nil {
+	if err := ensureSchema(rw); err != nil {
 		return nil, err
 	}
-	if _, err := rw.Exec(string(ddl)); err != nil {
-		return nil, fmt.Errorf("apply schema: %w", err)
-	}
 	return &DB{rw: rw, path: path}, nil
+}
+
+var schemaVersionRe = regexp.MustCompile(`(?i)INSERT\s+INTO\s+schema_version\s*\(\s*version\s*\)\s*VALUES\s*\(\s*(\d+)\s*\)`)
+
+// schemaVersion is the highest version schema.sql declares, read from the
+// file's own `INSERT INTO schema_version` rows. A new migration must add its
+// version row.
+func schemaVersion(ddl string) (int, error) {
+	max := 0
+	for _, m := range schemaVersionRe.FindAllStringSubmatch(ddl, -1) {
+		n, err := strconv.Atoi(m[1])
+		if err != nil {
+			return 0, fmt.Errorf("schema.sql: bad version %q: %w", m[1], err)
+		}
+		if n > max {
+			max = n
+		}
+	}
+	if max == 0 {
+		return 0, fmt.Errorf("schema.sql: no `INSERT INTO schema_version` rows found")
+	}
+	return max, nil
+}
+
+// appliedSchemaVersion reports the highest version recorded in the database.
+// ok is false when schema_version is absent (a fresh database, or one created
+// before the version marker existed) — in both cases the full schema must run.
+func appliedSchemaVersion(rw *sql.DB) (version int, ok bool) {
+	var v sql.NullInt64
+	if err := rw.QueryRow(`SELECT max(version) FROM schema_version`).Scan(&v); err != nil {
+		return 0, false // table missing → treat as unversioned
+	}
+	if !v.Valid {
+		return 0, false // table exists but empty
+	}
+	return int(v.Int64), true
+}
+
+const schemaSHAKey = "schema_sql_sha256"
+
+// appliedSchemaSHA returns the sha256 of the schema.sql last applied, or "" when
+// none is recorded (settings table absent, or an older DB written before the
+// hash was tracked). "" never equals a real hash, so it forces a re-apply.
+func appliedSchemaSHA(rw *sql.DB) string {
+	var v string
+	if err := rw.QueryRow(`SELECT value FROM settings WHERE key = ?`, schemaSHAKey).Scan(&v); err != nil {
+		return ""
+	}
+	return v
+}
+
+func recordSchemaSHA(rw *sql.DB, sha string) error {
+	_, err := rw.Exec(`
+		INSERT INTO settings (key, value, updated_at) VALUES (?, ?, now())
+		ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = now()
+	`, schemaSHAKey, sha)
+	return err
+}
+
+// ensureSchema applies schema.sql unless the database already records both the
+// target version and the exact file hash. The hash is the safety net: any edit
+// the version scheme misses (forgotten or malformed version row) changes it and
+// forces a full, idempotent re-apply, so a stale schema is never silently
+// skipped — the guard fails toward doing too much, never too little.
+func ensureSchema(rw *sql.DB) error {
+	ddl, err := schemaFS.ReadFile("schema.sql")
+	if err != nil {
+		return err
+	}
+	target, err := schemaVersion(string(ddl))
+	if err != nil {
+		return err
+	}
+	sum := sha256.Sum256(ddl)
+	sha := hex.EncodeToString(sum[:])
+	if current, ok := appliedSchemaVersion(rw); ok && current >= target && appliedSchemaSHA(rw) == sha {
+		return nil
+	}
+	if _, err := rw.Exec(string(ddl)); err != nil {
+		return fmt.Errorf("apply schema: %w", err)
+	}
+	if err := recordSchemaSHA(rw, sha); err != nil {
+		return fmt.Errorf("record schema hash: %w", err)
+	}
+	return nil
 }
 
 func (db *DB) Close() error { return db.rw.Close() }

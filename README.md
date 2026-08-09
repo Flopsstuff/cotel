@@ -159,6 +159,18 @@ connections immediately**, before the database is opened:
   connection reset and their spans were dropped.)
 - Once the database is ready the gates open and both ports serve live traffic.
 
+Schema migrations are **version-guarded**: `storage.Open` skips the whole of
+`schema.sql` only when the database records both the current version
+(`schema_version`) and the exact file hash (`schema_sql_sha256` in `settings`),
+so migrations run once (on the deploy that introduces them) instead of on every
+boot. The hash is a safety net — any edit to `schema.sql` re-applies it (once,
+idempotently) even if the version row was forgotten, so a new migration is never
+silently skipped. This is correctness hygiene, not the reason a start is slow —
+measured against a copy of production, the whole schema apply is ~165 ms. The
+multi-minute open is DuckDB **replaying the WAL**, which happens before the
+version can even be read; keeping that fast is a separate concern (see
+[ADR-0010](docs/decisions/0010-schema-version-guard.md)).
+
 Startup is logged so the open duration is visible (no more guessing from a bare
 `Up` container):
 
