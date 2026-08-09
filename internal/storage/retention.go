@@ -94,12 +94,16 @@ func (db *DB) rollupAndPurgeAt(cfg RetentionConfig, now time.Time) error {
 	// Roll raw spans older than RawDays into daily_usage before deleting.
 	//
 	// The cutoff is snapped back to midnight so a roll-up only ever consumes
-	// whole days. daily_usage is keyed by day and written with INSERT OR
-	// REPLACE, so a cutoff landing mid-day would recompute that day from
-	// whatever raw spans the previous cycle left behind and overwrite the
-	// earlier slice — whose spans are already deleted. Whole days keep REPLACE
-	// correct and the whole operation idempotent, at the cost of spans living
-	// up to one day longer than RawDays.
+	// whole days: a span survives up to one day longer than RawDays but a day is
+	// never rolled up in slices.
+	//
+	// A day's aggregate accumulates: ON CONFLICT DO UPDATE adds each cycle's sum
+	// to the existing row rather than replacing it. A span dated to a day that was
+	// already rolled up and purged — a backfill or an import of old telemetry —
+	// therefore adds to that day's total instead of overwriting it with itself
+	// alone. The accumulate and the raw-span DELETE must stay in one transaction:
+	// the spans a cycle folds in have to be gone atomically with the addition, or
+	// a crash between them lets a retry count them twice.
 	//
 	// That midnight is UTC, never the server's local midnight: the day column
 	// below comes from CAST(start_time AS TIMESTAMP), which renders the stored
@@ -114,8 +118,16 @@ func (db *DB) rollupAndPurgeAt(cfg RetentionConfig, now time.Time) error {
 	// normalised values drive the grouping — '' and NULL collapse into one
 	// 'unknown' bucket rather than two.
 	rollupCutoff := startOfDayUTC(now.AddDate(0, 0, -cfg.RawDays))
-	_, err := db.rw.Exec(`
-		INSERT OR REPLACE INTO daily_usage
+	aggCutoff := startOfDayUTC(now.AddDate(0, 0, -cfg.AggregateDays))
+
+	tx, err := db.rw.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(`
+		INSERT INTO daily_usage
 		  (day, session_id, model, tool_name, user_id,
 		   span_count, total_input_tokens, total_output_tokens,
 		   total_cache_read_tokens, total_cache_write_tokens, total_cost_usd)
@@ -134,21 +146,31 @@ func (db *DB) rollupAndPurgeAt(cfg RetentionConfig, now time.Time) error {
 		FROM spans
 		WHERE start_time < ?
 		GROUP BY 1, 2, 3, 4
-	`, UnknownSentinel, UnknownSentinel, UnknownSentinel, rollupCutoff)
-	if err != nil {
+		ON CONFLICT (day, session_id, model, tool_name) DO UPDATE SET
+		  span_count               = daily_usage.span_count + excluded.span_count,
+		  total_input_tokens       = daily_usage.total_input_tokens + excluded.total_input_tokens,
+		  total_output_tokens      = daily_usage.total_output_tokens + excluded.total_output_tokens,
+		  total_cache_read_tokens  = COALESCE(daily_usage.total_cache_read_tokens, 0) + excluded.total_cache_read_tokens,
+		  total_cache_write_tokens = COALESCE(daily_usage.total_cache_write_tokens, 0) + excluded.total_cache_write_tokens,
+		  total_cost_usd           = daily_usage.total_cost_usd + excluded.total_cost_usd,
+		  user_id                  = COALESCE(daily_usage.user_id, excluded.user_id)
+	`, UnknownSentinel, UnknownSentinel, UnknownSentinel, rollupCutoff); err != nil {
 		return err
 	}
 
-	// Purge raw spans past RawDays.
-	if _, err := db.rw.Exec(`DELETE FROM spans WHERE start_time < ?`, rollupCutoff); err != nil {
+	// Purge raw spans past RawDays — atomic with the accumulate above.
+	if _, err := tx.Exec(`DELETE FROM spans WHERE start_time < ?`, rollupCutoff); err != nil {
 		return err
 	}
 
 	// Purge aggregates past AggregateDays. Also UTC-snapped: day is a DATE, so
 	// a local-zone instant here would round to a different day than the one the
 	// roll-up wrote and drop (or keep) a day's aggregate a day early or late.
-	aggCutoff := startOfDayUTC(now.AddDate(0, 0, -cfg.AggregateDays))
-	if _, err := db.rw.Exec(`DELETE FROM daily_usage WHERE day < ?`, aggCutoff); err != nil {
+	if _, err := tx.Exec(`DELETE FROM daily_usage WHERE day < ?`, aggCutoff); err != nil {
+		return err
+	}
+
+	if err := tx.Commit(); err != nil {
 		return err
 	}
 
