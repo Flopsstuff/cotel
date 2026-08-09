@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Pricing table now covers the Claude 5 family (Fable 5, Mythos 5, Opus 5, Sonnet 5) and the missing 4.x models (Opus 4.8, Opus 4.6). Spans from `claude-opus-5` were previously recorded with `cost_usd = 0` because the model was absent from the table
 - Corrected two stale rates: Opus 4.7 ($15.00/$75.00 → $5.00/$25.00) and Haiku 4.5 ($0.80/$4.00 → $1.00/$5.00) per MTok
+- Retention roll-up no longer aborts with `NOT NULL constraint failed: daily_usage.model` when a span has an empty or NULL `model`, `session_id`, or `tool_name`. Such spans are now rolled up under an `unknown` sentinel instead of silently stopping all aggregation and purging ([ADR-0009](docs/decisions/0009-daily-usage-unknown-sentinel.md), FLO-553)
+
+### Added
+- Retention worker health on `GET /api/v1/health`: a `retention` object (`status` / `last_run_at` / `last_error`); a failed roll-up flips top-level health to `degraded` and logs at `ERROR` level instead of failing silently
 
 ## [0.2.0] - 2026-05-10
 

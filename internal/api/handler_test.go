@@ -118,6 +118,46 @@ func TestHealth(t *testing.T) {
 	}
 }
 
+// TestHealthRetention verifies /health surfaces retention-worker degradation
+// (FLO-553): a fresh DB reports retention "unknown"; a recorded error flips the
+// top-level status to "degraded" and echoes the error text.
+func TestHealthRetention(t *testing.T) {
+	t.Run("unknown before first run", func(t *testing.T) {
+		_, ro := openTestDB(t)
+		h := api.New(ro)
+		_, body := getJSON(t, h, "/api/v1/health")
+		if body["status"] != "ok" {
+			t.Errorf("want status=ok, got %v", body["status"])
+		}
+		ret, _ := body["retention"].(map[string]any)
+		if ret == nil || ret["status"] != "unknown" {
+			t.Errorf("want retention.status=unknown, got %v", body["retention"])
+		}
+	})
+
+	t.Run("degraded on recorded error", func(t *testing.T) {
+		db, ro := openTestDB(t)
+		if err := db.SetSetting("retention_last_status", "error"); err != nil {
+			t.Fatalf("set status: %v", err)
+		}
+		if err := db.SetSetting("retention_last_error", "NOT NULL constraint failed: daily_usage.model"); err != nil {
+			t.Fatalf("set error: %v", err)
+		}
+		h := api.New(ro)
+		_, body := getJSON(t, h, "/api/v1/health")
+		if body["status"] != "degraded" {
+			t.Errorf("want status=degraded, got %v", body["status"])
+		}
+		ret, _ := body["retention"].(map[string]any)
+		if ret == nil || ret["status"] != "error" {
+			t.Fatalf("want retention.status=error, got %v", body["retention"])
+		}
+		if ret["last_error"] != "NOT NULL constraint failed: daily_usage.model" {
+			t.Errorf("want retention.last_error echoed, got %v", ret["last_error"])
+		}
+	})
+}
+
 func TestOverview(t *testing.T) {
 	cases := []struct {
 		name       string

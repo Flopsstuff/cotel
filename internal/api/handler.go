@@ -153,10 +153,19 @@ func userIDClause(r *http.Request) (clause string, arg string) {
 // ---- /api/v1/health ----
 
 type healthResponse struct {
-	Status          string `json:"status"`
-	SpanCount       int64  `json:"span_count"`
-	DBSizeBytes     int64  `json:"db_size_bytes"`
-	PublicIngestURL string `json:"public_ingest_url,omitempty"`
+	Status          string          `json:"status"`
+	SpanCount       int64           `json:"span_count"`
+	DBSizeBytes     int64           `json:"db_size_bytes"`
+	Retention       retentionHealth `json:"retention"`
+	PublicIngestURL string          `json:"public_ingest_url,omitempty"`
+}
+
+// retentionHealth surfaces the outcome of the last retention-worker cycle so a
+// silently-failing roll-up (e.g. the NOT NULL crash from FLO-553) is observable.
+type retentionHealth struct {
+	Status    string `json:"status"`               // "ok" | "error" | "unknown"
+	LastRunAt string `json:"last_run_at,omitempty"`
+	LastError string `json:"last_error,omitempty"`
 }
 
 func (h *Handler) handleHealth(w http.ResponseWriter, _ *http.Request) {
@@ -167,12 +176,38 @@ func (h *Handler) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	// DuckDB reports approximate file size via pragma; fall back to 0.
 	_ = h.db.QueryRow("SELECT total_blocks * block_size FROM pragma_database_size()").Scan(&dbSize)
 
+	ret := h.retentionHealth()
+	status := "ok"
+	if ret.Status == "error" {
+		status = "degraded"
+	}
+
 	jsonOK(w, healthResponse{
-		Status:          "ok",
+		Status:          status,
 		SpanCount:       spans,
 		DBSizeBytes:     dbSize,
+		Retention:       ret,
 		PublicIngestURL: h.publicIngestURL,
 	})
+}
+
+// retentionHealth reads the retention-worker status the worker persisted to the
+// settings table. A fresh DB (worker not yet run) reports status "unknown".
+func (h *Handler) retentionHealth() retentionHealth {
+	get := func(key string) string {
+		var v string
+		_ = h.db.QueryRow("SELECT value FROM settings WHERE key = ?", key).Scan(&v)
+		return v
+	}
+	status := get("retention_last_status")
+	if status == "" {
+		status = "unknown"
+	}
+	return retentionHealth{
+		Status:    status,
+		LastRunAt: get("retention_last_run_at"),
+		LastError: get("retention_last_error"),
+	}
 }
 
 // ---- /api/v1/overview ----

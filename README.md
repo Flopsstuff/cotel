@@ -167,6 +167,30 @@ Override with environment variables:
 | `COTEL_RETENTION_AGGREGATE_DAYS` | `90` | Delete daily aggregate rows older than this many days |
 | `COTEL_RETENTION_INTERVAL` | `6h` | How often the retention worker runs (Go duration string, e.g. `1h`, `30m`) |
 
+### Unattributed usage — the `unknown` sentinel
+
+`daily_usage` is keyed by `(day, session_id, model, tool_name)`. A raw span that
+carries no value for one of these (a missing/empty `model`, `session_id`, or
+`tool_name`) is rolled up under the sentinel string **`unknown`** rather than
+being dropped. This keeps the usage countable — e.g. how much spend has no model
+attached:
+
+```sql
+SELECT SUM(total_cost_usd) FROM daily_usage WHERE model = 'unknown';
+```
+
+Raw spans are left untouched (they keep their original empty/NULL value); the
+sentinel only exists in the daily rollup. See
+[ADR-0009](docs/decisions/0009-daily-usage-unknown-sentinel.md).
+
+### Retention worker health
+
+The retention worker's last outcome is reported on `GET /api/v1/health` under a
+`retention` object (`status`: `ok` \| `error` \| `unknown`, plus `last_run_at`
+and `last_error`). If the last roll-up failed, the top-level health `status`
+becomes `degraded` and the failure is logged at `ERROR` level — the worker keeps
+running and self-heals on the next tick.
+
 ## Development
 
 ```bash
