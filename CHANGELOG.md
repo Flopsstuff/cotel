@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `--backfill-cost` CLI flag: one-shot command that recalculates `cost_usd` for all spans using current pricing rates and re-aggregates `daily_usage`. Prints per-model before/after totals. Must run inside the server process (same DuckDB exclusive lock). Backfill uses rates current as of the run date. See FLO-551.
+
 ### Fixed
 - Pricing table now covers the Claude 5 family (Fable 5, Mythos 5, Opus 5, Sonnet 5) and the missing 4.x models (Opus 4.8, Opus 4.6). Spans from `claude-opus-5` were previously recorded with `cost_usd = 0` because the model was absent from the table
 - Corrected two stale rates: Opus 4.7 ($15.00/$75.00 → $5.00/$25.00) and Haiku 4.5 ($0.80/$4.00 → $1.00/$5.00) per MTok

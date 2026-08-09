@@ -22,6 +22,7 @@ import (
 
 func main() {
 	dbQuery := flag.String("db-query", "", "run SQL query against DuckDB, print first column of first row, and exit")
+	backfillCost := flag.Bool("backfill-cost", false, "recalculate cost_usd for all spans using current pricing, update daily_usage, then exit")
 	flag.Parse()
 
 	dbPath := env("COTEL_DB_PATH", "/data/cotel.duckdb")
@@ -37,6 +38,37 @@ func main() {
 			log.Fatalf("db-query: %v", err)
 		}
 		fmt.Println(val)
+		return
+	}
+
+	if *backfillCost {
+		db, err := storage.Open(dbPath)
+		if err != nil {
+			log.Fatalf("open storage: %v", err)
+		}
+		defer db.Close()
+		before, err := db.BackfillModelSummary()
+		if err != nil {
+			log.Fatalf("backfill: pre-summary: %v", err)
+		}
+		fmt.Println("=== BEFORE ===")
+		for _, r := range before {
+			fmt.Printf("  %-30s  spans=%d  total_cost_usd=%.4f\n", r.Model, r.SpanCount, r.TotalCostUSD)
+		}
+		result, err := db.BackfillCostUSD()
+		if err != nil {
+			log.Fatalf("backfill: %v", err)
+		}
+		after, err := db.BackfillModelSummary()
+		if err != nil {
+			log.Fatalf("backfill: post-summary: %v", err)
+		}
+		fmt.Println("=== AFTER ===")
+		for _, r := range after {
+			fmt.Printf("  %-30s  spans=%d  total_cost_usd=%.4f\n", r.Model, r.SpanCount, r.TotalCostUSD)
+		}
+		fmt.Printf("spans_scanned=%d spans_updated=%d daily_updated=%d\n",
+			result.SpansScanned, result.SpansUpdated, result.DailyUpdated)
 		return
 	}
 
