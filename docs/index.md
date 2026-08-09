@@ -66,7 +66,7 @@ Restart Claude Code. Telemetry starts flowing immediately.
 | `COTEL_DB_PATH` | `/data/cotel.duckdb` | DuckDB file path |
 | `COTEL_INGEST_ADDR` | `:4318` | Ingest listener address |
 | `COTEL_DASH_ADDR` | `:8080` | Dashboard listener address |
-| `COTEL_RETENTION_RAW_DAYS` | `30` | Raw span retention in days |
+| `COTEL_RETENTION_RAW_DAYS` | `30` | Raw span retention in days (roll-up consumes whole days, so spans survive up to a day longer) |
 | `COTEL_RETENTION_AGGREGATE_DAYS` | `90` | Daily aggregate retention in days |
 | `COTEL_RETENTION_INTERVAL` | `6h` | Retention worker tick interval |
 

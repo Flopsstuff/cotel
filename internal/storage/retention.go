@@ -87,7 +87,19 @@ func (db *DB) recordRetentionRun(runErr error) {
 // RollupAndPurge rolls up raw spans older than cfg.RawDays into daily_usage,
 // then deletes the raw rows and any aggregate rows older than cfg.AggregateDays.
 func (db *DB) RollupAndPurge(cfg RetentionConfig) error {
+	return db.rollupAndPurgeAt(cfg, time.Now())
+}
+
+func (db *DB) rollupAndPurgeAt(cfg RetentionConfig, now time.Time) error {
 	// Roll raw spans older than RawDays into daily_usage before deleting.
+	//
+	// The cutoff is snapped back to midnight so a roll-up only ever consumes
+	// whole days. daily_usage is keyed by day and written with INSERT OR
+	// REPLACE, so a cutoff landing mid-day would recompute that day from
+	// whatever raw spans the previous cycle left behind and overwrite the
+	// earlier slice — whose spans are already deleted. Whole days keep REPLACE
+	// correct and the whole operation idempotent, at the cost of spans living
+	// up to one day longer than RawDays.
 	//
 	// session_id / model / tool_name are the PK columns and NOT NULL in
 	// daily_usage, but nullable (and often empty) in spans. COALESCE(NULLIF(…))
@@ -95,7 +107,7 @@ func (db *DB) RollupAndPurge(cfg RetentionConfig) error {
 	// NOT NULL violation. GROUP BY uses the SELECT-list positions (1..4) so the
 	// normalised values drive the grouping — '' and NULL collapse into one
 	// 'unknown' bucket rather than two.
-	rollupCutoff := time.Now().AddDate(0, 0, -cfg.RawDays)
+	rollupCutoff := startOfDay(now.AddDate(0, 0, -cfg.RawDays))
 	_, err := db.rw.Exec(`
 		INSERT OR REPLACE INTO daily_usage
 		  (day, session_id, model, tool_name, user_id,
@@ -127,7 +139,7 @@ func (db *DB) RollupAndPurge(cfg RetentionConfig) error {
 	}
 
 	// Purge aggregates past AggregateDays.
-	aggCutoff := time.Now().AddDate(0, 0, -cfg.AggregateDays)
+	aggCutoff := now.AddDate(0, 0, -cfg.AggregateDays)
 	if _, err := db.rw.Exec(`DELETE FROM daily_usage WHERE day < ?`, aggCutoff); err != nil {
 		return err
 	}
@@ -135,4 +147,13 @@ func (db *DB) RollupAndPurge(cfg RetentionConfig) error {
 	log.Printf("retention: rolled up spans before %s, purged aggregates before %s",
 		rollupCutoff.Format("2006-01-02"), aggCutoff.Format("2006-01-02"))
 	return nil
+}
+
+// startOfDay returns midnight at the start of t's calendar day, in t's own
+// location. Callers rely on that location being the same one DuckDB buckets
+// spans into: the roll-up's day column comes from CAST(start_time AS TIMESTAMP),
+// which converts the stored TIMESTAMPTZ using the session timezone, and DuckDB
+// runs in-process so its session timezone is the process's local zone.
+func startOfDay(t time.Time) time.Time {
+	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
 }
