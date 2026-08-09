@@ -64,4 +64,11 @@ ENV COTEL_DB_PATH=/data/cotel.duckdb \
     COTEL_INGEST_ADDR=:4318 \
     COTEL_DASH_ADDR=:8080
 
+# The binary self-probes /healthz, so no curl/wget is needed in the runtime
+# image. start-period must stay well above the worst-case storage.Open on a
+# large DB, or the container flaps to "unhealthy" while it is legitimately
+# still opening.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10m --retries=3 \
+    CMD ["/usr/local/bin/cotel", "-healthcheck"]
+
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
