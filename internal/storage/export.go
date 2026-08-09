@@ -21,6 +21,8 @@ type DailyUsageRow struct {
 	TotalCacheReadTokens  *int64
 	TotalCacheWriteTokens *int64
 	TotalCostUSD          float64
+	TotalDurationMs       *float64
+	FailCount             *int64
 }
 
 // ExportSpans returns all spans with start_time in [from, to).
@@ -71,7 +73,8 @@ func (db *DB) ExportDailyUsage(from, to time.Time) ([]DailyUsageRow, error) {
 	rows, err := db.rw.Query(`
 		SELECT day, session_id, model, tool_name, user_id,
 		       span_count, total_input_tokens, total_output_tokens,
-		       total_cache_read_tokens, total_cache_write_tokens, total_cost_usd
+		       total_cache_read_tokens, total_cache_write_tokens, total_cost_usd,
+		       total_duration_ms, fail_count
 		FROM daily_usage
 		WHERE day >= CAST(? AS DATE) AND day < CAST(? AS DATE)
 		ORDER BY day`, from, to)
@@ -88,6 +91,7 @@ func (db *DB) ExportDailyUsage(from, to time.Time) ([]DailyUsageRow, error) {
 			&r.Day, &sessionID, &model, &toolName, &userID,
 			&r.SpanCount, &r.TotalInputTokens, &r.TotalOutputTokens,
 			&r.TotalCacheReadTokens, &r.TotalCacheWriteTokens, &r.TotalCostUSD,
+			&r.TotalDurationMs, &r.FailCount,
 		); err != nil {
 			return nil, err
 		}
@@ -160,8 +164,9 @@ const importDailyUsageSQL = `
 INSERT OR IGNORE INTO daily_usage (
   day, session_id, model, tool_name, user_id,
   span_count, total_input_tokens, total_output_tokens,
-  total_cache_read_tokens, total_cache_write_tokens, total_cost_usd
-) VALUES (?,?,?,?,?,?,?,?,?,?,?)`
+  total_cache_read_tokens, total_cache_write_tokens, total_cost_usd,
+  total_duration_ms, fail_count
+) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`
 
 // ImportDailyUsage bulk-inserts daily_usage rows, skipping any whose PK
 // (day, session_id, model, tool_name) already exists.
@@ -189,6 +194,7 @@ func (db *DB) ImportDailyUsage(rows []DailyUsageRow) (int, error) {
 			nullableStr(r.UserID),
 			r.SpanCount, r.TotalInputTokens, r.TotalOutputTokens,
 			r.TotalCacheReadTokens, r.TotalCacheWriteTokens, r.TotalCostUSD,
+			r.TotalDurationMs, r.FailCount,
 		)
 		if err != nil {
 			return 0, err

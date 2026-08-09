@@ -1,4 +1,4 @@
--- Schema version: 8
+-- Schema version: 9
 -- Versioned; never silently rename columns.
 
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -74,6 +74,8 @@ CREATE TABLE IF NOT EXISTS daily_usage (
     total_cache_read_tokens  BIGINT,
     total_cache_write_tokens BIGINT,
     total_cost_usd  DOUBLE,
+    total_duration_ms DOUBLE,
+    fail_count        BIGINT,
     PRIMARY KEY (day, session_id, model, tool_name)
 );
 
@@ -85,6 +87,10 @@ ALTER TABLE daily_usage ADD COLUMN IF NOT EXISTS user_id VARCHAR;
 -- (honestly "unknown", not a fabricated 0); rows rolled up after get real sums.
 ALTER TABLE daily_usage ADD COLUMN IF NOT EXISTS total_cache_read_tokens  BIGINT;
 ALTER TABLE daily_usage ADD COLUMN IF NOT EXISTS total_cache_write_tokens BIGINT;
+
+-- Migration v8 → v9: preserve duration and failure counts through roll-up.
+ALTER TABLE daily_usage ADD COLUMN IF NOT EXISTS total_duration_ms DOUBLE;
+ALTER TABLE daily_usage ADD COLUMN IF NOT EXISTS fail_count        BIGINT;
 
 -- API tokens for OTLP ingest auth (schema version 4) — kept for upgrade safety, not used by new auth
 CREATE TABLE IF NOT EXISTS api_tokens (
@@ -137,3 +143,4 @@ INSERT INTO schema_version (version) VALUES (5) ON CONFLICT DO NOTHING;
 INSERT INTO schema_version (version) VALUES (6) ON CONFLICT DO NOTHING;
 INSERT INTO schema_version (version) VALUES (7) ON CONFLICT DO NOTHING;
 INSERT INTO schema_version (version) VALUES (8) ON CONFLICT DO NOTHING;
+INSERT INTO schema_version (version) VALUES (9) ON CONFLICT DO NOTHING;
