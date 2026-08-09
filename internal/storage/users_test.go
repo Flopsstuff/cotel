@@ -38,9 +38,9 @@ func insertTestSpan(t *testing.T, db *DB, spanID, userID string) {
 
 func userInTestList(t *testing.T, db *DB, name string) bool {
 	t.Helper()
-	users, err := db.ListUsersWithStats()
+	users, _, err := db.ListUsersPage(ListUsersOptions{})
 	if err != nil {
-		t.Fatalf("ListUsersWithStats: %v", err)
+		t.Fatalf("ListUsersPage: %v", err)
 	}
 	for _, u := range users {
 		if u.Name == name {

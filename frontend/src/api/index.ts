@@ -123,12 +123,49 @@ export interface UsersListResponse {
   users: User[]
 }
 
+export interface UsersPageResponse {
+  users: User[]
+  total: number
+  page: number
+  limit: number
+  range: string
+  sort: string
+  order: string
+}
+
+export interface UsersPageParams {
+  range: string
+  q?: string
+  sort: string
+  order: string
+  page: number
+  limit: number
+}
+
 export interface SettingsResponse {
   allow_anonymous: boolean
 }
 
+// useUsers fetches every user unpaginated (limit=0) — used by the UserSearch typeahead.
 export function useUsers() {
   return useSWR<UsersListResponse>('/api/v1/users', fetcher)
+}
+
+export function useUsersPage(params: UsersPageParams) {
+  const qs = new URLSearchParams({
+    range: params.range,
+    sort: params.sort,
+    order: params.order,
+    page: String(params.page),
+    limit: String(params.limit),
+  })
+  if (params.q) qs.set('q', params.q)
+  return useSWR<UsersPageResponse>(`/api/v1/users?${qs.toString()}`, fetcher, { keepPreviousData: true })
+}
+
+export function useUser(id: string | undefined, range: string) {
+  const qs = new URLSearchParams({ range })
+  return useSWR<User>(id ? `/api/v1/users/${encodeURIComponent(id)}?${qs.toString()}` : null, fetcher)
 }
 
 export function useSettings() {
