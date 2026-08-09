@@ -100,3 +100,4 @@ Single Go binary. Single DuckDB file. Single named volume. No sidecars.
 
 - [Architecture Decisions](/decisions/) — ADRs explaining key technical choices
 - [Design Docs](/design/) — UI information architecture, page specs, components, tokens
+- [Deliberate dead link for CI proof](./this-page-does-not-exist.md)
