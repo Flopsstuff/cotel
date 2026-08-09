@@ -49,12 +49,9 @@ func main() {
 		return
 	}
 
-	// Bind and start serving BEFORE the (potentially multi-minute) storage.Open.
-	// On a large production DB, WAL replay + schema migration inside storage.Open
-	// can block for minutes; binding first means the ingest port accepts
-	// connections throughout and returns a retryable 503 instead of resetting the
-	// connection — OTLP clients retry, so no telemetry is silently dropped. See
-	// FLO-556.
+	// Bind BEFORE storage.Open: WAL replay + schema migration can block for
+	// minutes on a large DB, and a bound port answering a retryable 503 keeps
+	// OTLP clients retrying where a connection reset would drop their spans.
 	srv, err := startGatedServers(ingestAddr, dashAddr)
 	if err != nil {
 		log.Fatalf("%v", err)
@@ -166,7 +163,7 @@ func (gs *gatedServers) Close() {
 }
 
 // serveGate serves gate on ln in a background goroutine. A real serve error is
-// fatal (matches the pre-FLO-556 behaviour of a failed ListenAndServe); a clean
+// fatal, matching the previous behaviour of a failed ListenAndServe; a clean
 // shutdown via (*http.Server).Close returns ErrServerClosed and is ignored.
 func serveGate(name string, ln net.Listener, gate *readyGate) *http.Server {
 	srv := &http.Server{Handler: gate}

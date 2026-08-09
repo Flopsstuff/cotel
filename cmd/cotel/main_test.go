@@ -32,12 +32,11 @@ func TestReadyGate(t *testing.T) {
 	}
 }
 
-// TestGatedServersAcceptBeforeReady is the FLO-556 regression guard, measured
-// against real TCP sockets rather than argued: while the gate is still closed
-// (simulating a slow storage.Open), the ingest and dashboard ports must ACCEPT
-// the connection and answer 503 on every probe — never a dial error / reset,
-// which is what silently dropped telemetry on each deploy. After the gate is
-// opened the request is delegated to the real handler.
+// TestGatedServersAcceptBeforeReady guards the regression against real TCP
+// sockets: while the gate is still closed (simulating a slow storage.Open) the
+// ingest and dashboard ports must ACCEPT the connection and answer 503 on every
+// probe — never a dial error / reset, which is what silently dropped telemetry
+// on each deploy. After the gate is opened requests are delegated.
 func TestGatedServersAcceptBeforeReady(t *testing.T) {
 	gs, err := startGatedServers("127.0.0.1:0", "127.0.0.1:0")
 	if err != nil {
@@ -64,7 +63,7 @@ func TestGatedServersAcceptBeforeReady(t *testing.T) {
 			resp, err := probe(url)
 			if err != nil {
 				refused++
-				t.Fatalf("%s port refused a connection during the init window (FLO-556 bug): %v", name, err)
+				t.Fatalf("%s port refused a connection during the init window: %v", name, err)
 			}
 			if resp.StatusCode != http.StatusServiceUnavailable {
 				resp.Body.Close()

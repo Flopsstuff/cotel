@@ -64,12 +64,10 @@ ENV COTEL_DB_PATH=/data/cotel.duckdb \
     COTEL_INGEST_ADDR=:4318 \
     COTEL_DASH_ADDR=:8080
 
-# Report true readiness, not just "process is up". While storage.Open runs (WAL
-# replay + schema migration — minutes on a large DB) the dashboard /healthz
-# returns 503, so the container stays "starting" instead of showing healthy
-# while ingest is still dark. The binary self-probes, so no curl/wget is needed
-# in the runtime image. start-period is generous to cover a slow open without
-# ever flapping to "unhealthy". See FLO-556.
+# The binary self-probes /healthz, so no curl/wget is needed in the runtime
+# image. start-period must stay well above the worst-case storage.Open on a
+# large DB, or the container flaps to "unhealthy" while it is legitimately
+# still opening.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10m --retries=3 \
     CMD ["/usr/local/bin/cotel", "-healthcheck"]
 
