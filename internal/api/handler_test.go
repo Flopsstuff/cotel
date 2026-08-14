@@ -355,7 +355,10 @@ func TestSessionDetail(t *testing.T) {
 				}
 				spans, ok := body["spans"].([]any)
 				if !ok || len(spans) == 0 {
-					t.Error("expected non-empty spans")
+					t.Fatal("expected non-empty spans")
+				}
+				if got := spans[0].(map[string]any)["duration_ms"].(float64); got != 1000 {
+					t.Errorf("duration_ms: want 1000 for a 1s span, got %v", got)
 				}
 			},
 		},

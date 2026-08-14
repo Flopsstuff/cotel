@@ -144,7 +144,7 @@ func (db *DB) rollupAndPurgeAt(cfg RetentionConfig, now time.Time) error {
 		  COALESCE(SUM(cache_read_tokens), 0),
 		  COALESCE(SUM(cache_write_tokens), 0),
 		  COALESCE(SUM(cost_usd), 0),
-		  COALESCE(SUM(duration_ms), 0),
+		  COALESCE(SUM(CAST(epoch_ms(end_time) - epoch_ms(start_time) AS DOUBLE)), 0),
 		  COUNT(*) FILTER (WHERE status_code = 2)
 		FROM spans
 		WHERE start_time < ?

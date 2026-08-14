@@ -601,7 +601,7 @@ func (h *Handler) handleSession(w http.ResponseWriter, _ *http.Request, sessionI
 	rows, _ := h.db.Query(`
 		SELECT
 			start_time,
-			duration_ms,
+			CAST(epoch_ms(end_time) - epoch_ms(start_time) AS DOUBLE) AS duration_ms,
 			name,
 			COALESCE(tool_name, ''),
 			COALESCE(model, ''),
@@ -805,7 +805,7 @@ parts AS (
     SELECT
         tool_name AS name,
         COUNT(*) AS calls,
-        SUM(duration_ms) AS dur_sum,
+        SUM(CAST(epoch_ms(end_time) - epoch_ms(start_time) AS DOUBLE)) AS dur_sum,
         COUNT(*) AS dur_calls,
         COUNT(*) FILTER (WHERE status_code = 2) AS fails,
         COUNT(*) AS fail_calls
@@ -987,16 +987,6 @@ var bashSortExprs = map[string]string{
 // handleBashCommands returns per-command breakdown for Bash tool spans.
 // The command is extracted from the span attributes JSON: direct "command" key first,
 // then falling back to the "command" field inside a JSON-encoded "tool_input" value.
-//
-// The tool filter is written as COALESCE(tool_name, '') = 'Bash' rather than the
-// plain equality: a bare `spans.tool_name = <const>` is pushed into the scan as a
-// table filter and then matches nothing, so the plain form silently answers with
-// an empty breakdown. Wrapping the column keeps the predicate out of the pushdown.
-//
-// Which columns this hits is a property of the spans layout rather than of
-// tool_name — see the trap described in ADR-0001, and the guard test
-// TestSpansEqualityUnderFilterPushdown, which fails both when the affected set
-// moves and when this workaround stops being enough.
 func (h *Handler) handleBashCommands(w http.ResponseWriter, r *http.Request) {
 	rangeKey, since := parseRange(r)
 	sort, order := parseSortOrder(r, bashSortExprs, "calls")
@@ -1030,10 +1020,10 @@ WITH cmd AS (
             attributes->>'command',
             TRY_CAST(attributes->>'tool_input' AS JSON)->>'command'
         ) AS command,
-        duration_ms,
+        CAST(epoch_ms(end_time) - epoch_ms(start_time) AS DOUBLE) AS duration_ms,
         status_code
     FROM spans
-    WHERE COALESCE(tool_name, '') = 'Bash'` + uidClause + sinceClause + `
+    WHERE tool_name = 'Bash'` + uidClause + sinceClause + `
 ),
 cmd_stats AS (
     SELECT

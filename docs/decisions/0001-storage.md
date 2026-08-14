@@ -54,33 +54,41 @@ Reasons:
 
 ## Known engine trap: virtual generated columns and secondary indexes
 
-`spans` declares `duration_ms` as a VIRTUAL generated column and carries four
-secondary indexes. That combination makes DuckDB answer some constant-equality
-predicates — `WHERE tool_name = 'Bash'` — with **zero rows** instead of the
-matching ones: a silent wrong result, not an error and not a slowdown.
+A table that mixes a VIRTUAL generated column with secondary indexes makes
+DuckDB answer some constant-equality predicates — `WHERE tool_name = 'Bash'` —
+with **zero rows** instead of the matching ones: a silent wrong result, not an
+error and not a slowdown.
 
 A virtual generated column takes a logical slot but no storage slot, so every
 column declared after it has logical index = physical index + 1. A column is
 answered wrongly exactly when its logical index collides with the *physical*
 index of an indexed column: the scan concludes an index covers the predicate,
-probes that unrelated ART index for the constant, and finds nothing. On the
-current layout `service_name` (logical 7) collides with `session_id` (physical
-7), and `tool_name` (logical 10) with `user_id` (physical 10).
+probes that unrelated ART index for the constant, and finds nothing.
 
-Two consequences for anyone touching this schema:
+`spans` used to declare `duration_ms` this way, which put `service_name`
+(logical 7) on `session_id` (physical 7) and `tool_name` (logical 10) on
+`user_id` (physical 10) — that is how `/api/v1/bash-commands` shipped
+permanently empty. Schema version 10 drops the column and computes the duration
+where it is read, so logical == physical everywhere and bare equality is correct
+again. ADR-0013 records that decision and the rule it establishes: `spans`
+carries no derived columns.
 
-- **The affected set is a property of the layout, not of those two columns.**
-  Adding, reordering, or indexing a column silently moves the collisions.
+What remains for anyone touching this schema:
+
+- **The affected set is a property of the layout, not of any one column.**
+  Adding, reordering, or indexing a column moves the collisions.
   `TestSpansEqualityUnderFilterPushdown` in `internal/storage` derives the set
-  from the live schema on every run and fails in both directions, so a moved
-  collision is a red build rather than an empty dashboard panel.
-- **Wrapping the column keeps the predicate out of the pushdown**
-  (`COALESCE(col, '') = …`), which is the workaround in use today. It is not
-  durable: DuckDB 1.4+ pushes `COALESCE` down too, so the same guard test also
-  asserts the workaround still returns the truth.
+  from the live schema on every run and fails in both directions, so a
+  reintroduced hole is a red build rather than an empty dashboard panel.
+- **`COALESCE(col, '') = …` keeps a predicate out of the pushdown**, which is
+  the escape hatch if one is ever needed again. It is not durable: DuckDB 1.4+
+  pushes `COALESCE` down too, so the same guard test also asserts it still
+  returns the truth.
+- **DuckDB refuses to `ALTER` a table an index depends on**, so a spans column
+  change means dropping the four secondary indexes first and letting the
+  `CREATE INDEX IF NOT EXISTS` block recreate them. Measured at 138 ms on a
+  108 MB production copy (34 706 spans).
 
 Verified present on DuckDB 1.1.3 (bundled), 1.4.1 and 1.5.5, so upgrading the
-engine does not resolve it. Neither does `STORED` — DuckDB rejects stored
-generated columns outright. The root-cause fix is to stop declaring
-`duration_ms` as a generated column mid-table; that is a schema migration and
-is tracked separately.
+engine does not resolve it, and `STORED` is rejected outright. Avoiding
+generated columns on indexed tables is the only durable fix.
