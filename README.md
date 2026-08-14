@@ -226,6 +226,49 @@ rather than a misleading healthy state while ingest is still dark; it flips to
 docker inspect --format '{{.State.Health.Status}}' cotel   # starting → healthy
 ```
 
+### The deploy waits for healthy
+
+`docker compose up -d` returns as soon as the container has *started*, which is
+not the same as working: a deploy whose `storage.Open` dies reports success
+identically to one that serves traffic. So the Deploy workflow does not stop at
+`up -d` — it runs `scripts/wait-for-healthy.sh`, which blocks until the
+container reports `healthy` and **fails the deploy** on any of:
+
+| Condition | Gate result |
+|-----------|-------------|
+| `healthy` within the timeout | pass |
+| Container exited, or is in `restarting` (crash loop) | fail, immediately |
+| Container restarted *during* the wait (crash loop) | fail, immediately |
+| Health probe reports `unhealthy` | fail, immediately |
+| Still `starting` when the timeout expires | fail |
+| Service defines no `HEALTHCHECK` | fail |
+
+On failure it dumps `docker compose ps`, the last health-probe output and
+`docker compose logs --tail=200`, so the reason lands in the workflow run log
+instead of needing shell access to the runner. The healthcheck itself is defined
+in the `Dockerfile` and compose inherits it from the image; the "no `HEALTHCHECK`"
+row means the gate cannot be quietly defeated by dropping it.
+
+Only restarts observed *during* the wait count against a deploy. A restart count
+of its own does not: `up -d` leaves an already-current container in place, and a
+container that crashed once and recovered carries that count for the rest of its
+life — including while it legitimately replays a WAL, which is exactly when the
+wait is longest and the gate most needs to hold.
+
+Run it by hand against a local stack the same way:
+
+```bash
+scripts/wait-for-healthy.sh cotel 120     # service, timeout in seconds
+```
+
+**Timeout.** The default is 120 s, and a normal deploy is far inside it: a
+graceful stop checkpoints the WAL, so the next open takes milliseconds, and
+measured against a 109 MB copy of production the container reports healthy in
+~6 s — that figure is the probe cadence, not the database. A start that follows
+a *hard* kill replays the WAL instead and can take minutes; for that deploy use
+**Run workflow** and raise the `health_timeout` input rather than widening the
+default, which would blunt the gate for every other deploy.
+
 ## Data
 
 Data lives in the named volume (`cotel-data`) at `/data/cotel.duckdb`. You can query it directly:
