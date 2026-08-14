@@ -1,4 +1,4 @@
--- Schema version: 9
+-- Schema version: 10
 -- Versioned; never silently rename columns.
 
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -17,9 +17,6 @@ CREATE TABLE IF NOT EXISTS spans (
     -- Timing
     start_time      TIMESTAMPTZ NOT NULL,
     end_time        TIMESTAMPTZ NOT NULL,
-    duration_ms     DOUBLE GENERATED ALWAYS AS (
-                        epoch_ms(end_time) - epoch_ms(start_time)
-                    ),
 
     -- Service metadata
     service_name    VARCHAR,
@@ -54,6 +51,21 @@ ALTER TABLE spans ADD COLUMN IF NOT EXISTS status_code TINYINT DEFAULT 0;
 
 -- Migration v2 → v3: add user_id for multi-user telemetry separation.
 ALTER TABLE spans ADD COLUMN IF NOT EXISTS user_id VARCHAR;
+
+-- Migration v9 → v10: drop the derived duration_ms column (ADR-0013). As a
+-- VIRTUAL generated column it took a logical slot but no storage slot, so every
+-- later column's logical index ran one ahead of its physical index and a bare
+-- `col = <constant>` probed an unrelated index and matched nothing. Duration is
+-- computed where it is read.
+--
+-- DuckDB refuses to ALTER a table an index depends on, so the secondary indexes
+-- are dropped here and recreated below. Both statements are idempotent, so a
+-- re-apply of this file rebuilds the indexes but moves no row data.
+DROP INDEX IF EXISTS idx_spans_session_id;
+DROP INDEX IF EXISTS idx_spans_start_time;
+DROP INDEX IF EXISTS idx_spans_name;
+DROP INDEX IF EXISTS idx_spans_user_id;
+ALTER TABLE spans DROP COLUMN IF EXISTS duration_ms;
 
 -- Indexes for dashboard hot paths (DuckDB ART indexes).
 CREATE INDEX IF NOT EXISTS idx_spans_session_id  ON spans(session_id);
@@ -144,3 +156,4 @@ INSERT INTO schema_version (version) VALUES (6) ON CONFLICT DO NOTHING;
 INSERT INTO schema_version (version) VALUES (7) ON CONFLICT DO NOTHING;
 INSERT INTO schema_version (version) VALUES (8) ON CONFLICT DO NOTHING;
 INSERT INTO schema_version (version) VALUES (9) ON CONFLICT DO NOTHING;
+INSERT INTO schema_version (version) VALUES (10) ON CONFLICT DO NOTHING;

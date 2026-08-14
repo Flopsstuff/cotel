@@ -1,29 +1,27 @@
 package storage
 
 import (
+	"database/sql"
 	"fmt"
+	"path/filepath"
 	"testing"
 	"time"
 )
 
 // pushdownBrokenSpanCols are the VARCHAR columns of spans for which the bundled
-// DuckDB engine answers a bare `col = <constant>` with zero rows.
+// DuckDB engine answers a bare `col = <constant>` with zero rows. Empty since
+// spans stopped carrying a generated column (ADR-0013).
 //
-// The trigger is the table shape, not the column: `duration_ms` is a VIRTUAL
-// generated column, so it takes a logical slot but no storage slot and every
-// column after it has logical index = physical index + 1. A column is answered
-// wrongly exactly when its logical index collides with the physical index of an
-// indexed column - the scan then probes that unrelated ART index for the
-// constant and finds nothing. Today service_name (logical 7) collides with
-// session_id (physical 7) and tool_name (logical 10) with user_id (physical 10).
+// The trigger is the table shape, not the column: a VIRTUAL generated column
+// takes a logical slot but no storage slot, so every column after it has logical
+// index = physical index + 1. A column is answered wrongly exactly when its
+// logical index collides with the physical index of an indexed column - the scan
+// then probes that unrelated ART index for the constant and finds nothing.
 //
 // Adding, reordering or indexing a column moves the collisions, which is why
 // the test below derives the set from the live schema rather than trusting this
 // list to stay complete.
-var pushdownBrokenSpanCols = map[string]bool{
-	"service_name": true,
-	"tool_name":    true,
-}
+var pushdownBrokenSpanCols = map[string]bool{}
 
 // spansVarcharCols reads the VARCHAR columns of spans in declaration order.
 func spansVarcharCols(t *testing.T, r *ReadDB) []string {
@@ -134,9 +132,10 @@ func truthCounts(t *testing.T, r *ReadDB, cols []string) (map[string]string, map
 // pushed into the scan and then match nothing, turning a silently empty answer
 // into something no reviewer can spot by reading the SQL.
 //
-// It fails in both directions on purpose. A column that starts disagreeing is a
-// new place that needs the COALESCE guard; a column in pushdownBrokenSpanCols
-// that starts agreeing means the engine was fixed and the workarounds can go.
+// It fails in both directions on purpose. A column that starts disagreeing means
+// the layout grew a hole again - look for a generated column before reaching for
+// a COALESCE workaround; a column in pushdownBrokenSpanCols that starts agreeing
+// means the trap is gone and its entry can go.
 func TestSpansEqualityUnderFilterPushdown(t *testing.T) {
 	db, err := Open(":memory:")
 	if err != nil {
@@ -162,7 +161,7 @@ func TestSpansEqualityUnderFilterPushdown(t *testing.T) {
 		bare := count(q+" = ?", probe[c])
 
 		if got := count("COALESCE("+q+", '') = ?", probe[c]); got != want[c] {
-			t.Errorf("COALESCE(%s, '') = %q returned %d rows, want %d: the workaround this codebase relies on no longer returns the truth on %s",
+			t.Errorf("COALESCE(%s, '') = %q returned %d rows, want %d: the fallback workaround no longer returns the truth on %s",
 				c, probe[c], got, want[c], duckDBVersion(t, ro))
 		}
 
@@ -171,7 +170,7 @@ func TestSpansEqualityUnderFilterPushdown(t *testing.T) {
 			t.Errorf("%s = %q now returns the correct %d rows on %s: drop %q from pushdownBrokenSpanCols and remove its COALESCE workaround",
 				c, probe[c], want[c], duckDBVersion(t, ro), c)
 		case !broken && bare != want[c]:
-			t.Errorf("%s = %q returned %d rows, want %d on %s: this column is now silently dropped by filter pushdown and needs the COALESCE workaround",
+			t.Errorf("%s = %q returned %d rows, want %d on %s: this column is now silently dropped by filter pushdown - check whether spans grew a generated column",
 				c, probe[c], bare, want[c], duckDBVersion(t, ro))
 		}
 	}
@@ -188,6 +187,92 @@ func TestSpansEqualityUnderFilterPushdown(t *testing.T) {
 			t.Errorf("with filter_pushdown disabled, %s = %q returned %d rows, want %d: the cause is not filter pushdown",
 				c, probe[c], got, want[c])
 		}
+	}
+}
+
+// TestUpgradeDropsGeneratedDurationColumn covers the upgrade path the fresh-database
+// test cannot: a populated v9 database still carries duration_ms as a generated
+// column, and the migration has to remove it without touching the rows around it.
+func TestUpgradeDropsGeneratedDurationColumn(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "v9.duckdb")
+
+	raw, err := sql.Open("duckdb", path)
+	if err != nil {
+		t.Fatalf("raw open: %v", err)
+	}
+	if _, err := raw.Exec(`CREATE TABLE spans (
+		trace_id VARCHAR NOT NULL, span_id VARCHAR NOT NULL PRIMARY KEY,
+		parent_span_id VARCHAR, name VARCHAR NOT NULL,
+		start_time TIMESTAMPTZ NOT NULL, end_time TIMESTAMPTZ NOT NULL,
+		duration_ms DOUBLE GENERATED ALWAYS AS (epoch_ms(end_time) - epoch_ms(start_time)),
+		service_name VARCHAR, session_id VARCHAR, model VARCHAR, tool_name VARCHAR,
+		user_id VARCHAR, status_code TINYINT DEFAULT 0,
+		input_tokens INTEGER, output_tokens INTEGER,
+		cache_read_tokens INTEGER, cache_write_tokens INTEGER, cost_usd DOUBLE,
+		attributes JSON, resource_attrs JSON, ingested_at TIMESTAMPTZ DEFAULT now()
+	)`); err != nil {
+		t.Fatalf("seed v9 spans: %v", err)
+	}
+	for _, idx := range []string{"session_id", "start_time", "name", "user_id"} {
+		if _, err := raw.Exec(`CREATE INDEX idx_spans_` + idx + ` ON spans(` + idx + `)`); err != nil {
+			t.Fatalf("seed index on %s: %v", idx, err)
+		}
+	}
+	for i := 0; i < 3; i++ {
+		if _, err := raw.Exec(`
+			INSERT INTO spans (trace_id, span_id, name, start_time, end_time, service_name, session_id, model, tool_name, user_id)
+			VALUES ('t', ?, 'tool.execution', ?, ?, 'claude-code', ?, 'claude-opus-4', 'Bash', ?)`,
+			fmt.Sprintf("span-%d", i), time.Unix(int64(i), 0), time.Unix(int64(i)+1, 0),
+			fmt.Sprintf("session-%d", i), fmt.Sprintf("user-%d", i)); err != nil {
+			t.Fatalf("seed span %d: %v", i, err)
+		}
+	}
+	if err := raw.Close(); err != nil {
+		t.Fatalf("raw close: %v", err)
+	}
+
+	db, err := Open(path)
+	if err != nil {
+		t.Fatalf("open v9 db: %v", err)
+	}
+	defer db.Close()
+	ro := db.ReadOnly()
+
+	var cols int
+	if err := ro.QueryRow(`
+		SELECT COUNT(*) FROM information_schema.columns
+		WHERE table_name = 'spans' AND column_name = 'duration_ms'`).Scan(&cols); err != nil {
+		t.Fatalf("read spans columns: %v", err)
+	}
+	if cols != 0 {
+		t.Errorf("duration_ms still declared on spans after upgrade")
+	}
+
+	var total int
+	if err := ro.QueryRow(`SELECT COUNT(*) FROM spans`).Scan(&total); err != nil {
+		t.Fatalf("count spans: %v", err)
+	}
+	if total != 3 {
+		t.Errorf("spans after upgrade = %d, want 3: the migration moved rows", total)
+	}
+
+	var bash int
+	if err := ro.QueryRow(`SELECT COUNT(*) FROM spans WHERE tool_name = 'Bash'`).Scan(&bash); err != nil {
+		t.Fatalf("count Bash spans: %v", err)
+	}
+	if bash != 3 {
+		t.Errorf("tool_name = 'Bash' returned %d rows, want 3 on %s: the upgraded layout still traps bare equality",
+			bash, duckDBVersion(t, ro))
+	}
+
+	var dur float64
+	if err := ro.QueryRow(`
+		SELECT CAST(epoch_ms(end_time) - epoch_ms(start_time) AS DOUBLE)
+		FROM spans WHERE span_id = 'span-0'`).Scan(&dur); err != nil {
+		t.Fatalf("read computed duration: %v", err)
+	}
+	if dur != 1000 {
+		t.Errorf("computed duration_ms = %v, want 1000", dur)
 	}
 }
 
