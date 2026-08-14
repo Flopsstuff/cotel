@@ -74,20 +74,25 @@ back to `duration_ms` so response shapes and sort keys do not move.
 **Why D over C.** Option C is the smaller diff by line count, but it buys that
 with a worse migration and a new invariant to maintain:
 
-- **The migration moves no data.** D is one idempotent statement — `ALTER TABLE
-  spans DROP COLUMN IF EXISTS duration_ms`, a no-op once applied. C needs
-  DROP + ADD + a full-table backfill `UPDATE`. In this project a merge to `main`
-  is a production deploy, onto a database whose cold start is already the
-  sensitive path, so a migration with nothing to interrupt is worth more than a
-  few saved lines.
+- **The migration moves no row data.** D drops a column; C needs DROP + ADD plus
+  a full-table backfill `UPDATE`. In this project a merge to `main` is a
+  production deploy, onto a database whose cold start is already the sensitive
+  path, so a migration with no rows to rewrite is worth more than a few saved
+  lines. D is not the single statement it first looks like: DuckDB refuses to
+  `ALTER` a table an index depends on, so the migration drops the four secondary
+  indexes first and lets the existing `CREATE INDEX IF NOT EXISTS` block rebuild
+  them. Measured at 138 ms on a 108 MB database of 34 706 spans; the whole v10
+  upgrade added 0.4 s to a 9.5 s cold start already dominated by WAL replay.
 - **C composes badly with [ADR-0010](./0010-schema-version-guard).** That guard
   re-applies the whole of `schema.sql` on any change to the file, including a
-  comment-only one — deliberately, to fail toward doing too much. A DROP + ADD +
-  backfill sitting in `schema.sql` is therefore not a one-time cost: it drops the
-  real column and rewrites the whole table on *every future schema edit*.
-  Avoiding that means a bespoke one-shot guard in Go, i.e. new machinery around a
-  column we do not need to store. D's single `DROP … IF EXISTS` is naturally
-  idempotent and matches the migration style already in the file.
+  comment-only one — deliberately, to fail toward doing too much. Neither option
+  is a one-time cost under that guard, but they degrade very differently: C's
+  DROP + ADD + backfill drops the real column and rewrites the whole table on
+  *every future schema edit*, where D re-pays only the index rebuild above.
+  Holding C to a single application means a bespoke one-shot guard in Go, i.e.
+  new machinery around a column we do not need to store. D's statements are all
+  `IF EXISTS` / `IF NOT EXISTS` and match the migration style already in the
+  file.
 - **A stored column can drift; a computed one cannot.** C makes `duration_ms`
   writable, so it becomes possible for it to disagree with `start_time` /
   `end_time`. D keeps one source of truth.
@@ -115,10 +120,14 @@ aggregate table, never as a generated column beside the raw data.
   guard test both go away; the guard test itself stays, as the detector for any
   future reintroduction.
 - Schema version bumps 9 → 10 under the ADR-0010 guard.
-- No backfill, no table rewrite, no data movement on the deploy that introduces
-  it. The dropped values are recomputed on read from columns that are `NOT NULL`,
-  so nothing is lost and the change needs no reverse migration — re-adding the
-  column later is a plain additive migration.
+- No backfill, no table rewrite, no row data moved on the deploy that introduces
+  it — only the four secondary indexes are dropped and rebuilt. The dropped
+  values are recomputed on read from columns that are `NOT NULL`, so nothing is
+  lost, and re-adding the column later would be a plain additive migration.
+- **No downgrade path.** An older binary still opens a v10 database — its
+  `CREATE TABLE IF NOT EXISTS` cannot bring the column back — but every query
+  naming `duration_ms` then errors. Rolling the binary back means restoring the
+  pre-upgrade database with it.
 - The export ZIP/CSV format is unchanged: same columns, same positions, same
   values, `format_version` untouched.
 - Reads that previously projected a stored value now evaluate two `epoch_ms`
