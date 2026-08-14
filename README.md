@@ -237,7 +237,8 @@ container reports `healthy` and **fails the deploy** on any of:
 | Condition | Gate result |
 |-----------|-------------|
 | `healthy` within the timeout | pass |
-| Container exited, or restarted at all (crash loop) | fail, immediately |
+| Container exited, or is in `restarting` (crash loop) | fail, immediately |
+| Container restarted *during* the wait (crash loop) | fail, immediately |
 | Health probe reports `unhealthy` | fail, immediately |
 | Still `starting` when the timeout expires | fail |
 | Service defines no `HEALTHCHECK` | fail |
@@ -247,6 +248,12 @@ On failure it dumps `docker compose ps`, the last health-probe output and
 instead of needing shell access to the runner. The healthcheck itself is defined
 in the `Dockerfile` and compose inherits it from the image; the "no `HEALTHCHECK`"
 row means the gate cannot be quietly defeated by dropping it.
+
+Only restarts observed *during* the wait count against a deploy. A restart count
+of its own does not: `up -d` leaves an already-current container in place, and a
+container that crashed once and recovered carries that count for the rest of its
+life — including while it legitimately replays a WAL, which is exactly when the
+wait is longest and the gate most needs to hold.
 
 Run it by hand against a local stack the same way:
 

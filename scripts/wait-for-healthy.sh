@@ -64,6 +64,11 @@ fi
 
 echo "wait-for-healthy: waiting up to ${TIMEOUT}s for '${SERVICE}' (${CID:0:12}) to report healthy"
 START=$SECONDS
+BASELINE_RESTARTS="$(inspect '{{.RestartCount}}')"
+BASELINE_RESTARTS="${BASELINE_RESTARTS:-0}"
+if [ "$BASELINE_RESTARTS" -gt 0 ]; then
+    echo "wait-for-healthy: container carries ${BASELINE_RESTARTS} earlier restart(s); only further ones count as a crash loop"
+fi
 
 while :; do
     state="$(inspect '{{.State.Status}}')"
@@ -77,19 +82,26 @@ while :; do
     fi
 
     # Checked before the probe: a restarting container also reads as
-    # "unhealthy", and the process that died names the fault better. The deploy
-    # has just recreated this container, so any restart at all is a crash loop.
+    # "unhealthy", and the process that died names the fault better.
     case "$state" in
         exited | dead)
             fail "'${SERVICE}' exited with code $(inspect '{{.State.ExitCode}}') after ${elapsed}s"
+            ;;
+        restarting)
+            fail "'${SERVICE}' is restarting after ${elapsed}s: the process exited on its own (crash loop)"
             ;;
         "")
             fail "'${SERVICE}' container ${CID:0:12} disappeared after ${elapsed}s"
             ;;
     esac
 
-    if [ "${restarts:-0}" -gt 0 ]; then
-        fail "'${SERVICE}' restarted ${restarts}x before reaching healthy (crash loop) after ${elapsed}s"
+    # Only restarts observed *during* this wait indict this deploy. A count of
+    # its own does not: `up -d` leaves an already-current container in place,
+    # and one that crashed once and recovered carries the count for the rest of
+    # its life — including while it legitimately replays a WAL after a hard
+    # kill, which is precisely when the wait is longest.
+    if [ "${restarts:-0}" -gt "$BASELINE_RESTARTS" ]; then
+        fail "'${SERVICE}' restarted $(( restarts - BASELINE_RESTARTS ))x during the wait (crash loop) after ${elapsed}s"
     fi
 
     if [ "$health" = unhealthy ]; then
