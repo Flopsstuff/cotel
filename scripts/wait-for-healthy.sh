@@ -28,6 +28,14 @@ POLL_INTERVAL="${POLL_INTERVAL:-2}"
 LOG_TAIL="${LOG_TAIL:-200}"
 PROGRESS_EVERY=10
 
+# A non-numeric timeout would make the `-ge` test error out every iteration;
+# `set -e` does not fire inside an `if`, so the gate would silently never time
+# out and hang the job instead of failing it.
+if ! [ "$TIMEOUT" -gt 0 ] 2>/dev/null; then
+    echo "wait-for-healthy: FAILED — timeout must be a positive integer, got '${TIMEOUT}'"
+    exit 1
+fi
+
 inspect() {
     docker inspect -f "$1" "$CID" 2>/dev/null || true
 }

@@ -35,7 +35,12 @@ jobs:
       # without this the job reports success on a container that is still — or
       # forever — `health: starting`. The script dumps container logs on failure.
       - name: Wait for healthy
-        run: scripts/wait-for-healthy.sh cotel "${{ github.event.inputs.health_timeout || '120' }}"
+        env:
+          # Via env, not inline `${{ }}`: a dispatch input expanded straight into
+          # the run script is a shell-injection sink, and this runner is the
+          # production host.
+          HEALTH_TIMEOUT: ${{ github.event.inputs.health_timeout || '120' }}
+        run: scripts/wait-for-healthy.sh cotel "$HEALTH_TIMEOUT"
 
       - name: Show status
         run: docker compose ps
