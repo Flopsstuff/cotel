@@ -4,6 +4,11 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      health_timeout:
+        description: "Seconds to wait for the container to report healthy. Raise it for a deploy that has to replay a large WAL (i.e. one following a hard kill)."
+        required: false
+        default: "120"
 
 concurrency:
   group: deploy-main
@@ -25,6 +30,12 @@ jobs:
 
       - name: Recreate container
         run: docker compose up -d --remove-orphans
+
+      # `up -d` returns once the container has started, not once it works, so
+      # without this the job reports success on a container that is still — or
+      # forever — `health: starting`. The script dumps container logs on failure.
+      - name: Wait for healthy
+        run: scripts/wait-for-healthy.sh cotel "${{ github.event.inputs.health_timeout || '120' }}"
 
       - name: Show status
         run: docker compose ps

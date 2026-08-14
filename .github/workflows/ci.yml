@@ -49,12 +49,12 @@ jobs:
       - name: Start services
         run: docker compose up -d
 
-      # Ports now bind before the DB opens and answer 503 until it is ready, so
-      # we must wait on actual readiness (/healthz → 200), not just a bound port.
-      - name: Wait for readiness (max 60 s)
-        run: |
-          timeout 60 bash -c \
-            'until curl -sf -o /dev/null http://localhost:8080/healthz; do sleep 1; done'
+      # Ports bind before the DB opens and answer 503 until it is ready, so we
+      # must wait on actual readiness, not just a bound port. This runs the same
+      # gate as the deploy, so a break in it surfaces on a PR instead of on a
+      # deploy to production.
+      - name: Wait for healthy
+        run: scripts/wait-for-healthy.sh cotel 120
 
       - name: POST sample OTLP payload
         run: |
