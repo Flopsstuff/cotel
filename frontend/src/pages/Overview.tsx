@@ -389,7 +389,7 @@ export default function Overview() {
       ) : data ? (
         <div className={styles.kpiRow}>
           <KpiCard label={scoped('Sessions')} value={String(data.sessions_count)} />
-          <KpiCard label={scoped('Users')} value={String(data.users_count)} />
+          <KpiCard label={scoped('Active Users')} value={String(data.users_count)} />
           <KpiCard label={scoped('Total Cost')} value={`$${data.total_cost_usd.toFixed(2)}`} />
           <KpiCard label={scoped('Input Tokens')} value={fmtTokens(data.total_input_tokens)} />
           <KpiCard label={scoped('Output Tokens')} value={fmtTokens(data.total_output_tokens)} />

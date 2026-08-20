@@ -96,6 +96,7 @@ These are rendered by a shared `<PageHeader>` component that wraps every page's 
 | Region | Component | Field | Source | Format |
 |---|---|---|---|---|
 | KPI row | `<KpiCard>` | Sessions | `GET /overview → total_sessions` | Integer |
+| KPI row | `<KpiCard>` | Active Users | `GET /overview → users_count` | Integer — principals with usage in the range, not the registered-user total the Users page lists |
 | KPI row | `<KpiCard>` | Total Cost | `GET /overview → total_cost_usd` | `$0.00` |
 | KPI row | `<KpiCard>` | Input Tokens | `GET /overview → total_input_tokens` | `1.2M`, `890K`, `12.4K` |
 | KPI row | `<KpiCard>` | Output Tokens | `GET /overview → total_output_tokens` | Same |
