@@ -151,15 +151,22 @@ func rangeSince(rangeKey string, now time.Time) *time.Time {
 	return &t
 }
 
-// parseRange reads the range query parameter, falling back to the default
-// "month" for missing or unrecognised values, and returns the normalised key
-// with its lower bound.
+// parseRange reads the range query parameter, falling back to "month" for
+// missing or unrecognised values, and returns the normalised key with its lower
+// bound.
 func parseRange(r *http.Request) (string, *time.Time) {
+	return parseRangeDefault(r, "month")
+}
+
+// parseRangeDefault is parseRange with a caller-chosen fallback. /sessions and
+// /models pass "all" because they had no time filter before ADR-0014, and a
+// "month" default would silently truncate every existing caller.
+func parseRangeDefault(r *http.Request, def string) (string, *time.Time) {
 	rk := r.URL.Query().Get("range")
 	switch rk {
 	case "all", "year", "month", "week", "day":
 	default:
-		rk = "month"
+		rk = def
 	}
 	return rk, rangeSince(rk, time.Now())
 }
@@ -233,6 +240,102 @@ func userIDClauseOn(r *http.Request, prefix string) (clause string, arg string) 
 	return " AND " + prefix + "user_id = ?", uid
 }
 
+// usageCTE unions raw spans with rolled-up daily_usage into one row set that
+// every additive range-scoped figure sums over (ADR-0014). It is the ADR-0011
+// split: the roll-up consumes whole UTC days, so the earliest surviving raw day
+// is fully raw and the aggregate side is bounded by `day < raw_floor` (strict) —
+// `<=` would double count the boundary day.
+//
+// The roll-up writes UnknownSentinel into the session_id/model/tool_name primary
+// key columns for spans that carried none. Mapping it back to NULL here keeps
+// the aggregate side filtering exactly like the raw side, which drops NULL and
+// ''; without it a phantom "unknown" model or tool appears once a window is old
+// enough to have been rolled up.
+//
+// first_seen degrades to the aggregate's day at midnight for rolled-up rows:
+// daily_usage keeps no intra-day timestamp. It is a lower bound on the real
+// start, never a later one.
+const usageCTE = `
+WITH raw_floor AS (
+    SELECT MIN(start_time) AS ts FROM spans
+),
+usage AS (
+    SELECT
+        CAST(CAST(start_time AS TIMESTAMP) AS DATE) AS day,
+        start_time AS first_seen,
+        NULLIF(session_id, '') AS session_id,
+        user_id,
+        NULLIF(model, '') AS model,
+        NULLIF(tool_name, '') AS tool_name,
+        CAST(1 AS BIGINT) AS spans,
+        cost_usd AS cost,
+        input_tokens,
+        output_tokens,
+        COALESCE(cache_read_tokens, 0) + COALESCE(cache_write_tokens, 0) AS cache_tokens
+    FROM spans
+    WHERE TRUE%[1]s
+    UNION ALL
+    SELECT
+        du.day,
+        CAST(du.day AS TIMESTAMPTZ),
+        NULLIF(du.session_id, '%[2]s'),
+        du.user_id,
+        NULLIF(du.model, '%[2]s'),
+        NULLIF(du.tool_name, '%[2]s'),
+        du.span_count,
+        du.total_cost_usd,
+        du.total_input_tokens,
+        du.total_output_tokens,
+        COALESCE(du.total_cache_read_tokens, 0) + COALESCE(du.total_cache_write_tokens, 0)
+    FROM daily_usage du CROSS JOIN raw_floor rf
+    WHERE (rf.ts IS NULL OR du.day < CAST(CAST(rf.ts AS TIMESTAMP) AS DATE))%[3]s
+)`
+
+// usageFilter carries the WHERE fragments that scope usageCTE to a time window
+// and, optionally, one user, together with their arguments in statement order —
+// raw side first, aggregate side second.
+type usageFilter struct {
+	raw  string
+	agg  string
+	args []any
+}
+
+// newUsageFilter builds the scoping fragments for usageCTE. from and to are
+// inclusive bounds; nil leaves that side unbounded.
+func newUsageFilter(r *http.Request, from, to *time.Time) usageFilter {
+	rawUID, rawUIDArg := userIDClause(r)
+	aggUID, aggUIDArg := userIDClauseOn(r, "du.")
+
+	f := usageFilter{raw: rawUID, agg: aggUID}
+	if rawUIDArg != "" {
+		f.args = append(f.args, rawUIDArg)
+	}
+	if from != nil {
+		f.raw += " AND start_time >= ?"
+		f.args = append(f.args, *from)
+	}
+	if to != nil {
+		f.raw += " AND start_time <= ?"
+		f.args = append(f.args, *to)
+	}
+	if aggUIDArg != "" {
+		f.args = append(f.args, aggUIDArg)
+	}
+	if from != nil {
+		f.agg += " AND du.day >= CAST(CAST(? AS TIMESTAMP) AS DATE)"
+		f.args = append(f.args, *from)
+	}
+	if to != nil {
+		f.agg += " AND du.day <= CAST(CAST(? AS TIMESTAMP) AS DATE)"
+		f.args = append(f.args, *to)
+	}
+	return f
+}
+
+func (f usageFilter) cte() string {
+	return fmt.Sprintf(usageCTE, f.raw, storage.UnknownSentinel, f.agg)
+}
+
 // ---- /api/v1/users — delegated to users.go ----
 
 // ---- /api/v1/health ----
@@ -298,6 +401,7 @@ func (h *Handler) retentionHealth() retentionHealth {
 // ---- /api/v1/overview ----
 
 type overviewResponse struct {
+	Range             string         `json:"range"`
 	SessionsCount     int64          `json:"sessions_count"`
 	UsersCount        int64          `json:"users_count"`
 	TotalCostUSD      float64        `json:"total_cost_usd"`
@@ -325,46 +429,43 @@ type topToolRow struct {
 }
 
 func (h *Handler) handleOverview(w http.ResponseWriter, r *http.Request) {
-	since := time.Now().AddDate(0, 0, -30)
-	uidClause, uid := userIDClause(r)
+	rangeKey, since := parseRange(r)
+	f := newUsageFilter(r, since, nil)
+	cte := f.cte()
 
-	var resp overviewResponse
-	args := []any{since}
-	if uid != "" {
-		args = append(args, uid)
+	resp := overviewResponse{
+		Range:      rangeKey,
+		DailyCosts: []dailyCostRow{},
+		TopModels:  []topModelRow{},
+		TopTools:   []topToolRow{},
 	}
-	_ = h.db.QueryRow(`
-		SELECT
-			COUNT(DISTINCT session_id),
-			COALESCE(SUM(cost_usd), 0),
-			COALESCE(SUM(input_tokens), 0),
-			COALESCE(SUM(output_tokens), 0),
-			COALESCE(SUM(cache_read_tokens) + SUM(cache_write_tokens), 0)
-		FROM spans
-		WHERE start_time >= ? AND session_id IS NOT NULL`+uidClause,
-		args...,
-	).Scan(
+
+	// The anonymous bucket has no user_id, so COUNT(DISTINCT user_id) would drop
+	// it; it is one principal on the users list and counts as one here too.
+	_ = h.db.QueryRow(cte+`
+SELECT
+    COUNT(DISTINCT session_id),
+    COUNT(DISTINCT user_id) + CASE WHEN COUNT(*) FILTER (WHERE user_id IS NULL) > 0 THEN 1 ELSE 0 END,
+    COALESCE(SUM(cost), 0),
+    COALESCE(SUM(input_tokens), 0),
+    COALESCE(SUM(output_tokens), 0),
+    COALESCE(SUM(cache_tokens), 0)
+FROM usage
+`, f.args...).Scan(
 		&resp.SessionsCount,
+		&resp.UsersCount,
 		&resp.TotalCostUSD,
 		&resp.TotalInputTokens,
 		&resp.TotalOutputTokens,
 		&resp.TotalCacheTokens,
 	)
 
-	// Count distinct users (NULL counts as one "default" group).
-	_ = h.db.QueryRow(`SELECT COUNT(DISTINCT user_id) FROM spans`).Scan(&resp.UsersCount)
-
-	costArgs := []any{since}
-	if uid != "" {
-		costArgs = append(costArgs, uid)
-	}
-	rows, _ := h.db.Query(`
-		SELECT strftime(CAST(start_time AS TIMESTAMP), '%Y-%m-%d') AS day,
-		       COALESCE(SUM(cost_usd), 0)
-		FROM spans
-		WHERE start_time >= ? AND cost_usd IS NOT NULL`+uidClause+`
-		GROUP BY day ORDER BY day ASC
-	`, costArgs...)
+	rows, _ := h.db.Query(cte+`
+SELECT strftime(day, '%Y-%m-%d') AS d, COALESCE(SUM(cost), 0)
+FROM usage
+WHERE cost IS NOT NULL
+GROUP BY d ORDER BY d ASC
+`, f.args...)
 	if rows != nil {
 		defer rows.Close()
 		for rows.Next() {
@@ -374,16 +475,12 @@ func (h *Handler) handleOverview(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	modelArgs := []any{since}
-	if uid != "" {
-		modelArgs = append(modelArgs, uid)
-	}
-	mrows, _ := h.db.Query(`
-		SELECT model, COUNT(*) AS span_count
-		FROM spans
-		WHERE start_time >= ? AND model IS NOT NULL AND model <> ''`+uidClause+`
-		GROUP BY model ORDER BY span_count DESC LIMIT 5
-	`, modelArgs...)
+	mrows, _ := h.db.Query(cte+`
+SELECT model, CAST(SUM(spans) AS BIGINT) AS span_count
+FROM usage
+WHERE model IS NOT NULL
+GROUP BY model ORDER BY span_count DESC, model ASC LIMIT 5
+`, f.args...)
 	if mrows != nil {
 		defer mrows.Close()
 		for mrows.Next() {
@@ -393,16 +490,12 @@ func (h *Handler) handleOverview(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	toolArgs := []any{since}
-	if uid != "" {
-		toolArgs = append(toolArgs, uid)
-	}
-	trows, _ := h.db.Query(`
-		SELECT tool_name, COUNT(*) AS call_count
-		FROM spans
-		WHERE start_time >= ? AND tool_name IS NOT NULL AND tool_name <> ''`+uidClause+`
-		GROUP BY tool_name ORDER BY call_count DESC LIMIT 5
-	`, toolArgs...)
+	trows, _ := h.db.Query(cte+`
+SELECT tool_name, CAST(SUM(spans) AS BIGINT) AS call_count
+FROM usage
+WHERE tool_name IS NOT NULL
+GROUP BY tool_name ORDER BY call_count DESC, tool_name ASC LIMIT 5
+`, f.args...)
 	if trows != nil {
 		defer trows.Close()
 		for trows.Next() {
@@ -410,16 +503,6 @@ func (h *Handler) handleOverview(w http.ResponseWriter, r *http.Request) {
 			_ = trows.Scan(&row.ToolName, &row.CallCount)
 			resp.TopTools = append(resp.TopTools, row)
 		}
-	}
-
-	if resp.DailyCosts == nil {
-		resp.DailyCosts = []dailyCostRow{}
-	}
-	if resp.TopModels == nil {
-		resp.TopModels = []topModelRow{}
-	}
-	if resp.TopTools == nil {
-		resp.TopTools = []topToolRow{}
 	}
 
 	jsonOK(w, resp)
@@ -445,9 +528,16 @@ type sessionsResponse struct {
 	Total int64         `json:"total"`
 	Page  int           `json:"page"`
 	Limit int           `json:"limit"`
+	Range string        `json:"range"`
+	// CoveredSince names the start of the window this list actually answers for,
+	// or null when the selected range is fully covered by raw spans. A session row
+	// needs a start time, model and status, none of which daily_usage keeps
+	// (ADR-0014), so the list is raw-only and a longer range is clamped.
+	CoveredSince *string `json:"covered_since"`
 }
 
 func (h *Handler) handleSessions(w http.ResponseWriter, r *http.Request) {
+	rangeKey, since := parseRangeDefault(r, "all")
 	page := queryInt(r, "page", 1)
 	limit := queryInt(r, "limit", 50)
 	sort := r.URL.Query().Get("sort")
@@ -470,13 +560,19 @@ func (h *Handler) handleSessions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	uidClause, uid := userIDClause(r)
+	sinceClause := ""
+	scopeArgs := []any{}
+	if uid != "" {
+		scopeArgs = append(scopeArgs, uid)
+	}
+	if since != nil {
+		sinceClause = " AND start_time >= ?"
+		scopeArgs = append(scopeArgs, *since)
+	}
+	uidClause += sinceClause
 
 	var total int64
-	totalArgs := []any{}
-	if uid != "" {
-		totalArgs = append(totalArgs, uid)
-	}
-	_ = h.db.QueryRow(`SELECT COUNT(DISTINCT session_id) FROM spans WHERE session_id IS NOT NULL`+uidClause, totalArgs...).Scan(&total)
+	_ = h.db.QueryRow(`SELECT COUNT(DISTINCT session_id) FROM spans WHERE session_id IS NOT NULL`+uidClause, scopeArgs...).Scan(&total)
 
 	offset := (page - 1) * limit
 	q := fmt.Sprintf(`
@@ -498,11 +594,7 @@ func (h *Handler) handleSessions(w http.ResponseWriter, r *http.Request) {
 		LIMIT ? OFFSET ?
 	`, uidClause, sortExpr, order)
 
-	listArgs := []any{}
-	if uid != "" {
-		listArgs = append(listArgs, uid)
-	}
-	listArgs = append(listArgs, limit, offset)
+	listArgs := append(append([]any{}, scopeArgs...), limit, offset)
 	rows, err := h.db.Query(q, listArgs...)
 	if err != nil {
 		jsonError(w, "query failed", http.StatusInternalServerError)
@@ -529,10 +621,12 @@ func (h *Handler) handleSessions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	jsonOK(w, sessionsResponse{
-		Items: items,
-		Total: total,
-		Page:  page,
-		Limit: limit,
+		Items:        items,
+		Total:        total,
+		Page:         page,
+		Limit:        limit,
+		Range:        rangeKey,
+		CoveredSince: h.rawCoveredSince(r, since),
 	})
 }
 
@@ -667,27 +761,38 @@ type costsResponse struct {
 	Daily       []costDayRow    `json:"daily"`
 	ByModel     []costModelRow  `json:"by_model"`
 	TopSessions []topSessionRow `json:"top_sessions"`
+	// Range is the range key that scoped this response, or null when explicit
+	// from/to bounds superseded it (ADR-0014).
+	Range *string `json:"range"`
 }
 
 func (h *Handler) handleCosts(w http.ResponseWriter, r *http.Request) {
-	from, to := parseDateRange(r)
-	uidClause, uid := userIDClause(r)
+	rangeKey, since := parseRange(r)
 
-	baseArgs := []any{from, to}
-	if uid != "" {
-		baseArgs = append(baseArgs, uid)
+	from, to, explicit := explicitDateRange(r)
+	echo := &rangeKey
+	if explicit {
+		echo = nil
+	} else {
+		from, to = since, nil
 	}
 
-	var resp costsResponse
+	f := newUsageFilter(r, from, to)
+	cte := f.cte()
 
-	drows, _ := h.db.Query(`
-		SELECT strftime(CAST(start_time AS TIMESTAMP), '%Y-%m-%d') AS day,
-		       COALESCE(SUM(cost_usd), 0)
-		FROM spans
-		WHERE start_time >= ? AND start_time <= ? AND cost_usd IS NOT NULL`+uidClause+`
-		GROUP BY day ORDER BY day ASC
-	`, baseArgs...)
-	resp.Daily = []costDayRow{}
+	resp := costsResponse{
+		Daily:       []costDayRow{},
+		ByModel:     []costModelRow{},
+		TopSessions: []topSessionRow{},
+		Range:       echo,
+	}
+
+	drows, _ := h.db.Query(cte+`
+SELECT strftime(day, '%Y-%m-%d') AS d, COALESCE(SUM(cost), 0)
+FROM usage
+WHERE cost IS NOT NULL
+GROUP BY d ORDER BY d ASC
+`, f.args...)
 	if drows != nil {
 		defer drows.Close()
 		for drows.Next() {
@@ -697,13 +802,12 @@ func (h *Handler) handleCosts(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	mrows, _ := h.db.Query(`
-		SELECT model, COALESCE(SUM(cost_usd), 0)
-		FROM spans
-		WHERE start_time >= ? AND start_time <= ? AND model IS NOT NULL AND model <> ''`+uidClause+`
-		GROUP BY model ORDER BY SUM(cost_usd) DESC
-	`, baseArgs...)
-	resp.ByModel = []costModelRow{}
+	mrows, _ := h.db.Query(cte+`
+SELECT model, COALESCE(SUM(cost), 0) AS cost
+FROM usage
+WHERE model IS NOT NULL
+GROUP BY model ORDER BY cost DESC, model ASC
+`, f.args...)
 	if mrows != nil {
 		defer mrows.Close()
 		for mrows.Next() {
@@ -713,13 +817,12 @@ func (h *Handler) handleCosts(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	srows, _ := h.db.Query(`
-		SELECT session_id, COALESCE(SUM(cost_usd), 0), MIN(start_time)
-		FROM spans
-		WHERE start_time >= ? AND start_time <= ? AND session_id IS NOT NULL`+uidClause+`
-		GROUP BY session_id ORDER BY SUM(cost_usd) DESC LIMIT 10
-	`, baseArgs...)
-	resp.TopSessions = []topSessionRow{}
+	srows, _ := h.db.Query(cte+`
+SELECT session_id, COALESCE(SUM(cost), 0) AS cost, MIN(first_seen)
+FROM usage
+WHERE session_id IS NOT NULL
+GROUP BY session_id ORDER BY cost DESC, session_id ASC LIMIT 10
+`, f.args...)
 	if srows != nil {
 		defer srows.Close()
 		for srows.Next() {
@@ -732,6 +835,18 @@ func (h *Handler) handleCosts(w http.ResponseWriter, r *http.Request) {
 	}
 
 	jsonOK(w, resp)
+}
+
+// explicitDateRange reports the from/to bounds when the caller supplied either
+// one. They are the narrower, more specific statement, so they beat the range
+// key; ok is false when neither is present and the caller falls back to range.
+func explicitDateRange(r *http.Request) (from, to *time.Time, ok bool) {
+	q := r.URL.Query()
+	if q.Get("from") == "" && q.Get("to") == "" {
+		return nil, nil, false
+	}
+	f, t := parseDateRange(r)
+	return &f, &t, true
 }
 
 func parseDateRange(r *http.Request) (time.Time, time.Time) {
@@ -1070,14 +1185,15 @@ ORDER BY %s %s NULLS LAST, command ASC%s
 		Range:        rangeKey,
 		Sort:         sort,
 		Order:        order,
-		CoveredSince: h.bashCoveredSince(r, since),
+		CoveredSince: h.rawCoveredSince(r, since),
 	})
 }
 
-// bashCoveredSince returns the raw floor when the selected range reaches back
+// rawCoveredSince returns the raw floor when the selected range reaches back
 // past it into days that only survive as aggregates, and nil when the range is
-// fully covered by raw spans.
-func (h *Handler) bashCoveredSince(r *http.Request, since *time.Time) *string {
+// fully covered by raw spans. Shared by the endpoints that cannot answer from
+// the roll-up — the Bash breakdown (ADR-0012) and the sessions list (ADR-0014).
+func (h *Handler) rawCoveredSince(r *http.Request, since *time.Time) *string {
 	aggUID, aggUIDArg := userIDClauseOn(r, "du.")
 	args := []any{}
 	if aggUIDArg != "" {
@@ -1118,25 +1234,24 @@ type modelItem struct {
 
 type modelsResponse struct {
 	Items []modelItem `json:"items"`
+	Range string      `json:"range"`
 }
 
 func (h *Handler) handleModels(w http.ResponseWriter, r *http.Request) {
-	uidClause, uid := userIDClause(r)
-	args := []any{}
-	if uid != "" {
-		args = append(args, uid)
-	}
-	rows, _ := h.db.Query(`
-		SELECT
-			model,
-			COUNT(*) AS span_count,
-			COALESCE(SUM(cost_usd), 0),
-			COALESCE(SUM(input_tokens), 0),
-			COALESCE(SUM(output_tokens), 0)
-		FROM spans
-		WHERE model IS NOT NULL AND model <> ''`+uidClause+`
-		GROUP BY model ORDER BY span_count DESC
-	`, args...)
+	rangeKey, since := parseRangeDefault(r, "all")
+	f := newUsageFilter(r, since, nil)
+
+	rows, _ := h.db.Query(f.cte()+`
+SELECT
+    model,
+    CAST(SUM(spans) AS BIGINT) AS span_count,
+    COALESCE(SUM(cost), 0),
+    COALESCE(SUM(input_tokens), 0),
+    COALESCE(SUM(output_tokens), 0)
+FROM usage
+WHERE model IS NOT NULL
+GROUP BY model ORDER BY span_count DESC, model ASC
+`, f.args...)
 
 	items := []modelItem{}
 	if rows != nil {
@@ -1148,7 +1263,7 @@ func (h *Handler) handleModels(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	jsonOK(w, modelsResponse{Items: items})
+	jsonOK(w, modelsResponse{Items: items, Range: rangeKey})
 }
 
 // ---- /api/v1/history ----
