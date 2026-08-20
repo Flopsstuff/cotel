@@ -10,7 +10,7 @@ One Docker container. OTLP ingest on `:4318`, interactive analytics dashboard on
 
 - **Overview dashboard** — one range switcher in the header (All / Year / Month / Week / Day, default 30 days) that every figure on the page obeys: the KPI cards for sessions, users, total cost and token counts, and the Users / History / Costs / Tools / Models / Sessions blocks below them. The Users block ranks your top 5 principals by spend in the selected range. Arriving with `?user_id=` scopes the whole page to one user, with a chip in the header to clear it
 - **Sessions** — live table of every Claude Code session with user, model, duration, cost, and status (OK / ERROR); search by user and click any user to filter the table to their sessions
-- **History** — time-series and daily-activity heatmaps for sessions and token spend over time
+- **History** — time-series and daily-activity heatmaps for sessions and token spend over time. The day, week and month series keep charting after retention has rolled raw spans into daily totals; the hourly series and both heatmaps need a per-span timestamp, so they cover raw days only and say from when
 - **Costs** — cumulative spend chart + breakdown table by model
 - **Tools** — call counts, average duration, and error rate per tool (`Bash`, `Read`, `Edit`, …), scoped to a range switcher (All / Year / Month / Week / Day, default 30 days), plus a per-command breakdown of `Bash` calls
 - **Models** — token and cost breakdown across all Claude model variants

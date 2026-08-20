@@ -1298,13 +1298,26 @@ type heatmapCell struct {
 
 type historyResponse struct {
 	Granularity string            `json:"granularity"`
-	From        string            `json:"from"`
-	To          string            `json:"to"`
+	From        *string           `json:"from"`
+	To          *string           `json:"to"`
 	Buckets     []historyBucket   `json:"buckets"`
 	ByModel     []historyModelRow `json:"by_model"`
 	Heatmap     []heatmapCell     `json:"heatmap"`
+	// Range is the range key that scoped this response, or null when explicit
+	// from/to bounds superseded it (ADR-0014).
+	Range *string `json:"range"`
+	// CoveredSince names the start of the window buckets and by_model actually
+	// answer for, or null when the selected window is fully covered. Only "hour"
+	// can fall short: the roll-up consumes whole UTC days, so sub-day buckets
+	// exist for raw spans alone. Coarser granularities span the union and always
+	// report null.
+	CoveredSince *string `json:"covered_since"`
+	// HeatmapCoveredSince is the same clamp for heatmap, which resolves hour of
+	// day at every granularity and so is raw-only whatever the caller asked for.
+	HeatmapCoveredSince *string `json:"heatmap_covered_since"`
 }
 
+// historyBucketExpr buckets raw spans by their start time.
 func historyBucketExpr(gran string) string {
 	switch gran {
 	case "hour":
@@ -1318,6 +1331,42 @@ func historyBucketExpr(gran string) string {
 	}
 }
 
+// historyUnionBucketExpr buckets the usageCTE's whole-day rows. There is no
+// "hour" case by construction: daily_usage keeps no intra-day timestamp, so an
+// hour bucket cannot be built from the aggregate side at all.
+func historyUnionBucketExpr(gran string) string {
+	switch gran {
+	case "week":
+		return "strftime(date_trunc('week', CAST(day AS TIMESTAMP))::TIMESTAMP, '%Y-%m-%d')"
+	case "month":
+		return "strftime(day, '%Y-%m')"
+	default:
+		return "strftime(day, '%Y-%m-%d')"
+	}
+}
+
+// rawWindow builds the raw-spans time clause for from/to, either of which may be
+// nil for an unbounded side.
+func rawWindow(from, to *time.Time) (clause string, args []any) {
+	if from != nil {
+		clause += " AND start_time >= ?"
+		args = append(args, *from)
+	}
+	if to != nil {
+		clause += " AND start_time <= ?"
+		args = append(args, *to)
+	}
+	return clause, args
+}
+
+func isoDay(t *time.Time) *string {
+	if t == nil {
+		return nil
+	}
+	s := t.Format("2006-01-02")
+	return &s
+}
+
 func (h *Handler) handleHistory(w http.ResponseWriter, r *http.Request) {
 	gran := r.URL.Query().Get("granularity")
 	switch gran {
@@ -1326,18 +1375,70 @@ func (h *Handler) handleHistory(w http.ResponseWriter, r *http.Request) {
 		gran = "day"
 	}
 
-	from, to := parseDateRange(r)
-	bucketExpr := historyBucketExpr(gran)
+	// "month" is the default because it is the window parseDateRange already
+	// applied when a caller passed neither from nor to.
+	rangeKey, since := parseRangeDefault(r, "month")
+	from, to, explicit := explicitDateRange(r)
+	echo := &rangeKey
+	if explicit {
+		echo = nil
+	} else {
+		from, to = since, nil
+	}
 
-	var resp historyResponse
-	resp.Granularity = gran
-	resp.From = from.Format("2006-01-02")
-	resp.To = to.Format("2006-01-02")
+	resp := historyResponse{
+		Granularity:         gran,
+		From:                isoDay(from),
+		To:                  isoDay(to),
+		Buckets:             []historyBucket{},
+		ByModel:             []historyModelRow{},
+		Heatmap:             []heatmapCell{},
+		Range:               echo,
+		HeatmapCoveredSince: h.rawCoveredSince(r, from),
+	}
+
+	if gran == "hour" {
+		resp.CoveredSince = resp.HeatmapCoveredSince
+		h.historyRawSeries(&resp, r, gran, from, to)
+	} else {
+		h.historyUnionSeries(&resp, r, gran, from, to)
+	}
 
 	uidClause, uid := userIDClause(r)
-	baseArgs := []any{from, to}
+	window, args := rawWindow(from, to)
 	if uid != "" {
-		baseArgs = append(baseArgs, uid)
+		args = append(args, uid)
+	}
+	hrows, _ := h.db.Query(`
+		SELECT
+			strftime(CAST(start_time AS TIMESTAMP), '%Y-%m-%d') AS date,
+			CAST(strftime(CAST(start_time AS TIMESTAMP), '%H') AS INTEGER) AS hour,
+			COUNT(*) AS count,
+			COALESCE(SUM(cost_usd), 0) AS cost_usd
+		FROM spans
+		WHERE TRUE`+window+uidClause+`
+		GROUP BY date, hour ORDER BY date ASC, hour ASC
+	`, args...)
+	if hrows != nil {
+		defer hrows.Close()
+		for hrows.Next() {
+			var c heatmapCell
+			_ = hrows.Scan(&c.Date, &c.Hour, &c.Count, &c.CostUSD)
+			resp.Heatmap = append(resp.Heatmap, c)
+		}
+	}
+
+	jsonOK(w, resp)
+}
+
+// historyRawSeries fills buckets and by_model from raw spans, for the "hour"
+// granularity the roll-up cannot express.
+func (h *Handler) historyRawSeries(resp *historyResponse, r *http.Request, gran string, from, to *time.Time) {
+	bucketExpr := historyBucketExpr(gran)
+	uidClause, uid := userIDClause(r)
+	window, args := rawWindow(from, to)
+	if uid != "" {
+		args = append(args, uid)
 	}
 
 	brows, _ := h.db.Query(fmt.Sprintf(`
@@ -1349,10 +1450,9 @@ func (h *Handler) handleHistory(w http.ResponseWriter, r *http.Request) {
 			COALESCE(SUM(input_tokens), 0) AS input_tokens,
 			COALESCE(SUM(output_tokens), 0) AS output_tokens
 		FROM spans
-		WHERE start_time >= ? AND start_time <= ?%s
+		WHERE TRUE%s%s
 		GROUP BY bucket ORDER BY bucket ASC
-	`, bucketExpr, uidClause), baseArgs...)
-	resp.Buckets = []historyBucket{}
+	`, bucketExpr, window, uidClause), args...)
 	if brows != nil {
 		defer brows.Close()
 		for brows.Next() {
@@ -1369,10 +1469,9 @@ func (h *Handler) handleHistory(w http.ResponseWriter, r *http.Request) {
 			COALESCE(SUM(cost_usd), 0) AS cost_usd,
 			COUNT(*) AS spans
 		FROM spans
-		WHERE start_time >= ? AND start_time <= ? AND model IS NOT NULL AND model <> ''%s
-		GROUP BY bucket, model ORDER BY bucket ASC, SUM(cost_usd) DESC
-	`, bucketExpr, uidClause), baseArgs...)
-	resp.ByModel = []historyModelRow{}
+		WHERE model IS NOT NULL AND model <> ''%s%s
+		GROUP BY bucket, model ORDER BY bucket ASC, SUM(cost_usd) DESC, model ASC
+	`, bucketExpr, window, uidClause), args...)
 	if mrows != nil {
 		defer mrows.Close()
 		for mrows.Next() {
@@ -1381,26 +1480,52 @@ func (h *Handler) handleHistory(w http.ResponseWriter, r *http.Request) {
 			resp.ByModel = append(resp.ByModel, m)
 		}
 	}
+}
 
-	hrows, _ := h.db.Query(`
-		SELECT
-			strftime(CAST(start_time AS TIMESTAMP), '%Y-%m-%d') AS date,
-			CAST(strftime(CAST(start_time AS TIMESTAMP), '%H') AS INTEGER) AS hour,
-			COUNT(*) AS count,
-			COALESCE(SUM(cost_usd), 0) AS cost_usd
-		FROM spans
-		WHERE start_time >= ? AND start_time <= ?`+uidClause+`
-		GROUP BY date, hour ORDER BY date ASC, hour ASC
-	`, baseArgs...)
-	resp.Heatmap = []heatmapCell{}
-	if hrows != nil {
-		defer hrows.Close()
-		for hrows.Next() {
-			var c heatmapCell
-			_ = hrows.Scan(&c.Date, &c.Hour, &c.Count, &c.CostUSD)
-			resp.Heatmap = append(resp.Heatmap, c)
+// historyUnionSeries fills buckets and by_model from the spans ∪ daily_usage
+// union, so a window reaching past the raw floor keeps charting instead of
+// stopping there.
+func (h *Handler) historyUnionSeries(resp *historyResponse, r *http.Request, gran string, from, to *time.Time) {
+	bucketExpr := historyUnionBucketExpr(gran)
+	f := newUsageFilter(r, from, to)
+	cte := f.cte()
+
+	brows, _ := h.db.Query(cte+fmt.Sprintf(`
+SELECT
+    %s AS bucket,
+    COUNT(DISTINCT session_id) AS sessions,
+    CAST(SUM(spans) AS BIGINT) AS spans,
+    COALESCE(SUM(cost), 0) AS cost_usd,
+    COALESCE(SUM(input_tokens), 0) AS input_tokens,
+    COALESCE(SUM(output_tokens), 0) AS output_tokens
+FROM usage
+GROUP BY bucket ORDER BY bucket ASC
+`, bucketExpr), f.args...)
+	if brows != nil {
+		defer brows.Close()
+		for brows.Next() {
+			var b historyBucket
+			_ = brows.Scan(&b.Bucket, &b.Sessions, &b.Spans, &b.CostUSD, &b.InputTokens, &b.OutputTokens)
+			resp.Buckets = append(resp.Buckets, b)
 		}
 	}
 
-	jsonOK(w, resp)
+	mrows, _ := h.db.Query(cte+fmt.Sprintf(`
+SELECT
+    %s AS bucket,
+    model,
+    COALESCE(SUM(cost), 0) AS cost_usd,
+    CAST(SUM(spans) AS BIGINT) AS spans
+FROM usage
+WHERE model IS NOT NULL
+GROUP BY bucket, model ORDER BY bucket ASC, SUM(cost) DESC, model ASC
+`, bucketExpr), f.args...)
+	if mrows != nil {
+		defer mrows.Close()
+		for mrows.Next() {
+			var m historyModelRow
+			_ = mrows.Scan(&m.Bucket, &m.Model, &m.CostUSD, &m.Spans)
+			resp.ByModel = append(resp.ByModel, m)
+		}
+	}
 }

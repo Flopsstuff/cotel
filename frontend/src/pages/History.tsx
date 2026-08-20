@@ -311,6 +311,18 @@ function tickLabel(gran: Granularity, bucket: string): string {
   return bucket.slice(5)
 }
 
+// Both heatmaps resolve hour of day, which the daily roll-up does not keep, so
+// they stay raw-only however far back the charts above them reach.
+function HeatmapCoverageNote({ since }: { since: string | null }) {
+  if (!since) return null
+  return (
+    <p className={styles.coverageNote}>
+      Plotted from {new Date(since).toLocaleDateString()} — these cells resolve hour of day, and
+      earlier days in this window survive only as whole-day totals.
+    </p>
+  )
+}
+
 export default function History() {
   const [gran, setGran] = useState<Granularity>('day')
   const [from, setFrom] = useState(daysAgo(30))
@@ -475,7 +487,10 @@ export default function History() {
             {calDays.length === 0 ? (
               <EmptyState heading="No data in this range" />
             ) : (
-              <CalendarHeatmap days={calDays} from={data.from} to={data.to} />
+              <>
+                <CalendarHeatmap days={calDays} from={data.from ?? from} to={data.to ?? to} />
+                <HeatmapCoverageNote since={data.heatmap_covered_since} />
+              </>
             )}
           </Card>
 
@@ -484,7 +499,10 @@ export default function History() {
             {data.heatmap.length === 0 ? (
               <EmptyState heading="No data in this range" />
             ) : (
-              <HourDowHeatmap heatmap={data.heatmap} />
+              <>
+                <HourDowHeatmap heatmap={data.heatmap} />
+                <HeatmapCoverageNote since={data.heatmap_covered_since} />
+              </>
             )}
           </Card>
 
