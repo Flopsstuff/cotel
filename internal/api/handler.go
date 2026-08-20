@@ -536,6 +536,11 @@ type sessionsResponse struct {
 	CoveredSince *string `json:"covered_since"`
 }
 
+// hasSession excludes spans that carry no session. An empty session_id is not a
+// session: it groups into a row whose link 404s, and it is what the roll-up
+// records as UnknownSentinel rather than as a session of its own.
+const hasSession = `session_id IS NOT NULL AND session_id <> ''`
+
 func (h *Handler) handleSessions(w http.ResponseWriter, r *http.Request) {
 	rangeKey, since := parseRangeDefault(r, "all")
 	page := queryInt(r, "page", 1)
@@ -572,7 +577,7 @@ func (h *Handler) handleSessions(w http.ResponseWriter, r *http.Request) {
 	uidClause += sinceClause
 
 	var total int64
-	_ = h.db.QueryRow(`SELECT COUNT(DISTINCT session_id) FROM spans WHERE session_id IS NOT NULL`+uidClause, scopeArgs...).Scan(&total)
+	_ = h.db.QueryRow(`SELECT COUNT(DISTINCT session_id) FROM spans WHERE `+hasSession+uidClause, scopeArgs...).Scan(&total)
 
 	offset := (page - 1) * limit
 	q := fmt.Sprintf(`
@@ -588,7 +593,7 @@ func (h *Handler) handleSessions(w http.ResponseWriter, r *http.Request) {
 			MAX(CASE WHEN status_code = 2 THEN 1 ELSE 0 END),
 			COALESCE(MAX(user_id), '')
 		FROM spans
-		WHERE session_id IS NOT NULL%s
+		WHERE `+hasSession+`%s
 		GROUP BY session_id
 		ORDER BY %s %s
 		LIMIT ? OFFSET ?

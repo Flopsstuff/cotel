@@ -396,6 +396,40 @@ func TestSessions_RangeScopesAndReportsFullCoverage(t *testing.T) {
 	}
 }
 
+// TestSessions_BlankSessionIDIsNotASession pins the two panels to the same
+// number: a span with an empty session_id used to group into a list row of its
+// own, whose link 404s, while the Overview count excluded it.
+func TestSessions_BlankSessionIDIsNotASession(t *testing.T) {
+	db, ro := openTestDB(t)
+	seedRangeFixture(t, db)
+	now := time.Now().Add(-2 * time.Hour)
+	insertSpan(t, db, storage.Span{
+		TraceID: "tr", SpanID: "no-session", Name: "llm", SessionID: "", UserID: "alice",
+		StartTime: now, EndTime: now.Add(time.Second),
+	})
+	h := api.New(ro)
+
+	_, sessions := getJSON(t, h, "/api/v1/sessions?limit=100")
+	if got := num(t, sessions, "total"); got != 2 {
+		t.Errorf("/sessions total: want 2, got %v", got)
+	}
+	for _, it := range sessions["items"].([]any) {
+		if id := it.(map[string]any)["session_id"].(string); id == "" {
+			t.Errorf("/sessions listed a blank session_id row: %v", it)
+		}
+	}
+
+	// Compared on "month", where the union adds no aggregate sessions, so the
+	// count and the list are answering for exactly the same set. On "all" they
+	// legitimately differ: the count spans the roll-up, the list cannot.
+	_, monthSessions := getJSON(t, h, "/api/v1/sessions?range=month&limit=100")
+	_, overview := getJSON(t, h, "/api/v1/overview?range=month")
+	if got := num(t, overview, "sessions_count"); got != num(t, monthSessions, "total") {
+		t.Errorf("sessions_count %v disagrees with /sessions total %v",
+			got, num(t, monthSessions, "total"))
+	}
+}
+
 func TestCosts_RangeAndExplicitBounds(t *testing.T) {
 	db, ro := openTestDB(t)
 	seedRangeFixture(t, db)

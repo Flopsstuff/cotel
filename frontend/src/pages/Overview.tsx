@@ -92,7 +92,7 @@ function UsersSection({ range }: { range: RangeKey }) {
   )
 }
 
-function HistorySection({ range, userId }: SectionProps) {
+function HistorySection({ range, userId, coveredSince }: SectionProps & { coveredSince: string | null }) {
   const days = RANGE_DAYS[range]
   const from = useMemo(
     () => (days === null ? HISTORY_EPOCH : isoDate(new Date(Date.now() - days * 86400_000))),
@@ -107,32 +107,40 @@ function HistorySection({ range, userId }: SectionProps) {
     return <EmptyState heading="No activity data" subtext="Activity will appear once sessions are recorded." />
 
   return (
-    <ResponsiveContainer width="100%" height={160}>
-      <AreaChart data={data.buckets} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
-        <defs>
-          <linearGradient id="grad-hist-spans" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="5%" stopColor="var(--color-chart-1)" stopOpacity={0.25} />
-            <stop offset="95%" stopColor="var(--color-chart-1)" stopOpacity={0} />
-          </linearGradient>
-        </defs>
-        <XAxis
-          dataKey="bucket"
-          tick={{ fontSize: 11, fill: 'var(--color-text-3)' }}
-          tickFormatter={(b) => String(b).slice(5)}
-          interval="preserveStartEnd"
-        />
-        <YAxis tick={{ fontSize: 11, fill: 'var(--color-text-3)' }} width={36} />
-        <Tooltip content={<ChartTooltip formatter={(v) => [String(Math.round(v as number)), 'Spans']} />} />
-        <Area
-          type="monotone"
-          dataKey="spans"
-          stroke="var(--color-chart-1)"
-          strokeWidth={2}
-          fill="url(#grad-hist-spans)"
-          dot={false}
-        />
-      </AreaChart>
-    </ResponsiveContainer>
+    <>
+      {coveredSince && (
+        <p className={styles.coverageNote}>
+          Charted from {formatDay(coveredSince)} — this chart is built from raw spans, and earlier
+          days in this range survive only as daily totals.
+        </p>
+      )}
+      <ResponsiveContainer width="100%" height={160}>
+        <AreaChart data={data.buckets} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
+          <defs>
+            <linearGradient id="grad-hist-spans" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="5%" stopColor="var(--color-chart-1)" stopOpacity={0.25} />
+              <stop offset="95%" stopColor="var(--color-chart-1)" stopOpacity={0} />
+            </linearGradient>
+          </defs>
+          <XAxis
+            dataKey="bucket"
+            tick={{ fontSize: 11, fill: 'var(--color-text-3)' }}
+            tickFormatter={(b) => String(b).slice(5)}
+            interval="preserveStartEnd"
+          />
+          <YAxis tick={{ fontSize: 11, fill: 'var(--color-text-3)' }} width={36} />
+          <Tooltip content={<ChartTooltip formatter={(v) => [String(Math.round(v as number)), 'Spans']} />} />
+          <Area
+            type="monotone"
+            dataKey="spans"
+            stroke="var(--color-chart-1)"
+            strokeWidth={2}
+            fill="url(#grad-hist-spans)"
+            dot={false}
+          />
+        </AreaChart>
+      </ResponsiveContainer>
+    </>
   )
 }
 
@@ -328,6 +336,12 @@ export default function Overview() {
 
   const { data, error, isLoading, isValidating, mutate } = useOverview(paused ? 0 : 30_000, userId, range)
 
+  // History is charted from raw spans, so it starts at the same raw floor the
+  // sessions list reports. Same SWR key as the Sessions section below, so the
+  // two share one request rather than issuing two.
+  const { data: sessions } = useSessions(1, 5, 'start_time', 'desc', userId, range)
+  const coveredSince = sessions?.covered_since ?? null
+
   const userParam = userId ? `?user_id=${encodeURIComponent(userId)}` : ''
   const suffix = RANGE_SUFFIX[range]
   const scoped = (label: string) => (suffix ? `${label} (${suffix})` : label)
@@ -389,7 +403,7 @@ export default function Overview() {
       )}
 
       <StatSection title="History" viewAllHref={`/history${userParam}`}>
-        <HistorySection range={range} userId={userId} />
+        <HistorySection range={range} userId={userId} coveredSince={coveredSince} />
       </StatSection>
 
       <StatSection title="Costs" viewAllHref={`/costs${userParam}`}>
