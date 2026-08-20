@@ -311,14 +311,15 @@ function tickLabel(gran: Granularity, bucket: string): string {
   return bucket.slice(5)
 }
 
-// Both heatmaps resolve hour of day, which the daily roll-up does not keep, so
-// they stay raw-only however far back the charts above them reach.
-function HeatmapCoverageNote({ since }: { since: string | null }) {
+// The daily roll-up keeps no intra-day timestamp, so anything that resolves an
+// hour — the hourly series, and both heatmaps at any granularity — stays
+// raw-only however far back the day, week and month series reach.
+function CoverageNote({ since, subject }: { since: string | null; subject: string }) {
   if (!since) return null
   return (
     <p className={styles.coverageNote}>
-      Plotted from {new Date(since).toLocaleDateString()} — these cells resolve hour of day, and
-      earlier days in this window survive only as whole-day totals.
+      Plotted from {new Date(since).toLocaleDateString()} — {subject}, and earlier days in this
+      window survive only as whole-day totals.
     </p>
   )
 }
@@ -480,6 +481,7 @@ export default function History() {
                 </div>
               </div>
             )}
+            <CoverageNote since={data.covered_since} subject="hourly buckets are built from raw spans" />
           </Card>
 
           {/* Calendar heatmap */}
@@ -489,7 +491,7 @@ export default function History() {
             ) : (
               <>
                 <CalendarHeatmap days={calDays} from={data.from ?? from} to={data.to ?? to} />
-                <HeatmapCoverageNote since={data.heatmap_covered_since} />
+                <CoverageNote since={data.heatmap_covered_since} subject="these cells resolve hour of day" />
               </>
             )}
           </Card>
@@ -501,7 +503,7 @@ export default function History() {
             ) : (
               <>
                 <HourDowHeatmap heatmap={data.heatmap} />
-                <HeatmapCoverageNote since={data.heatmap_covered_since} />
+                <CoverageNote since={data.heatmap_covered_since} subject="these cells resolve hour of day" />
               </>
             )}
           </Card>
