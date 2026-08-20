@@ -1,10 +1,10 @@
-<img src="assets/logo.svg" alt="Flopsstuff logo" width="80">
+<img src="docs/assets/logo.svg" alt="Flopsstuff logo" width="80">
 
 # cotel — Claude Code Telemetry
 
 One Docker container. OTLP ingest on `:4318`, interactive analytics dashboard on `:8080`. No cloud dependencies, no sign-up.
 
-![cotel dashboard](docs/assets/dashboard-screenshot.png)
+![cotel Overview](docs/assets/dashboard-overview.png)
 
 ## What you get
 
@@ -19,6 +19,15 @@ One Docker container. OTLP ingest on `:4318`, interactive analytics dashboard on
 - **Export / Import** — download all data as a versioned ZIP/CSV archive; restore it on a fresh instance
 - **Cloudflare Tunnel** — publish cotel over HTTPS with a single env var; bearer-token auth for OTLP, Zero Trust for the dashboard
 
+## Screens
+
+Every screenshot here is one instance seeded with synthetic telemetry — see [Demo data](#demo-data).
+
+|  |  |
+|:--|:--|
+| **Sessions** — every session with its user, model, tokens, cost and OK / ERROR status<br>![Sessions](docs/assets/dashboard-sessions.png) | **Costs** — daily spend and cost by model across the window you pick<br>![Costs](docs/assets/dashboard-costs.png) |
+| **Users** — cost and session count per principal for the selected range<br>![Users](docs/assets/dashboard-users.png) | **Tools** — call count, average duration and error rate per tool<br>![Tools](docs/assets/dashboard-tools.png) |
+
 ## Quick start
 
 ```bash
@@ -30,9 +39,26 @@ docker run -d \
   ghcr.io/flopsstuff/cotel:latest
 ```
 
-> **Available tags:** `:latest` and `:0.2` (current release), `:0.x.y` (patch), `:main` (tip of main branch).
+> **Available tags:** `:latest` and `:0.3` (current release), `:0.x.y` (patch), `:main` (tip of main branch).
 
 Open **http://localhost:8080** → **Setup** for the guided onboarding.
+
+## Demo data
+
+An empty cotel shows empty charts, which makes it hard to judge. `scripts/seed-demo.py`
+fills a throwaway instance with a synthetic team — seven users, three models, 90 days
+of sessions and tool calls — over the real OTLP endpoint, so what you see is what
+ingest actually produces:
+
+```bash
+python3 scripts/seed-demo.py --dash-url http://localhost:8080 \
+                             --ingest-url http://localhost:4318
+```
+
+It only creates users and ingests spans; it never deletes. Point it at an instance
+you are willing to throw away, not at one holding real telemetry. The screenshots in
+this README come from exactly this seed — the recipe is in
+[docs/operations/screenshots.md](docs/operations/screenshots.md).
 
 ## Point Claude Code at cotel
 
