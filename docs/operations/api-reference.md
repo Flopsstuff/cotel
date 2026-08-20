@@ -36,11 +36,11 @@ so a client can render its controls from the response alone.
 
 ## `range` on the summary endpoints
 
-`GET /overview`, `GET /sessions`, `GET /costs` and `GET /models` accept the same
-`range` parameter, with the same five keys, the same rolling-window semantics and
-the same fall-back-don't-`400` rule
+`GET /overview`, `GET /sessions`, `GET /costs`, `GET /models` and `GET /history`
+accept the same `range` parameter, with the same five keys, the same
+rolling-window semantics and the same fall-back-don't-`400` rule
 ([ADR-0014](../decisions/0014-overview-single-range-selector.md)). Each echoes
-back the `range` it used. All four also accept `user_id`, which composes with
+back the `range` it used. All five also accept `user_id`, which composes with
 `range` rather than overriding it.
 
 **Defaults preserve each endpoint's previous behaviour rather than converging on
@@ -50,6 +50,7 @@ one value:**
 |---|---|---|
 | `GET /overview` | `month` | The 30-day window it always applied |
 | `GET /costs` | `month` | The 30-day window `from`/`to` already defaulted to |
+| `GET /history` | `month` | Same — the window a bare request already answered |
 | `GET /sessions` | `all` | Had no time filter; a `month` default would truncate existing callers |
 | `GET /models` | `all` | Same |
 
@@ -61,12 +62,13 @@ instead of silently repeating the `month` figure.
 
 Two consequences are worth knowing:
 
-- **`GET /costs`: explicit bounds beat the range key.** When a request carries
-  `from` and/or `to`, those win and `range` is ignored — the narrower, more
-  specific statement is the one the caller meant. The response then echoes
-  `"range": null`. `top_sessions[].first_seen` degrades to the aggregate's day at
-  midnight UTC for rolled-up sessions, since `daily_usage` keeps no intra-day
-  timestamp; it is a lower bound on the real start, never a later one.
+- **`GET /costs` and `GET /history`: explicit bounds beat the range key.** When a
+  request carries `from` and/or `to`, those win and `range` is ignored — the
+  narrower, more specific statement is the one the caller meant. The response
+  then echoes `"range": null`. On `/costs`, `top_sessions[].first_seen` degrades
+  to the aggregate's day at midnight UTC for rolled-up sessions, since
+  `daily_usage` keeps no intra-day timestamp; it is a lower bound on the real
+  start, never a later one.
 - **`GET /sessions` clamps and says so.** A session row needs a start time, model
   and status, none of which the roll-up carries, so the list is computed from raw
   spans alone. A range reaching past the raw floor is clamped, and the response
@@ -79,8 +81,56 @@ Two consequences are worth knowing:
 range, with all unattributed spans counting as the single `__anonymous__`
 principal the users list shows.
 
-`GET /history` is not part of this contract; it takes `from`/`to` and reads raw
-spans only.
+## `GET /history`
+
+Activity over time, bucketed at the requested `granularity`.
+
+| Param | Values | Default | Meaning |
+|---|---|---|---|
+| `granularity` | `hour` \| `day` \| `week` \| `month` | `day` | Bucket width for `buckets` and `by_model` |
+| `range` | `all` \| `year` \| `month` \| `week` \| `day` | `month` | Rolling window, as above |
+| `from`, `to` | `YYYY-MM-DD` | — | Explicit bounds; when either is present they win and `range` echoes `null` |
+| `user_id` | user id \| `__anonymous__` | — | Scopes every figure to one principal |
+
+```json
+{
+  "granularity": "day",
+  "from": "2026-07-21",
+  "to": null,
+  "range": "month",
+  "buckets": [
+    { "bucket": "2026-08-19", "sessions": 12, "spans": 940, "cost_usd": 8.21, "input_tokens": 1201, "output_tokens": 4402 }
+  ],
+  "by_model": [
+    { "bucket": "2026-08-19", "model": "claude-opus-5", "cost_usd": 7.90, "spans": 612 }
+  ],
+  "heatmap": [
+    { "date": "2026-08-19", "hour": 14, "count": 61, "cost_usd": 0.94 }
+  ],
+  "covered_since": null,
+  "heatmap_covered_since": null
+}
+```
+
+`from` and `to` echo the resolved bounds, and are `null` for a side the window
+does not bound — `range=all` reports `"from": null`, and any range-scoped request
+reports `"to": null` because the window runs to request time.
+
+**Which parts span the roll-up.** At `day`, `week` and `month` granularity,
+`buckets` and `by_model` are answered from the `spans` ∪ `daily_usage` union at
+the raw-floor split, so `year` and `all` keep charting after retention has
+deleted the raw spans. Two fields report where that stops:
+
+- **`covered_since`** clamps `buckets` and `by_model`. It is always `null` at
+  `day`, `week` and `month`. At **`hour`** it names the raw floor when the window
+  reaches past it: `daily_usage` buckets whole UTC days and cannot produce a
+  sub-day bucket, so an hour series is raw-only rather than day-shaped data under
+  an hour label.
+- **`heatmap_covered_since`** clamps `heatmap`, which resolves hour of day at
+  every granularity and is therefore always raw-only.
+
+Both are RFC3339, and `null` when the selected window is fully covered by raw
+spans.
 
 ## `GET /tools`
 

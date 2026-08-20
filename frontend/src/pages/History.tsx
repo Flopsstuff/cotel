@@ -311,6 +311,19 @@ function tickLabel(gran: Granularity, bucket: string): string {
   return bucket.slice(5)
 }
 
+// The daily roll-up keeps no intra-day timestamp, so anything that resolves an
+// hour — the hourly series, and both heatmaps at any granularity — stays
+// raw-only however far back the day, week and month series reach.
+function CoverageNote({ since, subject }: { since: string | null; subject: string }) {
+  if (!since) return null
+  return (
+    <p className={styles.coverageNote}>
+      Plotted from {new Date(since).toLocaleDateString()} — {subject}, and earlier days in this
+      window survive only as whole-day totals.
+    </p>
+  )
+}
+
 export default function History() {
   const [gran, setGran] = useState<Granularity>('day')
   const [from, setFrom] = useState(daysAgo(30))
@@ -468,6 +481,7 @@ export default function History() {
                 </div>
               </div>
             )}
+            <CoverageNote since={data.covered_since} subject="hourly buckets are built from raw spans" />
           </Card>
 
           {/* Calendar heatmap */}
@@ -475,7 +489,10 @@ export default function History() {
             {calDays.length === 0 ? (
               <EmptyState heading="No data in this range" />
             ) : (
-              <CalendarHeatmap days={calDays} from={data.from} to={data.to} />
+              <>
+                <CalendarHeatmap days={calDays} from={data.from ?? from} to={data.to ?? to} />
+                <CoverageNote since={data.heatmap_covered_since} subject="these cells resolve hour of day" />
+              </>
             )}
           </Card>
 
@@ -484,7 +501,10 @@ export default function History() {
             {data.heatmap.length === 0 ? (
               <EmptyState heading="No data in this range" />
             ) : (
-              <HourDowHeatmap heatmap={data.heatmap} />
+              <>
+                <HourDowHeatmap heatmap={data.heatmap} />
+                <CoverageNote since={data.heatmap_covered_since} subject="these cells resolve hour of day" />
+              </>
             )}
           </Card>
 

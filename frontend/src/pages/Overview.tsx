@@ -20,18 +20,6 @@ import styles from './Overview.module.css'
 const RANGE_COOKIE = 'cotel_overview_range'
 const ANON_ID = '__anonymous__'
 
-// /history is bounded by from/to rather than the range key, so "All" has to name
-// a start date. Nothing cotel can store predates this by decades.
-const HISTORY_EPOCH = '2000-01-01'
-
-const RANGE_DAYS: Record<RangeKey, number | null> = {
-  all: null,
-  year: 365,
-  month: 30,
-  week: 7,
-  day: 1,
-}
-
 interface SectionProps {
   range: RangeKey
   userId?: string
@@ -41,10 +29,6 @@ function fmtTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`
   return String(n)
-}
-
-function isoDate(d: Date): string {
-  return d.toISOString().slice(0, 10)
 }
 
 function formatDay(iso: string): string {
@@ -92,14 +76,14 @@ function UsersSection({ range }: { range: RangeKey }) {
   )
 }
 
-function HistorySection({ range, userId, coveredSince }: SectionProps & { coveredSince: string | null }) {
-  const days = RANGE_DAYS[range]
-  const from = useMemo(
-    () => (days === null ? HISTORY_EPOCH : isoDate(new Date(Date.now() - days * 86400_000))),
-    [days],
+function HistorySection({ range, userId }: SectionProps) {
+  const { data, isLoading, error } = useHistory(
+    range === 'day' ? 'hour' : 'day',
+    undefined,
+    undefined,
+    userId,
+    range,
   )
-  const to = useMemo(() => isoDate(new Date()), [])
-  const { data, isLoading, error } = useHistory(range === 'day' ? 'hour' : 'day', from, to, userId)
 
   if (isLoading && !data) return <ChartSkeleton />
   if (error) return <ErrorState message={error.message} />
@@ -108,10 +92,10 @@ function HistorySection({ range, userId, coveredSince }: SectionProps & { covere
 
   return (
     <>
-      {coveredSince && (
+      {data.covered_since && (
         <p className={styles.coverageNote}>
-          Charted from {formatDay(coveredSince)} — this chart is built from raw spans, and earlier
-          days in this range survive only as daily totals.
+          Charted from {formatDay(data.covered_since)} — hourly buckets are built from raw spans, and
+          earlier days in this range survive only as whole-day totals.
         </p>
       )}
       <ResponsiveContainer width="100%" height={160}>
@@ -336,12 +320,6 @@ export default function Overview() {
 
   const { data, error, isLoading, isValidating, mutate } = useOverview(paused ? 0 : 30_000, userId, range)
 
-  // History is charted from raw spans, so it starts at the same raw floor the
-  // sessions list reports. Same SWR key as the Sessions section below, so the
-  // two share one request rather than issuing two.
-  const { data: sessions } = useSessions(1, 5, 'start_time', 'desc', userId, range)
-  const coveredSince = sessions?.covered_since ?? null
-
   const userParam = userId ? `?user_id=${encodeURIComponent(userId)}` : ''
   const suffix = RANGE_SUFFIX[range]
   const scoped = (label: string) => (suffix ? `${label} (${suffix})` : label)
@@ -403,7 +381,7 @@ export default function Overview() {
       )}
 
       <StatSection title="History" viewAllHref={`/history${userParam}`}>
-        <HistorySection range={range} userId={userId} coveredSince={coveredSince} />
+        <HistorySection range={range} userId={userId} />
       </StatSection>
 
       <StatSection title="Costs" viewAllHref={`/costs${userParam}`}>

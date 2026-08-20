@@ -135,6 +135,12 @@
   margin: 0 0 var(--space-2);
 }
 
+.coverageNote {
+  font-size: var(--text-sm);
+  color: var(--color-text-3);
+  margin: var(--space-3) 0 0;
+}
+
 /* ---- Calendar heatmap ---- */
 .calWrap {
   position: relative;

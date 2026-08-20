@@ -373,19 +373,31 @@ export interface HeatmapCell {
 
 export interface HistoryResponse {
   granularity: string
-  from: string
-  to: string
+  from: string | null
+  to: string | null
   buckets: HistoryBucket[]
   by_model: HistoryModelRow[]
   heatmap: HeatmapCell[]
+  range: string | null
+  covered_since: string | null
+  heatmap_covered_since: string | null
 }
 
-export function useHistory(granularity: string, from?: string, to?: string, userId?: string) {
+export function useHistory(
+  granularity: string,
+  from?: string,
+  to?: string,
+  userId?: string,
+  range?: string,
+) {
   const params = new URLSearchParams({ granularity })
   if (from) params.set('from', from)
   if (to) params.set('to', to)
   if (userId) params.set('user_id', userId)
-  return useSWR<HistoryResponse>(`/api/v1/history?${params.toString()}`, fetcher)
+  if (range) params.set('range', range)
+  return useSWR<HistoryResponse>(`/api/v1/history?${params.toString()}`, fetcher, {
+    keepPreviousData: true,
+  })
 }
 
 export interface TokenItem {
