@@ -7,6 +7,7 @@ export const fetcher = (url: string) =>
   })
 
 export interface OverviewResponse {
+  range: string
   sessions_count: number
   users_count: number
   total_cost_usd: number
@@ -36,6 +37,11 @@ export interface SessionsResponse {
   total: number
   page: number
   limit: number
+  range: string
+  // Set when the range reaches further back than raw spans go: a session row
+  // needs a start time, model and status, none of which the roll-up keeps, so
+  // the list answers for a shorter window than asked.
+  covered_since: string | null
 }
 
 export interface SpanDetail {
@@ -67,6 +73,9 @@ export interface CostsResponse {
   daily: { date: string; cost_usd: number }[]
   by_model: { model: string; cost_usd: number }[]
   top_sessions: { session_id: string; cost_usd: number; first_seen: string }[]
+  // The range key that scoped the response, or null when explicit from/to
+  // bounds superseded it.
+  range: string | null
 }
 
 export interface ToolItem {
@@ -268,28 +277,50 @@ export async function updateSettings(settings: Partial<SettingsResponse>): Promi
   return res.json()
 }
 
-export function useOverview(refreshInterval = 30_000, userId?: string) {
-  const qs = userId ? `?user_id=${encodeURIComponent(userId)}` : ''
-  return useSWR<OverviewResponse>(`/api/v1/overview${qs}`, fetcher, { refreshInterval })
+// The four hooks below take range last and omit the parameter when it is
+// undefined, so a caller that does not pass one keeps the server-side default
+// for that endpoint (ADR-0014).
+export function useOverview(refreshInterval = 30_000, userId?: string, range?: string) {
+  const params = new URLSearchParams()
+  if (userId) params.set('user_id', userId)
+  if (range) params.set('range', range)
+  const qs = params.toString()
+  return useSWR<OverviewResponse>(`/api/v1/overview${qs ? `?${qs}` : ''}`, fetcher, {
+    refreshInterval,
+    keepPreviousData: true,
+  })
 }
 
-export function useSessions(page = 1, limit = 50, sort = 'start_time', order = 'desc', userId?: string) {
+export function useSessions(
+  page = 1,
+  limit = 50,
+  sort = 'start_time',
+  order = 'desc',
+  userId?: string,
+  range?: string,
+) {
   const params = new URLSearchParams({ page: String(page), limit: String(limit), sort, order })
   if (userId) params.set('user_id', userId)
-  return useSWR<SessionsResponse>(`/api/v1/sessions?${params.toString()}`, fetcher)
+  if (range) params.set('range', range)
+  return useSWR<SessionsResponse>(`/api/v1/sessions?${params.toString()}`, fetcher, {
+    keepPreviousData: true,
+  })
 }
 
 export function useSession(id: string) {
   return useSWR<SessionDetailResponse>(id ? `/api/v1/sessions/${id}` : null, fetcher)
 }
 
-export function useCosts(from?: string, to?: string, userId?: string) {
+export function useCosts(from?: string, to?: string, userId?: string, range?: string) {
   const params = new URLSearchParams()
   if (from) params.set('from', from)
   if (to) params.set('to', to)
   if (userId) params.set('user_id', userId)
+  if (range) params.set('range', range)
   const qs = params.toString()
-  return useSWR<CostsResponse>(`/api/v1/costs${qs ? `?${qs}` : ''}`, fetcher)
+  return useSWR<CostsResponse>(`/api/v1/costs${qs ? `?${qs}` : ''}`, fetcher, {
+    keepPreviousData: true,
+  })
 }
 
 export function useTools(params: ToolsParams) {
@@ -302,9 +333,19 @@ export function useBashCommands(params: ListParams) {
   })
 }
 
-export function useModels(userId?: string) {
-  const qs = userId ? `?user_id=${encodeURIComponent(userId)}` : ''
-  return useSWR<{ items: ModelItem[] }>(`/api/v1/models${qs}`, fetcher)
+export interface ModelsResponse {
+  items: ModelItem[]
+  range: string
+}
+
+export function useModels(userId?: string, range?: string) {
+  const params = new URLSearchParams()
+  if (userId) params.set('user_id', userId)
+  if (range) params.set('range', range)
+  const qs = params.toString()
+  return useSWR<ModelsResponse>(`/api/v1/models${qs ? `?${qs}` : ''}`, fetcher, {
+    keepPreviousData: true,
+  })
 }
 
 export interface HistoryBucket {

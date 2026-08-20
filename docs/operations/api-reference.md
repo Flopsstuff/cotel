@@ -34,6 +34,54 @@ Three rules hold everywhere:
 Every response echoes `total`, `page`, `limit`, `range`, `sort` and `order` back,
 so a client can render its controls from the response alone.
 
+## `range` on the summary endpoints
+
+`GET /overview`, `GET /sessions`, `GET /costs` and `GET /models` accept the same
+`range` parameter, with the same five keys, the same rolling-window semantics and
+the same fall-back-don't-`400` rule
+([ADR-0014](../decisions/0014-overview-single-range-selector.md)). Each echoes
+back the `range` it used. All four also accept `user_id`, which composes with
+`range` rather than overriding it.
+
+**Defaults preserve each endpoint's previous behaviour rather than converging on
+one value:**
+
+| Endpoint | `range` default | Why |
+|---|---|---|
+| `GET /overview` | `month` | The 30-day window it always applied |
+| `GET /costs` | `month` | The 30-day window `from`/`to` already defaulted to |
+| `GET /sessions` | `all` | Had no time filter; a `month` default would truncate existing callers |
+| `GET /models` | `all` | Same |
+
+Every additive figure — cost, token totals, span and session counts, distinct
+users, per-model and per-tool totals — is answered from the union of raw `spans`
+and the `daily_usage` roll-up, split at the earliest surviving raw day. `year`
+and `all` therefore keep answering after retention has deleted the raw spans,
+instead of silently repeating the `month` figure.
+
+Two consequences are worth knowing:
+
+- **`GET /costs`: explicit bounds beat the range key.** When a request carries
+  `from` and/or `to`, those win and `range` is ignored — the narrower, more
+  specific statement is the one the caller meant. The response then echoes
+  `"range": null`. `top_sessions[].first_seen` degrades to the aggregate's day at
+  midnight UTC for rolled-up sessions, since `daily_usage` keeps no intra-day
+  timestamp; it is a lower bound on the real start, never a later one.
+- **`GET /sessions` clamps and says so.** A session row needs a start time, model
+  and status, none of which the roll-up carries, so the list is computed from raw
+  spans alone. A range reaching past the raw floor is clamped, and the response
+  reports `covered_since`: the RFC3339 instant the list actually starts from, or
+  `null` when the selected range is fully covered. The *session count* on
+  `/overview` is unaffected — `daily_usage` carries `session_id`, so counting
+  distinct sessions across the union is exact.
+
+`GET /overview`'s `users_count` counts the distinct principals active in the
+range, with all unattributed spans counting as the single `__anonymous__`
+principal the users list shows.
+
+`GET /history` is not part of this contract; it takes `from`/`to` and reads raw
+spans only.
+
 ## `GET /tools`
 
 One row per tool, with call volume, average duration and error rate.
@@ -143,4 +191,5 @@ returns one user in the same shape and accepts `range`. See
 
 - [ADR-0011 — Users list: ranged stats and server-side sort](../decisions/0011-users-list-ranged-stats-and-server-side-sort.md)
 - [ADR-0012 — Tools list: ranged stats and server-side sort](../decisions/0012-tools-list-ranged-stats-and-server-side-sort.md)
+- [ADR-0014 — Overview: one range selector every panel obeys](../decisions/0014-overview-single-range-selector.md)
 - [ADR-0009 — daily_usage unknown sentinel](../decisions/0009-daily-usage-unknown-sentinel.md)
