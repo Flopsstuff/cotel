@@ -116,6 +116,29 @@ These are rendered by a shared `<PageHeader>` component that wraps every page's 
 - Recent sessions table: non-sortable (fixed: most recent first), non-paginated, no filter bar.
 - "View all sessions" link: right-aligned, `--text-sm`, `--color-accent`.
 
+### Shipped section order
+
+The page stacks six `<StatSection>` blocks, each a summary of one resource with a
+"View all" link to its full page, in this order:
+
+1. **Users** — top 5 by spend in the range. Hidden while the page is scoped to a
+   single user via `?user_id=`, where a top-5-users table would be the one panel
+   on the page not answering for that user.
+2. **History** — activity area chart. `hour` granularity on the `Day` range,
+   `day` otherwise.
+3. **Costs** — daily spend line. No inner by-model table: the Models block below
+   is the same data at full width.
+4. **Tools** — top 5 by call count.
+5. **Models** — all models by span count.
+6. **Sessions** — 5 most recent. Last, because it is the only block that cannot
+   honour a long range (see `covered_since` in the API reference).
+
+The header carries one `<SegmentedControl>` bound to `RANGE_OPTIONS` and
+persisted in the `cotel_overview_range` cookie — its own key, so changing the
+range here does not move the Users or Tools page. KPI labels take their suffix
+from `RANGE_SUFFIX` (`All` renders none)
+([ADR-0014](../decisions/0014-overview-single-range-selector.md)).
+
 ---
 
 ## 2. Sessions  (`/sessions`)
