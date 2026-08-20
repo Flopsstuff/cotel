@@ -4,6 +4,7 @@ package api
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -121,6 +122,16 @@ func jsonError(w http.ResponseWriter, msg string, code int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	fmt.Fprintf(w, `{"error":%q}`, msg)
+}
+
+// scanOK reports whether a QueryRow.Scan error is acceptable. ErrNoRows means
+// "no data yet" and keeps the zero value; any other error is a real failure.
+func scanOK(err error) bool {
+	return err == nil || errors.Is(err, sql.ErrNoRows)
+}
+
+func queryFailed(w http.ResponseWriter) {
+	jsonError(w, "query failed", http.StatusInternalServerError)
 }
 
 func queryInt(r *http.Request, key string, fallback int) int {
@@ -358,13 +369,23 @@ type retentionHealth struct {
 
 func (h *Handler) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	var spans int64
-	_ = h.db.QueryRow("SELECT COUNT(*) FROM spans").Scan(&spans)
+	if err := h.db.QueryRow("SELECT COUNT(*) FROM spans").Scan(&spans); !scanOK(err) {
+		queryFailed(w)
+		return
+	}
 
 	var dbSize int64
-	// DuckDB reports approximate file size via pragma; fall back to 0.
-	_ = h.db.QueryRow("SELECT total_blocks * block_size FROM pragma_database_size()").Scan(&dbSize)
+	// DuckDB reports approximate file size via pragma; ErrNoRows keeps 0.
+	if err := h.db.QueryRow("SELECT total_blocks * block_size FROM pragma_database_size()").Scan(&dbSize); !scanOK(err) {
+		queryFailed(w)
+		return
+	}
 
-	ret := h.retentionHealth()
+	ret, err := h.retentionHealth()
+	if err != nil {
+		queryFailed(w)
+		return
+	}
 	status := "ok"
 	if ret.Status == "error" {
 		status = "degraded"
@@ -381,21 +402,35 @@ func (h *Handler) handleHealth(w http.ResponseWriter, _ *http.Request) {
 
 // retentionHealth reads the retention-worker status the worker persisted to the
 // settings table. A fresh DB (worker not yet run) reports status "unknown".
-func (h *Handler) retentionHealth() retentionHealth {
-	get := func(key string) string {
+func (h *Handler) retentionHealth() (retentionHealth, error) {
+	get := func(key string) (string, error) {
 		var v string
-		_ = h.db.QueryRow("SELECT value FROM settings WHERE key = ?", key).Scan(&v)
-		return v
+		err := h.db.QueryRow("SELECT value FROM settings WHERE key = ?", key).Scan(&v)
+		if !scanOK(err) {
+			return "", err
+		}
+		return v, nil
 	}
-	status := get("retention_last_status")
+	status, err := get("retention_last_status")
+	if err != nil {
+		return retentionHealth{}, err
+	}
 	if status == "" {
 		status = "unknown"
 	}
+	lastRun, err := get("retention_last_run_at")
+	if err != nil {
+		return retentionHealth{}, err
+	}
+	lastErr, err := get("retention_last_error")
+	if err != nil {
+		return retentionHealth{}, err
+	}
 	return retentionHealth{
 		Status:    status,
-		LastRunAt: get("retention_last_run_at"),
-		LastError: get("retention_last_error"),
-	}
+		LastRunAt: lastRun,
+		LastError: lastErr,
+	}, nil
 }
 
 // ---- /api/v1/overview ----
@@ -442,7 +477,7 @@ func (h *Handler) handleOverview(w http.ResponseWriter, r *http.Request) {
 
 	// The anonymous bucket has no user_id, so COUNT(DISTINCT user_id) would drop
 	// it; it is one principal on the users list and counts as one here too.
-	_ = h.db.QueryRow(cte+`
+	if err := h.db.QueryRow(cte+`
 SELECT
     COUNT(DISTINCT session_id),
     COUNT(DISTINCT user_id) + CASE WHEN COUNT(*) FILTER (WHERE user_id IS NULL) > 0 THEN 1 ELSE 0 END,
@@ -458,51 +493,81 @@ FROM usage
 		&resp.TotalInputTokens,
 		&resp.TotalOutputTokens,
 		&resp.TotalCacheTokens,
-	)
+	); !scanOK(err) {
+		queryFailed(w)
+		return
+	}
 
-	rows, _ := h.db.Query(cte+`
+	rows, err := h.db.Query(cte+`
 SELECT strftime(day, '%Y-%m-%d') AS d, COALESCE(SUM(cost), 0)
 FROM usage
 WHERE cost IS NOT NULL
 GROUP BY d ORDER BY d ASC
 `, f.args...)
-	if rows != nil {
-		defer rows.Close()
-		for rows.Next() {
-			var row dailyCostRow
-			_ = rows.Scan(&row.Date, &row.CostUSD)
-			resp.DailyCosts = append(resp.DailyCosts, row)
+	if err != nil {
+		queryFailed(w)
+		return
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var row dailyCostRow
+		if err := rows.Scan(&row.Date, &row.CostUSD); err != nil {
+			queryFailed(w)
+			return
 		}
+		resp.DailyCosts = append(resp.DailyCosts, row)
+	}
+	if err := rows.Err(); err != nil {
+		queryFailed(w)
+		return
 	}
 
-	mrows, _ := h.db.Query(cte+`
+	mrows, err := h.db.Query(cte+`
 SELECT model, CAST(SUM(spans) AS BIGINT) AS span_count
 FROM usage
 WHERE model IS NOT NULL
 GROUP BY model ORDER BY span_count DESC, model ASC LIMIT 5
 `, f.args...)
-	if mrows != nil {
-		defer mrows.Close()
-		for mrows.Next() {
-			var row topModelRow
-			_ = mrows.Scan(&row.Model, &row.SpanCount)
-			resp.TopModels = append(resp.TopModels, row)
+	if err != nil {
+		queryFailed(w)
+		return
+	}
+	defer mrows.Close()
+	for mrows.Next() {
+		var row topModelRow
+		if err := mrows.Scan(&row.Model, &row.SpanCount); err != nil {
+			queryFailed(w)
+			return
 		}
+		resp.TopModels = append(resp.TopModels, row)
+	}
+	if err := mrows.Err(); err != nil {
+		queryFailed(w)
+		return
 	}
 
-	trows, _ := h.db.Query(cte+`
+	trows, err := h.db.Query(cte+`
 SELECT tool_name, CAST(SUM(spans) AS BIGINT) AS call_count
 FROM usage
 WHERE tool_name IS NOT NULL
 GROUP BY tool_name ORDER BY call_count DESC, tool_name ASC LIMIT 5
 `, f.args...)
-	if trows != nil {
-		defer trows.Close()
-		for trows.Next() {
-			var row topToolRow
-			_ = trows.Scan(&row.ToolName, &row.CallCount)
-			resp.TopTools = append(resp.TopTools, row)
+	if err != nil {
+		queryFailed(w)
+		return
+	}
+	defer trows.Close()
+	for trows.Next() {
+		var row topToolRow
+		if err := trows.Scan(&row.ToolName, &row.CallCount); err != nil {
+			queryFailed(w)
+			return
 		}
+		resp.TopTools = append(resp.TopTools, row)
+	}
+	if err := trows.Err(); err != nil {
+		queryFailed(w)
+		return
 	}
 
 	jsonOK(w, resp)
@@ -577,7 +642,10 @@ func (h *Handler) handleSessions(w http.ResponseWriter, r *http.Request) {
 	uidClause += sinceClause
 
 	var total int64
-	_ = h.db.QueryRow(`SELECT COUNT(DISTINCT session_id) FROM spans WHERE `+hasSession+uidClause, scopeArgs...).Scan(&total)
+	if err := h.db.QueryRow(`SELECT COUNT(DISTINCT session_id) FROM spans WHERE `+hasSession+uidClause, scopeArgs...).Scan(&total); !scanOK(err) {
+		queryFailed(w)
+		return
+	}
 
 	offset := (page - 1) * limit
 	q := fmt.Sprintf(`
@@ -602,7 +670,7 @@ func (h *Handler) handleSessions(w http.ResponseWriter, r *http.Request) {
 	listArgs := append(append([]any{}, scopeArgs...), limit, offset)
 	rows, err := h.db.Query(q, listArgs...)
 	if err != nil {
-		jsonError(w, "query failed", http.StatusInternalServerError)
+		queryFailed(w)
 		return
 	}
 	defer rows.Close()
@@ -614,7 +682,8 @@ func (h *Handler) handleSessions(w http.ResponseWriter, r *http.Request) {
 		var hasError int
 		if err := rows.Scan(&s.SessionID, &firstSeen, &lastSeen, &s.Model,
 			&s.CostUSD, &s.InputTokens, &s.OutputTokens, &s.ToolCalls, &hasError, &s.UserID); err != nil {
-			continue
+			queryFailed(w)
+			return
 		}
 		s.FirstSeen = firstSeen.UTC().Format(time.RFC3339)
 		s.LastSeen = lastSeen.UTC().Format(time.RFC3339)
@@ -623,6 +692,10 @@ func (h *Handler) handleSessions(w http.ResponseWriter, r *http.Request) {
 			s.Status = "error"
 		}
 		items = append(items, s)
+	}
+	if err := rows.Err(); err != nil {
+		queryFailed(w)
+		return
 	}
 
 	jsonOK(w, sessionsResponse{
@@ -690,14 +763,18 @@ func (h *Handler) handleSession(w http.ResponseWriter, _ *http.Request, sessionI
 		&resp.InputTokens, &resp.OutputTokens,
 		&resp.CacheReadTokens, &resp.CacheWriteTokens,
 	)
-	if err != nil || resp.SessionID == "" {
+	if errors.Is(err, sql.ErrNoRows) || resp.SessionID == "" {
 		jsonError(w, "not found", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		queryFailed(w)
 		return
 	}
 	resp.FirstSeen = firstSeen.UTC().Format(time.RFC3339)
 	resp.LastSeen = lastSeen.UTC().Format(time.RFC3339)
 
-	rows, _ := h.db.Query(`
+	rows, err := h.db.Query(`
 		SELECT
 			start_time,
 			CAST(epoch_ms(end_time) - epoch_ms(start_time) AS DOUBLE) AS duration_ms,
@@ -712,33 +789,42 @@ func (h *Handler) handleSession(w http.ResponseWriter, _ *http.Request, sessionI
 		WHERE session_id = ?
 		ORDER BY start_time ASC
 	`, sessionID)
+	if err != nil {
+		queryFailed(w)
+		return
+	}
+	defer rows.Close()
 
 	resp.Spans = []spanDetail{}
-	if rows != nil {
-		defer rows.Close()
-		for rows.Next() {
-			var s spanDetail
-			var st time.Time
-			var statusCode int32
-			var inputTokens, outputTokens sql.NullInt64
-			_ = rows.Scan(&st, &s.DurationMS, &s.Name, &s.ToolName, &s.Model,
-				&inputTokens, &outputTokens, &statusCode, &s.Attributes)
-			s.StartTime = st.UTC().Format(time.RFC3339)
-			if inputTokens.Valid {
-				s.InputTokens = &inputTokens.Int64
-			}
-			if outputTokens.Valid {
-				s.OutputTokens = &outputTokens.Int64
-			}
-			s.Status = "ok"
-			if statusCode == 2 {
-				s.Status = "error"
-			}
-			if s.ToolName == "" {
-				s.ToolName = ""
-			}
-			resp.Spans = append(resp.Spans, s)
+	for rows.Next() {
+		var s spanDetail
+		var st time.Time
+		var statusCode int32
+		var inputTokens, outputTokens sql.NullInt64
+		if err := rows.Scan(&st, &s.DurationMS, &s.Name, &s.ToolName, &s.Model,
+			&inputTokens, &outputTokens, &statusCode, &s.Attributes); err != nil {
+			queryFailed(w)
+			return
 		}
+		s.StartTime = st.UTC().Format(time.RFC3339)
+		if inputTokens.Valid {
+			s.InputTokens = &inputTokens.Int64
+		}
+		if outputTokens.Valid {
+			s.OutputTokens = &outputTokens.Int64
+		}
+		s.Status = "ok"
+		if statusCode == 2 {
+			s.Status = "error"
+		}
+		if s.ToolName == "" {
+			s.ToolName = ""
+		}
+		resp.Spans = append(resp.Spans, s)
+	}
+	if err := rows.Err(); err != nil {
+		queryFailed(w)
+		return
 	}
 
 	jsonOK(w, resp)
@@ -792,51 +878,78 @@ func (h *Handler) handleCosts(w http.ResponseWriter, r *http.Request) {
 		Range:       echo,
 	}
 
-	drows, _ := h.db.Query(cte+`
+	drows, err := h.db.Query(cte+`
 SELECT strftime(day, '%Y-%m-%d') AS d, COALESCE(SUM(cost), 0)
 FROM usage
 WHERE cost IS NOT NULL
 GROUP BY d ORDER BY d ASC
 `, f.args...)
-	if drows != nil {
-		defer drows.Close()
-		for drows.Next() {
-			var row costDayRow
-			_ = drows.Scan(&row.Date, &row.CostUSD)
-			resp.Daily = append(resp.Daily, row)
+	if err != nil {
+		queryFailed(w)
+		return
+	}
+	defer drows.Close()
+	for drows.Next() {
+		var row costDayRow
+		if err := drows.Scan(&row.Date, &row.CostUSD); err != nil {
+			queryFailed(w)
+			return
 		}
+		resp.Daily = append(resp.Daily, row)
+	}
+	if err := drows.Err(); err != nil {
+		queryFailed(w)
+		return
 	}
 
-	mrows, _ := h.db.Query(cte+`
+	mrows, err := h.db.Query(cte+`
 SELECT model, COALESCE(SUM(cost), 0) AS cost
 FROM usage
 WHERE model IS NOT NULL
 GROUP BY model ORDER BY cost DESC, model ASC
 `, f.args...)
-	if mrows != nil {
-		defer mrows.Close()
-		for mrows.Next() {
-			var row costModelRow
-			_ = mrows.Scan(&row.Model, &row.CostUSD)
-			resp.ByModel = append(resp.ByModel, row)
+	if err != nil {
+		queryFailed(w)
+		return
+	}
+	defer mrows.Close()
+	for mrows.Next() {
+		var row costModelRow
+		if err := mrows.Scan(&row.Model, &row.CostUSD); err != nil {
+			queryFailed(w)
+			return
 		}
+		resp.ByModel = append(resp.ByModel, row)
+	}
+	if err := mrows.Err(); err != nil {
+		queryFailed(w)
+		return
 	}
 
-	srows, _ := h.db.Query(cte+`
+	srows, err := h.db.Query(cte+`
 SELECT session_id, COALESCE(SUM(cost), 0) AS cost, MIN(first_seen)
 FROM usage
 WHERE session_id IS NOT NULL
 GROUP BY session_id ORDER BY cost DESC, session_id ASC LIMIT 10
 `, f.args...)
-	if srows != nil {
-		defer srows.Close()
-		for srows.Next() {
-			var ts topSessionRow
-			var firstSeen time.Time
-			_ = srows.Scan(&ts.SessionID, &ts.CostUSD, &firstSeen)
-			ts.FirstSeen = firstSeen.UTC().Format(time.RFC3339)
-			resp.TopSessions = append(resp.TopSessions, ts)
+	if err != nil {
+		queryFailed(w)
+		return
+	}
+	defer srows.Close()
+	for srows.Next() {
+		var ts topSessionRow
+		var firstSeen time.Time
+		if err := srows.Scan(&ts.SessionID, &ts.CostUSD, &firstSeen); err != nil {
+			queryFailed(w)
+			return
 		}
+		ts.FirstSeen = firstSeen.UTC().Format(time.RFC3339)
+		resp.TopSessions = append(resp.TopSessions, ts)
+	}
+	if err := srows.Err(); err != nil {
+		queryFailed(w)
+		return
 	}
 
 	jsonOK(w, resp)
@@ -1001,24 +1114,32 @@ WHERE TRUE%s
 ORDER BY %s %s NULLS LAST, name ASC%s
 `, qFilter, toolSortExprs[sort], order, limitClause), args...)
 	if err != nil {
-		jsonError(w, "query failed", http.StatusInternalServerError)
+		queryFailed(w)
 		return
 	}
+	defer rows.Close()
 
 	items := []toolItem{}
 	total := 0
-	if rows != nil {
-		defer rows.Close()
-		for rows.Next() {
-			var t toolItem
-			_ = rows.Scan(&t.Name, &t.Calls, &t.AvgDurationMS, &t.FailCount, &t.FailRate, &total)
-			items = append(items, t)
+	for rows.Next() {
+		var t toolItem
+		if err := rows.Scan(&t.Name, &t.Calls, &t.AvgDurationMS, &t.FailCount, &t.FailRate, &total); err != nil {
+			queryFailed(w)
+			return
 		}
+		items = append(items, t)
+	}
+	if err := rows.Err(); err != nil {
+		queryFailed(w)
+		return
 	}
 	// COUNT(*) OVER () rides on the result rows, so a page past the end has no
 	// row to read it from. Re-count so total stays the match count either way.
 	if len(items) == 0 {
-		_ = h.db.QueryRow(cte+fmt.Sprintf("\nSELECT COUNT(*) FROM tool_stats WHERE TRUE%s\n", qFilter), filterArgs...).Scan(&total)
+		if err := h.db.QueryRow(cte+fmt.Sprintf("\nSELECT COUNT(*) FROM tool_stats WHERE TRUE%s\n", qFilter), filterArgs...).Scan(&total); !scanOK(err) {
+			queryFailed(w)
+			return
+		}
 	}
 
 	jsonOK(w, toolsResponse{
@@ -1164,22 +1285,30 @@ WHERE TRUE%s
 ORDER BY %s %s NULLS LAST, command ASC%s
 `, qFilter, bashSortExprs[sort], order, limitClause), args...)
 	if err != nil {
-		jsonError(w, "query failed", http.StatusInternalServerError)
+		queryFailed(w)
 		return
 	}
+	defer rows.Close()
 
 	items := []bashCommandItem{}
 	total := 0
-	if rows != nil {
-		defer rows.Close()
-		for rows.Next() {
-			var t bashCommandItem
-			_ = rows.Scan(&t.Command, &t.Calls, &t.AvgDurationMS, &t.FailCount, &t.FailRate, &total)
-			items = append(items, t)
+	for rows.Next() {
+		var t bashCommandItem
+		if err := rows.Scan(&t.Command, &t.Calls, &t.AvgDurationMS, &t.FailCount, &t.FailRate, &total); err != nil {
+			queryFailed(w)
+			return
 		}
+		items = append(items, t)
+	}
+	if err := rows.Err(); err != nil {
+		queryFailed(w)
+		return
 	}
 	if len(items) == 0 {
-		_ = h.db.QueryRow(cte+fmt.Sprintf("\nSELECT COUNT(*) FROM cmd_stats WHERE TRUE%s\n", qFilter), filterArgs...).Scan(&total)
+		if err := h.db.QueryRow(cte+fmt.Sprintf("\nSELECT COUNT(*) FROM cmd_stats WHERE TRUE%s\n", qFilter), filterArgs...).Scan(&total); !scanOK(err) {
+			queryFailed(w)
+			return
+		}
 	}
 
 	jsonOK(w, bashCommandsResponse{
@@ -1246,7 +1375,7 @@ func (h *Handler) handleModels(w http.ResponseWriter, r *http.Request) {
 	rangeKey, since := parseRangeDefault(r, "all")
 	f := newUsageFilter(r, since, nil)
 
-	rows, _ := h.db.Query(f.cte()+`
+	rows, err := h.db.Query(f.cte()+`
 SELECT
     model,
     CAST(SUM(spans) AS BIGINT) AS span_count,
@@ -1257,15 +1386,24 @@ FROM usage
 WHERE model IS NOT NULL
 GROUP BY model ORDER BY span_count DESC, model ASC
 `, f.args...)
+	if err != nil {
+		queryFailed(w)
+		return
+	}
+	defer rows.Close()
 
 	items := []modelItem{}
-	if rows != nil {
-		defer rows.Close()
-		for rows.Next() {
-			var m modelItem
-			_ = rows.Scan(&m.Model, &m.SpanCount, &m.TotalCostUSD, &m.TotalInputTokens, &m.TotalOutputTokens)
-			items = append(items, m)
+	for rows.Next() {
+		var m modelItem
+		if err := rows.Scan(&m.Model, &m.SpanCount, &m.TotalCostUSD, &m.TotalInputTokens, &m.TotalOutputTokens); err != nil {
+			queryFailed(w)
+			return
 		}
+		items = append(items, m)
+	}
+	if err := rows.Err(); err != nil {
+		queryFailed(w)
+		return
 	}
 
 	jsonOK(w, modelsResponse{Items: items, Range: rangeKey})
@@ -1397,11 +1535,16 @@ func (h *Handler) handleHistory(w http.ResponseWriter, r *http.Request) {
 		HeatmapCoveredSince: h.rawCoveredSince(r, from),
 	}
 
+	var err error
 	if gran == "hour" {
 		resp.CoveredSince = resp.HeatmapCoveredSince
-		h.historyRawSeries(&resp, r, gran, from, to)
+		err = h.historyRawSeries(&resp, r, gran, from, to)
 	} else {
-		h.historyUnionSeries(&resp, r, gran, from, to)
+		err = h.historyUnionSeries(&resp, r, gran, from, to)
+	}
+	if err != nil {
+		queryFailed(w)
+		return
 	}
 
 	uidClause, uid := userIDClause(r)
@@ -1409,7 +1552,7 @@ func (h *Handler) handleHistory(w http.ResponseWriter, r *http.Request) {
 	if uid != "" {
 		args = append(args, uid)
 	}
-	hrows, _ := h.db.Query(`
+	hrows, err := h.db.Query(`
 		SELECT
 			strftime(CAST(start_time AS TIMESTAMP), '%Y-%m-%d') AS date,
 			CAST(strftime(CAST(start_time AS TIMESTAMP), '%H') AS INTEGER) AS hour,
@@ -1419,13 +1562,22 @@ func (h *Handler) handleHistory(w http.ResponseWriter, r *http.Request) {
 		WHERE TRUE`+window+uidClause+`
 		GROUP BY date, hour ORDER BY date ASC, hour ASC
 	`, args...)
-	if hrows != nil {
-		defer hrows.Close()
-		for hrows.Next() {
-			var c heatmapCell
-			_ = hrows.Scan(&c.Date, &c.Hour, &c.Count, &c.CostUSD)
-			resp.Heatmap = append(resp.Heatmap, c)
+	if err != nil {
+		queryFailed(w)
+		return
+	}
+	defer hrows.Close()
+	for hrows.Next() {
+		var c heatmapCell
+		if err := hrows.Scan(&c.Date, &c.Hour, &c.Count, &c.CostUSD); err != nil {
+			queryFailed(w)
+			return
 		}
+		resp.Heatmap = append(resp.Heatmap, c)
+	}
+	if err := hrows.Err(); err != nil {
+		queryFailed(w)
+		return
 	}
 
 	jsonOK(w, resp)
@@ -1433,7 +1585,7 @@ func (h *Handler) handleHistory(w http.ResponseWriter, r *http.Request) {
 
 // historyRawSeries fills buckets and by_model from raw spans, for the "hour"
 // granularity the roll-up cannot express.
-func (h *Handler) historyRawSeries(resp *historyResponse, r *http.Request, gran string, from, to *time.Time) {
+func (h *Handler) historyRawSeries(resp *historyResponse, r *http.Request, gran string, from, to *time.Time) error {
 	bucketExpr := historyBucketExpr(gran)
 	uidClause, uid := userIDClause(r)
 	window, args := rawWindow(from, to)
@@ -1441,7 +1593,7 @@ func (h *Handler) historyRawSeries(resp *historyResponse, r *http.Request, gran 
 		args = append(args, uid)
 	}
 
-	brows, _ := h.db.Query(fmt.Sprintf(`
+	brows, err := h.db.Query(fmt.Sprintf(`
 		SELECT
 			%s AS bucket,
 			COUNT(DISTINCT session_id) AS sessions,
@@ -1453,16 +1605,22 @@ func (h *Handler) historyRawSeries(resp *historyResponse, r *http.Request, gran 
 		WHERE TRUE%s%s
 		GROUP BY bucket ORDER BY bucket ASC
 	`, bucketExpr, window, uidClause), args...)
-	if brows != nil {
-		defer brows.Close()
-		for brows.Next() {
-			var b historyBucket
-			_ = brows.Scan(&b.Bucket, &b.Sessions, &b.Spans, &b.CostUSD, &b.InputTokens, &b.OutputTokens)
-			resp.Buckets = append(resp.Buckets, b)
+	if err != nil {
+		return err
+	}
+	defer brows.Close()
+	for brows.Next() {
+		var b historyBucket
+		if err := brows.Scan(&b.Bucket, &b.Sessions, &b.Spans, &b.CostUSD, &b.InputTokens, &b.OutputTokens); err != nil {
+			return err
 		}
+		resp.Buckets = append(resp.Buckets, b)
+	}
+	if err := brows.Err(); err != nil {
+		return err
 	}
 
-	mrows, _ := h.db.Query(fmt.Sprintf(`
+	mrows, err := h.db.Query(fmt.Sprintf(`
 		SELECT
 			%s AS bucket,
 			model,
@@ -1472,25 +1630,29 @@ func (h *Handler) historyRawSeries(resp *historyResponse, r *http.Request, gran 
 		WHERE model IS NOT NULL AND model <> ''%s%s
 		GROUP BY bucket, model ORDER BY bucket ASC, SUM(cost_usd) DESC, model ASC
 	`, bucketExpr, window, uidClause), args...)
-	if mrows != nil {
-		defer mrows.Close()
-		for mrows.Next() {
-			var m historyModelRow
-			_ = mrows.Scan(&m.Bucket, &m.Model, &m.CostUSD, &m.Spans)
-			resp.ByModel = append(resp.ByModel, m)
-		}
+	if err != nil {
+		return err
 	}
+	defer mrows.Close()
+	for mrows.Next() {
+		var m historyModelRow
+		if err := mrows.Scan(&m.Bucket, &m.Model, &m.CostUSD, &m.Spans); err != nil {
+			return err
+		}
+		resp.ByModel = append(resp.ByModel, m)
+	}
+	return mrows.Err()
 }
 
 // historyUnionSeries fills buckets and by_model from the spans ∪ daily_usage
 // union, so a window reaching past the raw floor keeps charting instead of
 // stopping there.
-func (h *Handler) historyUnionSeries(resp *historyResponse, r *http.Request, gran string, from, to *time.Time) {
+func (h *Handler) historyUnionSeries(resp *historyResponse, r *http.Request, gran string, from, to *time.Time) error {
 	bucketExpr := historyUnionBucketExpr(gran)
 	f := newUsageFilter(r, from, to)
 	cte := f.cte()
 
-	brows, _ := h.db.Query(cte+fmt.Sprintf(`
+	brows, err := h.db.Query(cte+fmt.Sprintf(`
 SELECT
     %s AS bucket,
     COUNT(DISTINCT session_id) AS sessions,
@@ -1501,16 +1663,22 @@ SELECT
 FROM usage
 GROUP BY bucket ORDER BY bucket ASC
 `, bucketExpr), f.args...)
-	if brows != nil {
-		defer brows.Close()
-		for brows.Next() {
-			var b historyBucket
-			_ = brows.Scan(&b.Bucket, &b.Sessions, &b.Spans, &b.CostUSD, &b.InputTokens, &b.OutputTokens)
-			resp.Buckets = append(resp.Buckets, b)
+	if err != nil {
+		return err
+	}
+	defer brows.Close()
+	for brows.Next() {
+		var b historyBucket
+		if err := brows.Scan(&b.Bucket, &b.Sessions, &b.Spans, &b.CostUSD, &b.InputTokens, &b.OutputTokens); err != nil {
+			return err
 		}
+		resp.Buckets = append(resp.Buckets, b)
+	}
+	if err := brows.Err(); err != nil {
+		return err
 	}
 
-	mrows, _ := h.db.Query(cte+fmt.Sprintf(`
+	mrows, err := h.db.Query(cte+fmt.Sprintf(`
 SELECT
     %s AS bucket,
     model,
@@ -1520,12 +1688,16 @@ FROM usage
 WHERE model IS NOT NULL
 GROUP BY bucket, model ORDER BY bucket ASC, SUM(cost) DESC, model ASC
 `, bucketExpr), f.args...)
-	if mrows != nil {
-		defer mrows.Close()
-		for mrows.Next() {
-			var m historyModelRow
-			_ = mrows.Scan(&m.Bucket, &m.Model, &m.CostUSD, &m.Spans)
-			resp.ByModel = append(resp.ByModel, m)
-		}
+	if err != nil {
+		return err
 	}
+	defer mrows.Close()
+	for mrows.Next() {
+		var m historyModelRow
+		if err := mrows.Scan(&m.Bucket, &m.Model, &m.CostUSD, &m.Spans); err != nil {
+			return err
+		}
+		resp.ByModel = append(resp.ByModel, m)
+	}
+	return mrows.Err()
 }
