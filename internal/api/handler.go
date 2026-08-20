@@ -763,12 +763,14 @@ func (h *Handler) handleSession(w http.ResponseWriter, _ *http.Request, sessionI
 		&resp.InputTokens, &resp.OutputTokens,
 		&resp.CacheReadTokens, &resp.CacheWriteTokens,
 	)
-	if errors.Is(err, sql.ErrNoRows) || resp.SessionID == "" {
-		jsonError(w, "not found", http.StatusNotFound)
+	// Scan leaves SessionID empty on any failure, so a real error must be ruled
+	// out before the empty-value check or a broken DB reads as "no such session".
+	if !scanOK(err) {
+		queryFailed(w)
 		return
 	}
-	if err != nil {
-		queryFailed(w)
+	if errors.Is(err, sql.ErrNoRows) || resp.SessionID == "" {
+		jsonError(w, "not found", http.StatusNotFound)
 		return
 	}
 	resp.FirstSeen = firstSeen.UTC().Format(time.RFC3339)

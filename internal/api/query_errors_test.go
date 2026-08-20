@@ -35,6 +35,10 @@ func TestQueryErrorsSurface(t *testing.T) {
 	}{
 		{name: "overview query failure", path: "/api/v1/overview"},
 		{name: "costs query failure", path: "/api/v1/costs"},
+		{name: "models query failure", path: "/api/v1/models"},
+		// Both history series paths: the roll-up union and the raw-span one.
+		{name: "history union query failure", path: "/api/v1/history"},
+		{name: "history raw query failure", path: "/api/v1/history?granularity=hour"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -48,6 +52,55 @@ func TestQueryErrorsSurface(t *testing.T) {
 				t.Fatalf("want JSON error body, got %v", body)
 			}
 		})
+	}
+}
+
+// queryRowFailDB is the mirror of queryFailDB: every QueryRow fails while Query
+// keeps working, covering the single-row handlers.
+type queryRowFailDB struct {
+	inner api.DB
+}
+
+func (d *queryRowFailDB) QueryRow(query string, args ...any) *sql.Row {
+	return d.inner.QueryRow("SELECT this_column_does_not_exist")
+}
+
+func (d *queryRowFailDB) Query(query string, args ...any) (*sql.Rows, error) {
+	return d.inner.Query(query, args...)
+}
+
+func TestQueryRowErrorsSurface(t *testing.T) {
+	cases := []struct {
+		name string
+		path string
+	}{
+		{name: "health", path: "/api/v1/health"},
+		{name: "sessions count", path: "/api/v1/sessions"},
+		{name: "tools total recount", path: "/api/v1/tools"},
+		// A broken DB must not masquerade as a missing session.
+		{name: "session detail", path: "/api/v1/sessions/some-session-id"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, ro := openTestDB(t)
+			h := api.New(&queryRowFailDB{inner: ro})
+			code, body := getJSON(t, h, tc.path)
+			if code != http.StatusInternalServerError {
+				t.Fatalf("want 500 on QueryRow failure, got %d body=%v", code, body)
+			}
+			if body["error"] == nil || body["error"] == "" {
+				t.Fatalf("want JSON error body, got %v", body)
+			}
+		})
+	}
+}
+
+func TestSessionDetailNotFoundStaysNotFound(t *testing.T) {
+	_, ro := openTestDB(t)
+	h := api.New(ro)
+	code, body := getJSON(t, h, "/api/v1/sessions/no-such-session")
+	if code != http.StatusNotFound {
+		t.Fatalf("want 404 for a missing session, got %d body=%v", code, body)
 	}
 }
 
