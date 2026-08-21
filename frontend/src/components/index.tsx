@@ -21,6 +21,7 @@ export { ErrorState } from './ErrorState'
 export { RefreshIndicator } from './RefreshIndicator'
 export { DateRangePicker } from './DateRangePicker'
 export { ChartTooltip } from './ChartTooltip'
+export { ActivityGrid, GRID_GRANULARITY } from './ActivityGrid'
 
 // Alias for pages still importing LoadingState
 export { LoadingSkeleton as LoadingState } from './LoadingSkeleton'

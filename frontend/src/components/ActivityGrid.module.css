@@ -1,0 +1,94 @@
+.wrap {
+  position: relative;
+}
+
+.scroll {
+  overflow-x: auto;
+  padding-bottom: var(--space-1);
+}
+
+.grid {
+  display: grid;
+  gap: 3px;
+  align-items: center;
+  /* Below this the cells stop being distinguishable, so the block scrolls
+     sideways instead of collapsing. */
+  min-width: 560px;
+}
+
+.colLabel {
+  font-size: 10px;
+  color: var(--color-text-3);
+  line-height: 14px;
+  white-space: nowrap;
+  /* Labels sit on every third column at most, so they may overhang the one
+     they label rather than being clipped by it. */
+  overflow: visible;
+  justify-self: start;
+}
+
+.rowLabel {
+  font-size: 10px;
+  color: var(--color-text-3);
+  text-align: right;
+  padding-right: var(--space-2);
+  white-space: nowrap;
+}
+
+.cell {
+  height: 100%;
+  border-radius: 2px;
+  cursor: default;
+  transition: opacity var(--duration-fast);
+}
+
+.cell:hover {
+  opacity: 0.8;
+}
+
+/* Outside the queried window — before it opened or still in the future. Drawn
+   as an outline so it reads as "not asked for", never as a zero. */
+.cellAbsent {
+  height: 100%;
+  border-radius: 2px;
+  box-shadow: inset 0 0 0 1px var(--color-border);
+}
+
+.footer {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin-top: var(--space-3);
+}
+
+.legendLabel {
+  font-size: var(--text-xs);
+  color: var(--color-text-3);
+}
+
+.legendCell {
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+}
+
+.footNote {
+  margin-left: var(--space-3);
+  font-size: var(--text-xs);
+  color: var(--color-text-3);
+}
+
+.floatTip {
+  position: fixed;
+  pointer-events: none;
+  z-index: var(--z-tooltip);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-base);
+  box-shadow: var(--shadow-2);
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--color-text-1);
+  line-height: 1.5;
+  white-space: nowrap;
+}

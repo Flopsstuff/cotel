@@ -87,7 +87,7 @@ Activity over time, bucketed at the requested `granularity`.
 
 | Param | Values | Default | Meaning |
 |---|---|---|---|
-| `granularity` | `hour` \| `day` \| `week` \| `month` | `day` | Bucket width for `buckets` and `by_model` |
+| `granularity` | `10m` \| `hour` \| `4h` \| `day` \| `week` \| `month` | `day` | Bucket width for `buckets` and `by_model`; an unrecognised value falls back to `day` |
 | `range` | `all` \| `year` \| `month` \| `week` \| `day` | `month` | Rolling window, as above |
 | `from`, `to` | `YYYY-MM-DD` | — | Explicit bounds; when either is present they win and `range` echoes `null` |
 | `user_id` | user id \| `__anonymous__` | — | Scopes every figure to one principal |
@@ -116,16 +116,23 @@ Activity over time, bucketed at the requested `granularity`.
 does not bound — `range=all` reports `"from": null`, and any range-scoped request
 reports `"to": null` because the window runs to request time.
 
+`bucket` is a UTC wall-clock label: `YYYY-MM-DD` at `day` and coarser,
+`YYYY-MM-DD HH:MM` at the sub-day widths, floored to the width (`4h` to
+`00:00`/`04:00`/…, `10m` to `:00`/`:10`/…). It is UTC on any host —
+`CAST(start_time AS TIMESTAMP)` renders the stored `TIMESTAMPTZ` in UTC whatever
+the server's timezone is — so a client can reconstruct a bucket label for an
+instant without asking what the server thinks midnight is.
+
 **Which parts span the roll-up.** At `day`, `week` and `month` granularity,
 `buckets` and `by_model` are answered from the `spans` ∪ `daily_usage` union at
 the raw-floor split, so `year` and `all` keep charting after retention has
 deleted the raw spans. Two fields report where that stops:
 
 - **`covered_since`** clamps `buckets` and `by_model`. It is always `null` at
-  `day`, `week` and `month`. At **`hour`** it names the raw floor when the window
-  reaches past it: `daily_usage` buckets whole UTC days and cannot produce a
-  sub-day bucket, so an hour series is raw-only rather than day-shaped data under
-  an hour label.
+  `day`, `week` and `month`. At the sub-day widths — **`10m`, `hour`, `4h`** — it
+  names the raw floor when the window reaches past it: `daily_usage` buckets
+  whole UTC days and cannot produce a sub-day bucket, so those series are
+  raw-only rather than day-shaped data under a sub-day label.
 - **`heatmap_covered_since`** clamps `heatmap`, which resolves hour of day at
   every granularity and is therefore always raw-only.
 

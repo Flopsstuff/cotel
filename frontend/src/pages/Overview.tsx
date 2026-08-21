@@ -11,6 +11,7 @@ import type { SessionItem, ToolItem, ModelItem, User } from '../api'
 import {
   KpiCard, DataTable, EmptyState, ErrorState, RefreshIndicator, SegmentedControl,
   KpiSkeleton, ChartSkeleton, LoadingSkeleton, sessionStatusBadge, failRateBadge, ChartTooltip,
+  ActivityGrid, GRID_GRANULARITY,
 } from '../components'
 import { StatSection } from '../components/StatSection'
 import { RANGE_OPTIONS, RANGE_SUFFIX, useRangeCookie } from '../lib/range'
@@ -73,6 +74,37 @@ function UsersSection({ range }: { range: RangeKey }) {
       rows={data.users}
       onRowClick={(row) => navigate(`/users/${encodeURIComponent(row.id)}`)}
     />
+  )
+}
+
+// The grid asks for one bucket per cell, so the cell width follows the range:
+// days over a year, ten minutes over a day. On the year and all ranges that is
+// the same request ActivitySection already makes, and SWR serves both from one
+// fetch.
+function ActivityGridSection({ range, userId }: SectionProps) {
+  const { data, isLoading, error } = useHistory(
+    GRID_GRANULARITY[range],
+    undefined,
+    undefined,
+    userId,
+    range,
+  )
+
+  if (isLoading && !data) return <LoadingSkeleton rows={4} height={26} />
+  if (error) return <ErrorState message={error.message} />
+  if (!data || data.buckets.length === 0)
+    return <EmptyState heading="No activity" subtext="Cells fill in once spans are recorded in this range." />
+
+  return (
+    <>
+      <ActivityGrid range={range} buckets={data.buckets} />
+      {data.covered_since && (
+        <p className={styles.coverageNote}>
+          Cells start at {formatDay(data.covered_since)} — anything finer than a day is built from raw
+          spans, and earlier days in this range survive only as whole-day totals.
+        </p>
+      )}
+    </>
   )
 }
 
@@ -392,6 +424,10 @@ export default function Overview() {
           <KpiCard label={scoped('Output Tokens')} value={fmtTokens(data.total_output_tokens)} />
         </div>
       ) : null}
+
+      <StatSection title={scoped('Span activity')} viewAllHref={`/history${userParam}`}>
+        <ActivityGridSection range={range} userId={userId} />
+      </StatSection>
 
       {!userId && (
         <StatSection title="Users" viewAllHref="/users">
