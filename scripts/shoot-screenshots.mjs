@@ -17,7 +17,12 @@ const CHROMIUM = process.env.CHROMIUM || '/usr/bin/chromium'
 const STAT_SECTIONS = `[...document.querySelectorAll('div')].filter(d => typeof d.className === 'string' && /card/i.test(d.className) && d.querySelector(':scope > div > button[aria-expanded]'))`
 
 const SHOTS = [
-  { name: 'dashboard-overview', path: '/', wait: '.recharts-surface', end: `(${STAT_SECTIONS})[1]` },
+  {
+    name: 'dashboard-overview',
+    path: '/',
+    wait: '.recharts-surface',
+    end: `(${STAT_SECTIONS}).find(d => /^activity & cost/i.test(d.textContent.trim()))`,
+  },
   { name: 'dashboard-users', path: '/users', wait: 'table', end: `document.querySelector('table')` },
   { name: 'dashboard-tools', path: '/tools', wait: 'table', end: `document.querySelector('table')` },
   { name: 'dashboard-sessions', path: '/sessions', wait: 'table', end: `document.querySelectorAll('tbody tr')[8]` },
