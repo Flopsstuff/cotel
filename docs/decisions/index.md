@@ -22,3 +22,4 @@ New ADRs go in this directory as `NNNN-short-title.md`, numbered sequentially.
 | [ADR-0012](./0012-tools-list-ranged-stats-and-server-side-sort) | Tools list — time-ranged stats, server-side sort and pagination | Accepted |
 | [ADR-0013](./0013-spans-has-no-derived-columns) | `spans` carries no derived columns: drop `duration_ms` | Accepted |
 | [ADR-0014](./0014-overview-single-range-selector) | Overview — one range selector every panel obeys | Accepted |
+| [ADR-0015](./0015-overview-activity-and-cost-one-block) | Overview — spans and cost share one block, and one plot | Accepted |

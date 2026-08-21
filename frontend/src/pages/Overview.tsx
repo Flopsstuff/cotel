@@ -1,11 +1,11 @@
 import { useMemo, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import {
-  LineChart, Line, AreaChart, Area,
-  XAxis, YAxis, Tooltip, ResponsiveContainer,
+  ComposedChart, Line, Area,
+  XAxis, YAxis, Tooltip, Legend, ResponsiveContainer,
 } from 'recharts'
 import {
-  useOverview, useSessions, useCosts, useHistory, useTools, useModels, useUsersPage,
+  useOverview, useSessions, useHistory, useTools, useModels, useUsersPage,
 } from '../api'
 import type { SessionItem, ToolItem, ModelItem, User } from '../api'
 import {
@@ -76,7 +76,11 @@ function UsersSection({ range }: { range: RangeKey }) {
   )
 }
 
-function HistorySection({ range, userId }: SectionProps) {
+// Spans and cost share the history buckets, so the two series are bucketed,
+// windowed and user-filtered identically — a client-side join of /history with
+// /costs could not guarantee that. They carry different units, so each keeps its
+// own axis and the legend names the side it reads against.
+function ActivitySection({ range, userId }: SectionProps) {
   const { data, isLoading, error } = useHistory(
     range === 'day' ? 'hour' : 'day',
     undefined,
@@ -88,7 +92,7 @@ function HistorySection({ range, userId }: SectionProps) {
   if (isLoading && !data) return <ChartSkeleton />
   if (error) return <ErrorState message={error.message} />
   if (!data || data.buckets.length === 0)
-    return <EmptyState heading="No activity data" subtext="Activity will appear once sessions are recorded." />
+    return <EmptyState heading="No activity data" subtext="Spans and cost will appear once sessions are recorded." />
 
   return (
     <>
@@ -98,10 +102,10 @@ function HistorySection({ range, userId }: SectionProps) {
           earlier days in this range survive only as whole-day totals.
         </p>
       )}
-      <ResponsiveContainer width="100%" height={160}>
-        <AreaChart data={data.buckets} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
+      <ResponsiveContainer width="100%" height={200}>
+        <ComposedChart data={data.buckets} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
           <defs>
-            <linearGradient id="grad-hist-spans" x1="0" y1="0" x2="0" y2="1">
+            <linearGradient id="grad-activity-spans" x1="0" y1="0" x2="0" y2="1">
               <stop offset="5%" stopColor="var(--color-chart-1)" stopOpacity={0.25} />
               <stop offset="95%" stopColor="var(--color-chart-1)" stopOpacity={0} />
             </linearGradient>
@@ -112,48 +116,63 @@ function HistorySection({ range, userId }: SectionProps) {
             tickFormatter={(b) => String(b).slice(5)}
             interval="preserveStartEnd"
           />
-          <YAxis tick={{ fontSize: 11, fill: 'var(--color-text-3)' }} width={36} />
-          <Tooltip content={<ChartTooltip formatter={(v) => [String(Math.round(v as number)), 'Spans']} />} />
+          <YAxis
+            yAxisId="spans"
+            tick={{ fontSize: 11, fill: 'var(--color-text-3)' }}
+            width={36}
+          />
+          <YAxis
+            yAxisId="cost"
+            orientation="right"
+            tick={{ fontSize: 11, fill: 'var(--color-text-3)' }}
+            tickFormatter={(v) => `$${Number(v).toFixed(2)}`}
+            width={52}
+          />
+          <Tooltip
+            content={
+              <ChartTooltip
+                formatter={(v, name) =>
+                  name === 'Cost'
+                    ? [`$${Number(v).toFixed(2)}`, 'Cost']
+                    : [Math.round(Number(v)).toLocaleString(), 'Spans']
+                }
+              />
+            }
+          />
+          <Legend
+            verticalAlign="top"
+            align="right"
+            height={24}
+            iconType="plainline"
+            iconSize={12}
+            formatter={(value) => (
+              <span className={styles.legendLabel}>
+                {value} {value === 'Cost' ? '(right axis, USD)' : '(left axis)'}
+              </span>
+            )}
+          />
           <Area
+            yAxisId="spans"
+            name="Spans"
             type="monotone"
             dataKey="spans"
             stroke="var(--color-chart-1)"
             strokeWidth={2}
-            fill="url(#grad-hist-spans)"
+            fill="url(#grad-activity-spans)"
             dot={false}
           />
-        </AreaChart>
+          <Line
+            yAxisId="cost"
+            name="Cost"
+            type="monotone"
+            dataKey="cost_usd"
+            stroke="var(--color-chart-4)"
+            strokeWidth={2}
+            dot={false}
+          />
+        </ComposedChart>
       </ResponsiveContainer>
     </>
-  )
-}
-
-function CostsSection({ range, userId }: SectionProps) {
-  const { data, isLoading, error } = useCosts(undefined, undefined, userId, range)
-
-  if (isLoading && !data) return <ChartSkeleton />
-  if (error) return <ErrorState message={error.message} />
-  if (!data || data.daily.length === 0)
-    return <EmptyState heading="No cost data" subtext="Costs will appear once sessions are recorded." />
-
-  return (
-    <ResponsiveContainer width="100%" height={140}>
-      <LineChart data={data.daily} margin={{ top: 4, right: 8, bottom: 4, left: 0 }}>
-        <XAxis
-          dataKey="date"
-          tick={{ fontSize: 11, fill: 'var(--color-text-3)' }}
-          tickFormatter={(d) => String(d).slice(5)}
-          interval="preserveStartEnd"
-        />
-        <YAxis
-          tick={{ fontSize: 11, fill: 'var(--color-text-3)' }}
-          tickFormatter={(v) => `$${Number(v).toFixed(2)}`}
-          width={52}
-        />
-        <Tooltip content={<ChartTooltip formatter={(v) => [`$${Number(v).toFixed(2)}`, 'Cost']} />} />
-        <Line type="monotone" dataKey="cost_usd" stroke="var(--color-chart-1)" strokeWidth={2} dot={false} />
-      </LineChart>
-    </ResponsiveContainer>
   )
 }
 
@@ -380,12 +399,14 @@ export default function Overview() {
         </StatSection>
       )}
 
-      <StatSection title="History" viewAllHref={`/history${userParam}`}>
-        <HistorySection range={range} userId={userId} />
-      </StatSection>
-
-      <StatSection title="Costs" viewAllHref={`/costs${userParam}`}>
-        <CostsSection range={range} userId={userId} />
+      <StatSection
+        title="Activity & Cost"
+        links={[
+          { label: 'History', href: `/history${userParam}` },
+          { label: 'Costs', href: `/costs${userParam}` },
+        ]}
+      >
+        <ActivitySection range={range} userId={userId} />
       </StatSection>
 
       <StatSection title="Tools" viewAllHref={`/tools${userParam}`}>
