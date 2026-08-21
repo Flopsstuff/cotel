@@ -1447,21 +1447,36 @@ type historyResponse struct {
 	// from/to bounds superseded it (ADR-0014).
 	Range *string `json:"range"`
 	// CoveredSince names the start of the window buckets and by_model actually
-	// answer for, or null when the selected window is fully covered. Only "hour"
-	// can fall short: the roll-up consumes whole UTC days, so sub-day buckets
-	// exist for raw spans alone. Coarser granularities span the union and always
-	// report null.
+	// answer for, or null when the selected window is fully covered. Only the
+	// sub-day widths can fall short: the roll-up consumes whole UTC days, so
+	// sub-day buckets exist for raw spans alone. Coarser granularities span the
+	// union and always report null.
 	CoveredSince *string `json:"covered_since"`
 	// HeatmapCoveredSince is the same clamp for heatmap, which resolves hour of
 	// day at every granularity and so is raw-only whatever the caller asked for.
 	HeatmapCoveredSince *string `json:"heatmap_covered_since"`
 }
 
+// isSubDayGranularity reports whether the bucket width is finer than a calendar
+// day. The roll-up consumes whole UTC days, so a series at one of these widths
+// can only be answered from raw spans.
+func isSubDayGranularity(gran string) bool {
+	switch gran {
+	case "10m", "hour", "4h":
+		return true
+	}
+	return false
+}
+
 // historyBucketExpr buckets raw spans by their start time.
 func historyBucketExpr(gran string) string {
 	switch gran {
+	case "10m":
+		return "strftime(time_bucket(INTERVAL '10 minutes', CAST(start_time AS TIMESTAMP)), '%Y-%m-%d %H:%M')"
 	case "hour":
 		return "strftime(CAST(start_time AS TIMESTAMP), '%Y-%m-%d %H:00')"
+	case "4h":
+		return "strftime(time_bucket(INTERVAL '4 hours', CAST(start_time AS TIMESTAMP)), '%Y-%m-%d %H:%M')"
 	case "week":
 		return "strftime(date_trunc('week', CAST(start_time AS TIMESTAMP))::TIMESTAMP, '%Y-%m-%d')"
 	case "month":
@@ -1472,7 +1487,7 @@ func historyBucketExpr(gran string) string {
 }
 
 // historyUnionBucketExpr buckets the usageCTE's whole-day rows. There is no
-// "hour" case by construction: daily_usage keeps no intra-day timestamp, so an
+// sub-day case by construction: daily_usage keeps no intra-day timestamp, so an
 // hour bucket cannot be built from the aggregate side at all.
 func historyUnionBucketExpr(gran string) string {
 	switch gran {
@@ -1510,7 +1525,7 @@ func isoDay(t *time.Time) *string {
 func (h *Handler) handleHistory(w http.ResponseWriter, r *http.Request) {
 	gran := r.URL.Query().Get("granularity")
 	switch gran {
-	case "hour", "day", "week", "month":
+	case "10m", "hour", "4h", "day", "week", "month":
 	default:
 		gran = "day"
 	}
@@ -1538,7 +1553,7 @@ func (h *Handler) handleHistory(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var err error
-	if gran == "hour" {
+	if isSubDayGranularity(gran) {
 		resp.CoveredSince = resp.HeatmapCoveredSince
 		err = h.historyRawSeries(&resp, r, gran, from, to)
 	} else {

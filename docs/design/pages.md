@@ -119,16 +119,24 @@ These are rendered by a shared `<PageHeader>` component that wraps every page's 
 
 ### Shipped section order
 
-The page stacks six `<StatSection>` blocks, each a summary of one resource with a
-"View all" link to its full page, in this order:
+The page stacks six `<StatSection>` blocks, each a summary of one resource with
+a "View all" link to its full page, in this order:
 
-1. **Users** — top 5 by spend in the range. Hidden while the page is scoped to a
+1. **Span activity** — a grid of cells, one span-count bucket each, GitHub
+   contribution-graph style. First, because it is the page's pulse; everything
+   under it is the itemised answer. The range picks the grid and the
+   `granularity` it fetches: 53 × 7 days on `Year` and `All`, 31 × 6 four-hour
+   cells on `Month`, 24 × 7 hourly cells on `Week`, 24 × 6 ten-minute cells on
+   `Day`. Cells outside the queried window — the leading edge, and the rest of
+   today — are drawn as an outline, never as an empty cell
+   ([ADR-0016](../decisions/0016-overview-activity-grid.md)).
+2. **Users** — top 5 by spend in the range. Hidden while the page is scoped to a
    single user via `?user_id=`, where a top-5-users table would be the one panel
    on the page not answering for that user.
-2. **History** — activity area chart. `hour` granularity on the `Day` range,
-   `day` otherwise.
-3. **Costs** — daily spend line. No inner by-model table: the Models block below
-   is the same data at full width.
+3. **Activity & Cost** — spans as a filled area against the left axis and cost as
+   a line against the right, from one `/history` call. `hour` granularity on the
+   `Day` range, `day` otherwise; links to both full pages
+   ([ADR-0015](../decisions/0015-overview-activity-and-cost-one-block.md)).
 4. **Tools** — top 5 by call count.
 5. **Models** — all models by span count.
 6. **Sessions** — 5 most recent. Last, because it is the only block that cannot

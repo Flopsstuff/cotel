@@ -9,6 +9,7 @@ import type { HistoryResponse, HeatmapCell } from '../api'
 import {
   Card, KpiCard, EmptyState, ErrorState, KpiSkeleton, ChartSkeleton, ChartTooltip,
 } from '../components'
+import { HEAT_STEPS, heatFill, heatScale } from '../lib/heat'
 import styles from './History.module.css'
 
 type Granularity = 'hour' | 'day' | 'week' | 'month'
@@ -68,18 +69,6 @@ interface CalHeatmapProps {
   to: string
 }
 
-function heatColor(count: number, max: number): string {
-  if (count === 0) return 'var(--color-surface-2)'
-  const intensity = Math.min(1, Math.log(count + 1) / Math.log(max + 1))
-  if (intensity < 0.25)
-    return 'color-mix(in srgb, var(--color-chart-1) 20%, var(--color-surface-2))'
-  if (intensity < 0.5)
-    return 'color-mix(in srgb, var(--color-chart-1) 45%, var(--color-surface-2))'
-  if (intensity < 0.75)
-    return 'color-mix(in srgb, var(--color-chart-1) 70%, var(--color-surface-2))'
-  return 'var(--color-chart-1)'
-}
-
 function CalendarHeatmap({ days, from, to }: CalHeatmapProps) {
   const [tip, setTip] = useState<{ x: number; y: number; info: DayInfo } | null>(null)
 
@@ -89,7 +78,7 @@ function CalendarHeatmap({ days, from, to }: CalHeatmapProps) {
     return m
   }, [days])
 
-  const maxCount = useMemo(() => Math.max(1, ...days.map(d => d.count)), [days])
+  const fill = useMemo(() => heatScale(days.map(d => d.count)), [days])
 
   // Build all dates from→to as UTC date strings
   const allDates = useMemo(() => {
@@ -159,7 +148,7 @@ function CalendarHeatmap({ days, from, to }: CalHeatmapProps) {
               x={x} y={y}
               width={CELL} height={CELL}
               rx={2}
-              style={{ fill: heatColor(info.count, maxCount), cursor: 'default' }}
+              style={{ fill: fill(info.count), cursor: 'default' }}
               onMouseEnter={(e) => handleMouseEnter(e, info)}
               onMouseMove={(e) => setTip(t => t ? { ...t, x: e.clientX, y: e.clientY } : null)}
             />
@@ -173,16 +162,8 @@ function CalendarHeatmap({ days, from, to }: CalHeatmapProps) {
       {/* Legend */}
       <div className={styles.calLegend}>
         <span className={styles.calLegendLabel}>Less</span>
-        {[0, 0.2, 0.45, 0.7, 1].map((v, i) => (
-          <div
-            key={i}
-            className={styles.calLegendCell}
-            style={{
-              background: v === 0
-                ? 'var(--color-surface-2)'
-                : `color-mix(in srgb, var(--color-chart-1) ${Math.round(v * 100)}%, var(--color-surface-2))`,
-            }}
-          />
+        {HEAT_STEPS.map((pct) => (
+          <div key={pct} className={styles.calLegendCell} style={{ background: heatFill(pct) }} />
         ))}
         <span className={styles.calLegendLabel}>More</span>
       </div>
@@ -219,10 +200,7 @@ function HourDowHeatmap({ heatmap }: HourDowHeatmapProps) {
     return g
   }, [heatmap])
 
-  const maxCount = useMemo(() =>
-    Math.max(1, ...grid.flatMap(row => row)),
-    [grid],
-  )
+  const fill = useMemo(() => heatScale(grid.flat()), [grid])
 
   const hours = Array.from({ length: 24 }, (_, i) => i)
 
@@ -246,7 +224,7 @@ function HourDowHeatmap({ heatmap }: HourDowHeatmapProps) {
                 <div
                   key={`${dow}-${h}`}
                   className={styles.hourCell}
-                  style={{ background: heatColor(count, maxCount) }}
+                  style={{ background: fill(count) }}
                   onMouseEnter={(e) => setTip({ x: e.clientX, y: e.clientY, dow, hour: h, count })}
                   onMouseMove={(e) => setTip(t => t ? { ...t, x: e.clientX, y: e.clientY } : null)}
                 />

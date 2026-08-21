@@ -23,3 +23,4 @@ New ADRs go in this directory as `NNNN-short-title.md`, numbered sequentially.
 | [ADR-0013](./0013-spans-has-no-derived-columns) | `spans` carries no derived columns: drop `duration_ms` | Accepted |
 | [ADR-0014](./0014-overview-single-range-selector) | Overview — one range selector every panel obeys | Accepted |
 | [ADR-0015](./0015-overview-activity-and-cost-one-block) | Overview — spans and cost share one block, and one plot | Accepted |
+| [ADR-0016](./0016-overview-activity-grid) | Overview — an activity grid, one cell per bucket | Accepted |
