@@ -3,15 +3,28 @@ import { Link } from 'react-router-dom'
 import { ChevronDown, ChevronUp } from 'lucide-react'
 import styles from './StatSection.module.css'
 
+interface SectionLink {
+  label: string
+  href: string
+}
+
 interface StatSectionProps {
   title: string
   children: ReactNode
   viewAllHref?: string
+  links?: SectionLink[]
   defaultExpanded?: boolean
 }
 
-export function StatSection({ title, children, viewAllHref, defaultExpanded = true }: StatSectionProps) {
+export function StatSection({
+  title,
+  children,
+  viewAllHref,
+  links,
+  defaultExpanded = true,
+}: StatSectionProps) {
   const [expanded, setExpanded] = useState(defaultExpanded)
+  const headerLinks = links ?? (viewAllHref ? [{ label: 'View all', href: viewAllHref }] : [])
 
   return (
     <div className={styles.card}>
@@ -24,10 +37,14 @@ export function StatSection({ title, children, viewAllHref, defaultExpanded = tr
           {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
           <span className={styles.title}>{title}</span>
         </button>
-        {viewAllHref && (
-          <Link to={viewAllHref} className={styles.viewAll}>
-            View all →
-          </Link>
+        {headerLinks.length > 0 && (
+          <div className={styles.links}>
+            {headerLinks.map((l) => (
+              <Link key={l.href} to={l.href} className={styles.viewAll}>
+                {l.label} →
+              </Link>
+            ))}
+          </div>
         )}
       </div>
       <div className={styles.content}>

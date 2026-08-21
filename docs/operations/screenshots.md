@@ -47,10 +47,11 @@ BASE=http://localhost:18080 node scripts/shoot-screenshots.mjs
 1440×1400 viewport at 2× DPR, dark scheme, each page cropped at the bottom edge of
 a named element. The files land straight in `docs/assets/`.
 
-`playwright-core` has to be resolvable from the repo — `npx playwright-core@latest
---help` once is enough to populate the npx cache, then symlink or set `NODE_PATH` to
-it. Chromium comes from `CHROMIUM` (default `/usr/bin/chromium`); this box has no
-Playwright-managed browser.
+`playwright-core` has to be resolvable from the script — `npx playwright-core@latest
+--help` once is enough to populate the npx cache, then symlink it into a
+`node_modules/` beside the script. It has to be a symlink: the script is an ES
+module and ESM resolution ignores `NODE_PATH`. Chromium comes from `CHROMIUM`
+(default `/usr/bin/chromium`); this box has no Playwright-managed browser.
 
 ## 5. Tear down
 
