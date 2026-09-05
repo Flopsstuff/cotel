@@ -6,8 +6,7 @@
 # Each local agent runs with GIT_AUTHOR_NAME / GIT_AUTHOR_EMAIL injected by its
 # Paperclip adapter env. This hook turns those into a second co-author trailer so
 # the agent is credited in the commit body in addition to the author/committer
-# fields. The mandatory `Co-Authored-By: Paperclip <noreply@paperclip.ing>` line
-# is added by the agent itself per the skill rule and is left untouched here.
+# fields. The model trailer is added by the agent itself and left untouched here.
 #
 # Idempotent: re-running never duplicates a trailer. Safe to install in every repo.
 

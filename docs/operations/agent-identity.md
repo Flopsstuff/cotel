@@ -14,16 +14,21 @@ intentionally **not** a mailbox and **not** linked to any GitHub account. The
 domain `agents.flopbut.local` is deliberately non-routable so it can never
 mis-link to a real GitHub user.
 
-| Agent    | NAME       | Email                          |
-|----------|------------|--------------------------------|
-| Prospero | `Prospero` | `prospero@agents.flopbut.local` |
-| Daedalus | `Daedalus` | `daedalus@agents.flopbut.local` |
-| Wayland  | `Wayland`  | `wayland@agents.flopbut.local`  |
-| Aldric   | `Aldric`   | `aldric@agents.flopbut.local`   |
-| Soren    | `Soren`    | `soren@agents.flopbut.local`    |
-| Lyra     | `Lyra`     | `lyra@agents.flopbut.local`     |
-| Iris     | `Iris`     | `iris@agents.flopbut.local`     |
-| Orion    | `Orion`    | `orion@agents.flopbut.local`    |
+| Agent     | NAME        | Email                            |
+|-----------|-------------|----------------------------------|
+| Prospero  | `Prospero`  | `prospero@agents.flopbut.local`  |
+| Daedalus  | `Daedalus`  | `daedalus@agents.flopbut.local`  |
+| Wayland   | `Wayland`   | `wayland@agents.flopbut.local`   |
+| Aldric    | `Aldric`    | `aldric@agents.flopbut.local`    |
+| Soren     | `Soren`     | `soren@agents.flopbut.local`     |
+| Lyra      | `Lyra`      | `lyra@agents.flopbut.local`      |
+| Iris      | `Iris`      | `iris@agents.flopbut.local`      |
+| Orion     | `Orion`     | `orion@agents.flopbut.local`     |
+| Robert    | `Robert`    | `robert@agents.flopbut.local`    |
+| Pygmalion | `Pygmalion` | `pygmalion@agents.flopbut.local` |
+| Argus     | `Argus`     | `argus@agents.flopbut.local`     |
+| Clio      | `Clio`      | `clio@agents.flopbut.local`      |
+| Vesper    | `Vesper`    | `vesper@agents.flopbut.local`    |
 
 If the board later wants a real domain, change the values everywhere — the
 scheme is unchanged.
@@ -67,21 +72,22 @@ It reads the agent's own name from `/api/agents/me`, derives the email, and
 
 ## 2. Commit trailers
 
-In addition to the mandatory skill trailer:
+Every commit ends with exactly two co-author trailers — the authoring agent,
+then the model it runs on:
 
 ```
-Co-Authored-By: Paperclip <noreply@paperclip.ing>
+Co-Authored-By: Wayland <wayland@agents.flopbut.local>
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 ```
 
-each commit gets a second co-author line for the authoring agent:
+A third trailer is never added. In particular `Co-Authored-By: Paperclip
+<noreply@paperclip.ing>` is prohibited by board order — it was once described
+here as mandatory, and that is no longer true.
 
-```
-Co-authored-by: Wayland <wayland@agents.flopbut.local>
-```
-
-The robust way to add this is the **`prepare-commit-msg` hook** in
+The robust way to get the agent line is the **`prepare-commit-msg` hook** in
 `scripts/git-hooks/`, which reads `$GIT_AUTHOR_NAME` / `$GIT_AUTHOR_EMAIL` and
-appends the trailer idempotently (it never duplicates). Install it per repo:
+appends that trailer idempotently (it never duplicates). The model line is the
+committing agent's own responsibility. Install the hook per repo:
 
 ```bash
 scripts/install-agent-git-hooks.sh            # current repo
@@ -146,18 +152,34 @@ despite each process carrying a distinct token in `/proc/<pid>/environ`.
 The same precedence trap applies to `GIT_*` — keep those out of the shared
 `settings.json` too (they already live only in per-agent `adapterConfig.env`).
 
-`settings.json` keeps only the **identity-independent** OTEL config, shared by
-everyone:
+### The identity-independent half lives in the Paperclip *environment*
+
+The per-agent header is only half the config. Claude Code exports nothing unless
+these five are also present in the run:
 
 ```json
-"env": {
-  "CLAUDE_CODE_ENABLE_TELEMETRY": "1",
-  "CLAUDE_CODE_ENHANCED_TELEMETRY_BETA": "1",
-  "OTEL_TRACES_EXPORTER": "otlp",
-  "OTEL_EXPORTER_OTLP_PROTOCOL": "http/json",
-  "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "https://otlp.aignite.pl/v1/traces"
-}
+"CLAUDE_CODE_ENABLE_TELEMETRY": "1",
+"CLAUDE_CODE_ENHANCED_TELEMETRY_BETA": "1",
+"OTEL_TRACES_EXPORTER": "otlp",
+"OTEL_EXPORTER_OTLP_PROTOCOL": "http/json",
+"OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "https://otlp.aignite.pl/v1/traces"
 ```
+
+For agent runs they belong in the **Paperclip environment record's `env_vars`**
+(`Local` for this machine), which the adapter merges into the spawn environment
+alongside `adapterConfig.env`.
+
+> A Paperclip-spawned run does **not** read the `env` block of the shared
+> `~/.claude/settings.json`. Putting the five vars only there covers the board's
+> interactive sessions and no agent at all.
+
+That asymmetry produced a silent 28-day outage: `settings.json` carried all five
+and each agent carried its own header, yet cotel recorded **zero** agent
+sessions — a header alone neither enables telemetry nor names an endpoint.
+Adding the five to the `Local` environment restored five agents within minutes.
+
+An environment whose `env_vars` lacks them stays dark no matter what its agents
+carry — that is the state of the `robmini` (`ssh` driver) environment.
 
 ### Where the human's interactive default lives
 
@@ -168,6 +190,23 @@ That guard is what makes this safe: Paperclip spawns agents with a
 non-interactive `bash -c`, which returns before reaching the export, so an agent
 never picks up the human default — it keeps its own injected token. Interactive
 human shells run the export and report under the default token.
+
+### Checking that agent telemetry actually lands
+
+cotel runs on `robmini`; read it there, read-only, over the loopback port. The
+public host sits behind Cloudflare Access and answers 302, and `--db-query`
+fights the server for the DuckDB lock.
+
+```bash
+ssh robmini 'curl -s "http://localhost:8080/api/v1/sessions?limit=500"'
+```
+
+Group the result by `user_id`: every agent that has run inside the retention
+window should appear under its own name. A `user_id` missing entirely means its
+runs never exported — check the environment's `env_vars` first (the whole fleet
+is dark) and the agent's own header second (only that agent is dark). Spans that
+carry an endpoint but no valid header are rejected at ingest, so a
+header-less agent fails silently rather than landing in a default bucket.
 
 ## Scope
 
