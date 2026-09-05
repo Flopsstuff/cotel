@@ -7,6 +7,7 @@ package pricing
 import (
 	"log"
 	"strings"
+	"sync"
 )
 
 // ModelPrices holds per-million-token rates for one model tier.
@@ -138,7 +139,7 @@ func Compute(model string, inputTokens, outputTokens, cacheReadTokens, cacheWrit
 	p, ok := table[canonicalID(model)]
 	if !ok {
 		if model != "" {
-			log.Printf("pricing: unknown model %q — cost_usd will be 0 for this span", model)
+			warnUnknown(model)
 		}
 		return 0
 	}
@@ -147,4 +148,33 @@ func Compute(model string, inputTokens, outputTokens, cacheReadTokens, cacheWrit
 		float64(outputTokens)*p.OutputPerMTok +
 		float64(cacheReadTokens)*p.CacheReadPerMTok +
 		float64(cacheWriteTokens)*p.CacheWritePerMTok) / perM
+}
+
+// Ingest is an external boundary: a client can send arbitrarily many distinct
+// model strings. Cap the seen-set so a flood cannot grow process memory without bound.
+const unknownModelLogCap = 256
+
+var (
+	unknownMu     sync.Mutex
+	unknownSeen   = make(map[string]struct{})
+	unknownCapped bool
+)
+
+func warnUnknown(model string) {
+	id := canonicalID(model)
+	unknownMu.Lock()
+	defer unknownMu.Unlock()
+	if unknownCapped {
+		return
+	}
+	if _, seen := unknownSeen[id]; seen {
+		return
+	}
+	if len(unknownSeen) >= unknownModelLogCap {
+		unknownCapped = true
+		log.Printf("pricing: unknown-model warnings suppressed — %d unique models logged, further warnings dropped", unknownModelLogCap)
+		return
+	}
+	unknownSeen[id] = struct{}{}
+	log.Printf("pricing: unknown model %q — cost_usd left unset for this span", model)
 }

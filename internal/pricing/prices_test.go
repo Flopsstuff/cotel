@@ -1,7 +1,11 @@
 package pricing_test
 
 import (
+	"bytes"
+	"fmt"
+	"log"
 	"math"
+	"strings"
 	"testing"
 
 	"github.com/Flopsstuff/cotel/internal/pricing"
@@ -150,6 +154,62 @@ func TestComputeOpus5TierSuffixNonZero(t *testing.T) {
 	}
 }
 
+func TestComputeUnknownModelLogsOnce(t *testing.T) {
+	prev := log.Writer()
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	defer log.SetOutput(prev)
+
+	model := "claude-logonce-alpha"
+	if got := pricing.Compute(model, 1, 0, 0, 0); got != 0 {
+		t.Fatalf("unknown model: expected 0, got %v", got)
+	}
+	if !strings.Contains(buf.String(), `unknown model "claude-logonce-alpha"`) {
+		t.Fatalf("first call did not log warning: %q", buf.String())
+	}
+
+	buf.Reset()
+	pricing.Compute(model, 1, 0, 0, 0)
+	if buf.Len() != 0 {
+		t.Errorf("repeat call logged: %q", buf.String())
+	}
+
+	buf.Reset()
+	pricing.Compute(model+"-20260315", 1, 0, 0, 0)
+	if buf.Len() != 0 {
+		t.Errorf("canonical variant logged: %q", buf.String())
+	}
+}
+
+func TestComputeUnknownModelLogsEachCanonicalOnce(t *testing.T) {
+	prev := log.Writer()
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	defer log.SetOutput(prev)
+
+	a := "claude-logonce-bravo"
+	b := "claude-logonce-charlie"
+	pricing.Compute(a, 1, 0, 0, 0)
+	pricing.Compute(b, 1, 0, 0, 0)
+	out := buf.String()
+	if !strings.Contains(out, `unknown model "`+a+`"`) {
+		t.Errorf("missing log for %s: %q", a, out)
+	}
+	if !strings.Contains(out, `unknown model "`+b+`"`) {
+		t.Errorf("missing log for %s: %q", b, out)
+	}
+	if n := strings.Count(out, "unknown model"); n != 2 {
+		t.Errorf("expected 2 unknown-model lines, got %d in %q", n, out)
+	}
+
+	buf.Reset()
+	pricing.Compute(a, 1, 0, 0, 0)
+	pricing.Compute(b, 1, 0, 0, 0)
+	if buf.Len() != 0 {
+		t.Errorf("repeat of distinct models logged: %q", buf.String())
+	}
+}
+
 func TestComputeHaiku45Corrected(t *testing.T) {
 	// claude-haiku-4-5 corrected to $1.00/$5.00 per MTok (was a stale $0.80/$4.00).
 	got := pricing.Compute("claude-haiku-4-5", 1_000_000, 0, 0, 0)
@@ -160,5 +220,34 @@ func TestComputeHaiku45Corrected(t *testing.T) {
 	// Guard against the stale $0.80 rate creeping back in.
 	if math.Abs(got-0.80) < 0.0001 {
 		t.Errorf("haiku-4-5 still using stale $0.80 rate")
+	}
+}
+
+func TestComputeUnknownModelLogCap(t *testing.T) {
+	prev := log.Writer()
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	defer log.SetOutput(prev)
+
+	// Process-wide set is not reset; fill well past 256 unique canonical IDs.
+	const n = 300
+	for i := 0; i < n; i++ {
+		pricing.Compute(fmt.Sprintf("claude-logonce-cap-%03d", i), 1, 0, 0, 0)
+	}
+	out := buf.String()
+	if n := strings.Count(out, "unknown-model warnings suppressed"); n != 1 {
+		t.Fatalf("expected exactly one suppression line, got %d in %q", n, out)
+	}
+	if n := strings.Count(out, "unknown model"); n > 256 {
+		t.Errorf("logged %d unknown-model warnings, cap is 256", n)
+	}
+
+	buf.Reset()
+	pricing.Compute("claude-logonce-cap-after", 1, 0, 0, 0)
+	if buf.Len() != 0 {
+		t.Errorf("post-cap unique model logged: %q", buf.String())
+	}
+	if got := pricing.Compute("claude-logonce-cap-after-2", 1, 0, 0, 0); got != 0 {
+		t.Errorf("post-cap unknown still returns 0, got %v", got)
 	}
 }
