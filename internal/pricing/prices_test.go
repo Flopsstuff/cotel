@@ -38,6 +38,63 @@ func TestComputeTierSuffix(t *testing.T) {
 	}
 }
 
+func TestComputeSnapshotSuffix(t *testing.T) {
+	// Claude Code sends Haiku 4.5 as a dated snapshot ID; the table is keyed
+	// undated, so the "-20251001" tail must be stripped before lookup.
+	dated := pricing.Compute("claude-haiku-4-5-20251001", 1_000_000, 500_000, 0, 0)
+	undated := pricing.Compute("claude-haiku-4-5", 1_000_000, 500_000, 0, 0)
+	if dated != undated {
+		t.Errorf("snapshot suffix not stripped: dated=%v undated=%v", dated, undated)
+	}
+	// 1M input @ $1 + 0.5M output @ $5 = 1 + 2.5 = 3.5
+	want := 3.5
+	if math.Abs(dated-want) > 0.000001 {
+		t.Errorf("got %.8f, want %.8f", dated, want)
+	}
+}
+
+func TestComputeSnapshotAndTierSuffix(t *testing.T) {
+	// Both tails at once — tier is stripped first, then the date.
+	both := pricing.Compute("claude-opus-5-20250930[1m]", 1_000_000, 500_000, 0, 0)
+	bare := pricing.Compute("claude-opus-5", 1_000_000, 500_000, 0, 0)
+	if both != bare {
+		t.Errorf("combined suffixes not stripped: both=%v bare=%v", both, bare)
+	}
+	if both <= 0 {
+		t.Errorf("claude-opus-5-20250930[1m] must have non-zero cost, got %v", both)
+	}
+}
+
+func TestComputeSnapshotStripIsExactlyEightDigits(t *testing.T) {
+	// The strip must not eat a version segment or a digit run of another length.
+	for _, model := range []string{
+		"claude-haiku-4-5",
+		"claude-3-5-haiku",
+		"claude-opus-5",
+	} {
+		if got := pricing.Compute(model, 1_000_000, 0, 0, 0); got <= 0 {
+			t.Errorf("%s: undated ID mangled, got %v", model, got)
+		}
+	}
+	for _, model := range []string{
+		"claude-haiku-4-5-2025100",   // 7 digits
+		"claude-haiku-4-5-202510011", // 9 digits
+		"claude-haiku-4-5-2025100a",  // not all digits
+	} {
+		if got := pricing.Compute(model, 1_000_000, 0, 0, 0); got != 0 {
+			t.Errorf("%s: expected no strip and cost 0, got %v", model, got)
+		}
+	}
+}
+
+func TestComputeUnknownDatedModel(t *testing.T) {
+	// A dated ID whose base is still unknown must return 0, not panic.
+	got := pricing.Compute("claude-unknown-99-20251001", 1_000_000, 500_000, 0, 0)
+	if got != 0 {
+		t.Errorf("unknown dated model: expected 0, got %v", got)
+	}
+}
+
 func TestComputeUnknownModel(t *testing.T) {
 	// Unknown model must return 0, not panic or error.
 	got := pricing.Compute("claude-unknown-99", 1_000_000, 500_000, 0, 0)

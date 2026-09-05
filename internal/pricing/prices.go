@@ -18,7 +18,8 @@ type ModelPrices struct {
 }
 
 // table maps canonical model IDs to pricing. Keys must be lowercase and match
-// what Claude Code emits in the "model" span attribute (without tier suffixes).
+// what Claude Code emits in the "model" span attribute, minus the tier and dated
+// snapshot suffixes canonicalID strips.
 //
 // Cache rates follow Anthropic's convention: CacheRead = 0.1 x input,
 // CacheWrite = 1.25 x input (the 5-minute ephemeral TTL).
@@ -103,13 +104,31 @@ var table = map[string]ModelPrices{
 	},
 }
 
-// canonicalID strips tier suffixes like "[1m]" from model identifiers before lookup.
-// Claude Code may append these for extended-context variants that share base pricing.
+// canonicalID reduces a model identifier to a table key by stripping a tier
+// suffix like "[1m]" and then a dated snapshot suffix like "-20251001". Claude
+// Code emits either, or both at once, for variants that share base pricing.
 func canonicalID(model string) string {
 	if i := strings.IndexByte(model, '['); i != -1 {
-		return model[:i]
+		model = model[:i]
+	}
+	if i := strings.LastIndexByte(model, '-'); i > 0 && isSnapshotDate(model[i+1:]) {
+		model = model[:i]
 	}
 	return model
+}
+
+// isSnapshotDate reports whether s is exactly eight digits. The length check is
+// what keeps a version segment ("claude-haiku-4-5") from being read as a date.
+func isSnapshotDate(s string) bool {
+	if len(s) != 8 {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // Compute returns the estimated cost in USD for the given token counts and model.
