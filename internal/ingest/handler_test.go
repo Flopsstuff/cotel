@@ -258,6 +258,35 @@ func TestProducerCostUSDUsedWhenPresent(t *testing.T) {
 	}
 }
 
+// TestCostComputedForDatedModelID verifies the shape Claude Code actually sends
+// for Haiku 4.5 — a dated snapshot id — resolves to a price and not to a
+// "pricing: unknown model" warning with cost_usd left nil.
+func TestCostComputedForDatedModelID(t *testing.T) {
+	// claude-haiku-4-5: $1/MTok in → 1M tokens = $1.00
+	attrs := `{"key":"model","value":{"stringValue":"claude-haiku-4-5-20251001"}},` +
+		`{"key":"input_tokens","value":{"intValue":"1000000"}}`
+	store := &memStore{}
+	h := ingest.New(store)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/traces",
+		bytes.NewBufferString(buildMinimalPayload(attrs)))
+	req.Header.Set("Content-Type", "application/json")
+	h.ServeHTTP(httptest.NewRecorder(), req)
+	h.Flush()
+
+	if len(store.spans) != 1 {
+		t.Fatalf("expected 1 span, got %d", len(store.spans))
+	}
+	s := store.spans[0]
+	if s.CostUSD == nil {
+		t.Fatal("dated model id must resolve to a price, got nil cost_usd")
+	}
+	const want = 1.00 // 1M * $1/MTok
+	if got := *s.CostUSD; got < want-0.001 || got > want+0.001 {
+		t.Errorf("computed cost: got %.6f, want %.6f", got, want)
+	}
+}
+
 // TestUnknownModelCostIsNil verifies that an unrecognised model id does not
 // cause an ingest failure — cost_usd stays nil so it is distinguishable from
 // a genuine zero-cost span.
