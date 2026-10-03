@@ -27,6 +27,11 @@ TIMEOUT="${2:-120}"
 POLL_INTERVAL="${POLL_INTERVAL:-2}"
 LOG_TAIL="${LOG_TAIL:-200}"
 CRASH_CONTEXT="${CRASH_CONTEXT:-25}"
+# A crash in cgo is reported twice: the C++ runtime prints why it aborted (e.g.
+# "terminate called after throwing an instance of …") and only then does Go's
+# handler print SIGABRT. The C++ line is the actual cause and it comes *before*
+# the header, so the excerpt has to reach backwards too.
+CRASH_CONTEXT_BEFORE="${CRASH_CONTEXT_BEFORE:-15}"
 PROGRESS_EVERY=10
 
 # A Go crash states its cause on its *first* line and then prints a goroutine
@@ -68,7 +73,7 @@ dump_crash_cause() {
     hits="$(grep -cE "$CRASH_PATTERN" "$log" || true)"
     echo "--- crash cause: ${hits:-0} header(s) in ${lines} log lines, first one below ---"
     if [ "${hits:-0}" -gt 0 ]; then
-        grep -m1 -A "$CRASH_CONTEXT" -E "$CRASH_PATTERN" "$log"
+        grep -m1 -B "$CRASH_CONTEXT_BEFORE" -A "$CRASH_CONTEXT" -E "$CRASH_PATTERN" "$log"
     else
         echo "(no Go fatal/panic header; the process exited without crashing, or named" \
              "its own cause in the application log below)"

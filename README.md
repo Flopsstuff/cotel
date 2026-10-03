@@ -280,9 +280,12 @@ it. A Go crash names its fault on the *first* line — `fatal error: …`, `pani
 `[signal SIGABRT…]` — and then prints a goroutine dump thousands of lines long,
 so `--tail=200` reliably starts mid-stack, past the only line that says why the
 process died. The gate therefore searches the whole log for that header and
-prints the first one with the following 25 lines, plus how many headers the log
-holds in total — more than one means the container died repeatedly. Tune with
-`LOG_TAIL`, `CRASH_CONTEXT`.
+prints the first one in context, plus how many headers the log holds in total —
+more than one means the container died repeatedly. The excerpt reaches backwards
+as well as forwards, because a crash inside cgo is reported twice: the C++
+runtime says why it aborted *before* Go's handler prints `SIGABRT`, and that
+earlier line is the real cause. Tune with `LOG_TAIL`, `CRASH_CONTEXT`,
+`CRASH_CONTEXT_BEFORE`.
 
 Only restarts observed *during* the wait count against a deploy. A restart count
 of its own does not: `up -d` leaves an already-current container in place, and a
