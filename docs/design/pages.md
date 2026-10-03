@@ -133,7 +133,7 @@ a "View all" link to its full page, in this order:
 2. **Users** — top 5 by spend in the range. Hidden while the page is scoped to a
    single user via `?user_id=`, where a top-5-users table would be the one panel
    on the page not answering for that user.
-3. **Activity & Cost** — spans as a filled area against the left axis and cost as
+3. **Spans & cost** — spans as a filled area against the left axis and cost as
    a line against the right, from one `/history` call. `hour` granularity on the
    `Day` range, `day` otherwise; links to both full pages
    ([ADR-0015](../decisions/0015-overview-activity-and-cost-one-block.md)).

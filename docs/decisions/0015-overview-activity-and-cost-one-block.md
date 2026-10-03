@@ -61,7 +61,7 @@ cost line is a flat trace on the axis floor.
 
 ## Decision
 
-The Overview carries **one block, `Activity & Cost`**, fed by a single
+The Overview carries **one block, `Spans & cost`**, fed by a single
 `/history` call, plotting `spans` as a filled area against a left axis and
 `cost_usd` as a line against a right axis (option 3 + 3a). The block header links
 to both full pages, `History →` and `Costs →`, so neither is orphaned.
@@ -77,10 +77,15 @@ correlation the data does not hold. We take it deliberately, and pay for it:
 
 - The two series wear **different marks** — a filled area and a bare line — so
   the eye does not read them as two comparable lines with a meaningful crossing.
+  The legend swatches carry the same two marks.
 - The legend names the axis each series reads against, in words: `Spans (left
-  axis)`, `Cost (right axis, USD)`. Identity is not carried by colour alone.
+  axis)`, `Cost (right axis)`. Identity is not carried by colour alone.
 - The right axis is tick-formatted in dollars, the left in bare counts, so the
-  two scales are self-labelling.
+  two scales are self-labelling — which is why the legend does not repeat the
+  unit.
+- The legend is a row of the block above the plot, not a layer floating over it:
+  the labels are long enough to collide with the right axis ticks on a phone,
+  and a wrapping row pushes the chart down instead of overdrawing it.
 - Axis and legend text stay in ink tokens, not series colours.
 
 The mitigation is honest about what it is. It makes the plot *readable*; it does

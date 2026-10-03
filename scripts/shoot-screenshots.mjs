@@ -21,7 +21,7 @@ const SHOTS = [
     name: 'dashboard-overview',
     path: '/',
     wait: '.recharts-surface',
-    end: `(${STAT_SECTIONS}).find(d => /^activity & cost/i.test(d.textContent.trim()))`,
+    end: `(${STAT_SECTIONS}).find(d => /^spans & cost/i.test(d.textContent.trim()))`,
   },
   { name: 'dashboard-users', path: '/users', wait: 'table', end: `document.querySelector('table')` },
   { name: 'dashboard-tools', path: '/tools', wait: 'table', end: `document.querySelector('table')` },
