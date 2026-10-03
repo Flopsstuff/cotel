@@ -71,6 +71,13 @@ cost — the existing tokens, unchanged. The pair was validated rather than eyeb
 CVD separation ΔE 32.3 protan / 29.3 tritan in light, 29.9 / 24.6 in dark, against
 a target of ≥ 8.
 
+> Those are the figures this ADR shipped against. The chart palette has since been
+> re-derived: the token names here are unchanged, the values behind them are not,
+> and the current measurement of all ten pairs lives in
+> [tokens.md](../design/tokens.md). Validating only the pair on this plot is how the
+> rest of the palette shipped with `chart-1` and `chart-2` indistinguishable under
+> deuteranopia, and with the dark scheme's loudness order reversed against the light.
+
 A two-scale plot is a known way to mislead: the alignment of the scales is
 arbitrary, so where the two lines cross means nothing, and a chart can invent a
 correlation the data does not hold. We take it deliberately, and pay for it:

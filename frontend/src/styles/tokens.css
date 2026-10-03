@@ -21,10 +21,10 @@
 
   /* Chart palette */
   --color-chart-1: #2563eb;
-  --color-chart-2: #7c3aed;
-  --color-chart-3: #059669;
-  --color-chart-4: #d97706;
-  --color-chart-5: #db2777;
+  --color-chart-2: #8373bc;
+  --color-chart-3: #046642;
+  --color-chart-4: #b36519;
+  --color-chart-5: #e4307e;
 
   /* Typography */
   --font-sans:  system-ui, -apple-system, 'Segoe UI', sans-serif;
@@ -99,10 +99,10 @@
     --color-neutral:     #94a3b8;
 
     --color-chart-1: #60a5fa;
-    --color-chart-2: #a78bfa;
-    --color-chart-3: #34d399;
-    --color-chart-4: #fbbf24;
-    --color-chart-5: #f472b6;
+    --color-chart-2: #8b6eda;
+    --color-chart-3: #01d699;
+    --color-chart-4: #c89716;
+    --color-chart-5: #e965ab;
   }
 }
 
