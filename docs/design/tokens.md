@@ -73,7 +73,7 @@ Applied via `@media (prefers-color-scheme: dark)` override on `:root`. All token
 
 ## Chart palette
 
-Ordered list used for multi-series charts (tool breakdowns, model comparisons). Designed for color-independence: vary hue *and* lightness so the series are distinguishable in greyscale and to users with deuteranopia.
+Ordered list used for multi-series charts (tool breakdowns, model comparisons). It varies hue *and* lightness so the series separate in greyscale as well as in colour. It is **not** safe for every pair at once — the two rules below say what it owes, on what ruler, and which pairs it currently fails.
 
 | Token | Light value | Dark value | Usage |
 |---|---|---|---|
@@ -84,6 +84,45 @@ Ordered list used for multi-series charts (tool breakdowns, model comparisons). 
 | `--color-chart-5` | `#db2777` | `#f472b6` | Fifth series |
 
 Use `--color-chart-1` → `--color-chart-5` in order; do not skip. When more than 5 series exist, group the tail as "Other" (use `--color-text-3`).
+
+### The ruler
+
+Both rules below are measured, not argued, so a proposed value can be checked before it ships. Simulate colour-vision deficiency with **Machado 2009 at severity 1.0**, then take **Euclidean distance in OKLab × 100** — that is what "ΔE" means on this page, and it reproduces the figures recorded in ADR-0015 exactly. Lightness is OKLab `L`. Salience is WCAG contrast against `--color-surface` (`#ffffff` light, `#0f172a` dark).
+
+There is no lightness ceiling. A bare `L` cap was proposed and rejected: it reads a symptom of rule 1 off a single token while leaving the same fault in the neighbouring ones.
+
+### Rule 1 — salience order is the same in both schemes
+
+A token's rank by contrast against the surface is a promise about how loud that series is. The ranks must agree across schemes, or the same chart puts a different series on top depending on the reader's theme.
+
+| Token | Light contrast | Rank | Dark contrast | Rank |
+|---|---|---|---|---|
+| `--color-chart-1` | 5.17:1 | 2 | 7.02:1 | 4 |
+| `--color-chart-2` | 5.70:1 | 1 | 6.56:1 | 5 |
+| `--color-chart-3` | 3.77:1 | 4 | 9.29:1 | 2 |
+| `--color-chart-4` | 3.19:1 | 5 | 10.69:1 | 1 |
+| `--color-chart-5` | 4.60:1 | 3 | 6.74:1 | 3 |
+
+**The palette fails this today, and fails it completely:** the dark order is the light order reversed. Lightness was mirrored into the dark scheme without accounting for the surface flipping under it, so the token picked to be quietest in light is loudest in dark. Where two of these share one plot — spans in `chart-1` against cost in `chart-4` on the Overview — the dark scheme promotes the secondary series over the primary, and the light scheme does not.
+
+### Rule 2 — any two tokens that can share a plot stay ΔE ≥ 8 apart
+
+Because the palette is used in order, "can share a plot" means every pair. The bar of 8 is this project's own, set in ADR-0015. Worst case over protanopia, deuteranopia and tritanopia, with the simulation that produced it:
+
+| Pair | Light | Dark |
+|---|---|---|
+| 1–2 | **0.4** (deutan) | **0.3** (deutan) |
+| 1–3 | **6.6** (tritan) | **7.7** (tritan) |
+| 1–4 | 29.3 (tritan) | 24.6 (tritan) |
+| 1–5 | 18.7 (protan) | 10.9 (protan) |
+| 2–3 | 13.6 (tritan) | 15.4 (tritan) |
+| 2–4 | 25.6 (tritan) | 17.1 (tritan) |
+| 2–5 | 19.3 (protan) | 10.3 (protan) |
+| 3–4 | **7.9** (protan) | 10.6 (protan) |
+| 3–5 | **1.1** (deutan) | 6.6 (deutan) |
+| 4–5 | 9.7 (tritan) | 13.3 (tritan) |
+
+`chart-1` and `chart-2` are the same colour to a deuteranope in both schemes. Since the ordered palette hands out 1 and 2 first, that is every two-series chart in the product. Until the palette is re-derived, a two-series chart must carry identity in something other than hue — a different mark per series, or a direct label — and must not rely on the legend swatch alone.
 
 ---
 
