@@ -36,20 +36,14 @@ func schemes(t *testing.T) [2]design.Scheme {
 func TestSalienceRule(t *testing.T) {
 	s := schemes(t)
 	for _, sc := range s {
-		c := sc.Contrasts()
 		for i := 1; i <= design.ChartTokens; i++ {
-			if got := c[i-1]; got < design.ContrastFloor {
-				t.Errorf("%s (%s): contrast %.2f:1 against --color-surface %s, floor is %.1f",
-					design.ChartName(i), sc.Name, got, sc.Surface.Hex(), design.ContrastFloor)
+			if msg, failed := salienceFloorFailure(sc, i); failed {
+				t.Error(msg)
 			}
 		}
 	}
-
-	light, dark := s[0].Contrasts().Order(), s[1].Contrasts().Order()
-	if fmt.Sprint(light) != fmt.Sprint(dark) {
-		t.Errorf("salience rank differs: light %s vs dark %s - %s\n%s",
-			orderList(light), orderList(dark), describeRankDiff(light, dark),
-			rankEvidence(s, light, dark))
+	if msg, failed := salienceRankFailure(s); failed {
+		t.Error(msg)
 	}
 }
 
@@ -58,15 +52,47 @@ func TestSalienceRule(t *testing.T) {
 func TestSeparationRule(t *testing.T) {
 	for _, sc := range schemes(t) {
 		for _, p := range design.Pairs() {
-			a, b := sc.Chart[p[0]-1], sc.Chart[p[1]-1]
-			e, at := design.WorstDeltaE(a, b)
-			if e < design.DeltaEBar {
-				t.Errorf("%s vs %s (%s): dE %.1f under %s, bar is %.1f (%s vs %s)",
-					design.ChartName(p[0]), design.ChartName(p[1]), sc.Name,
-					e, at, design.DeltaEBar, a.Hex(), b.Hex())
+			if msg, failed := separationFailure(sc, p); failed {
+				t.Error(msg)
 			}
 		}
 	}
+}
+
+// The three failure texts are built here rather than inline in the assertions,
+// so the regression fixture can hold the message a reader would actually see
+// instead of a reconstruction of it. The message is the deliverable: it has to
+// name the offender and both measurements, or the cheapest way out of a red
+// build is to delete the test.
+
+func salienceFloorFailure(sc design.Scheme, i int) (string, bool) {
+	got := sc.Contrasts()[i-1]
+	if got >= design.ContrastFloor {
+		return "", false
+	}
+	return fmt.Sprintf("%s (%s): contrast %.2f:1 against --color-surface %s, floor is %.1f",
+		design.ChartName(i), sc.Name, got, sc.Surface.Hex(), design.ContrastFloor), true
+}
+
+func salienceRankFailure(s [2]design.Scheme) (string, bool) {
+	light, dark := s[0].Contrasts().Order(), s[1].Contrasts().Order()
+	if fmt.Sprint(light) == fmt.Sprint(dark) {
+		return "", false
+	}
+	return fmt.Sprintf("salience rank differs: light %s vs dark %s - %s\n%s",
+		orderList(light), orderList(dark), describeRankDiff(light, dark),
+		rankEvidence(s, light, dark)), true
+}
+
+func separationFailure(sc design.Scheme, p [2]int) (string, bool) {
+	a, b := sc.Chart[p[0]-1], sc.Chart[p[1]-1]
+	e, at := design.WorstDeltaE(a, b)
+	if e >= design.DeltaEBar {
+		return "", false
+	}
+	return fmt.Sprintf("%s vs %s (%s): dE %.1f under %s, bar is %.1f (%s vs %s)",
+		design.ChartName(p[0]), design.ChartName(p[1]), sc.Name,
+		e, at, design.DeltaEBar, a.Hex(), b.Hex()), true
 }
 
 func orderList(order []int) string {
@@ -264,6 +290,38 @@ func TestParseTokensSeparatesSchemes(t *testing.T) {
 	}
 	if got := dark.Chart[0].Hex(); got != "#aaaaaa" {
 		t.Errorf("dark chart-1 = %s, want #aaaaaa (from shorthand)", got)
+	}
+}
+
+// Light is the top-level :root, not whichever :root comes first in the file.
+// Taking the first one makes a dark block declared above it both schemes: the
+// light palette goes unmeasured, and rule 1 then compares dark against itself
+// and always agrees.
+func TestParseTokensSeparatesSchemesWhateverTheFileOrder(t *testing.T) {
+	const src = `@media (prefers-color-scheme: dark) {
+  :root {
+    --color-surface: #000000;
+    --color-chart-1: #aaaaaa; --color-chart-2: #bbbbbb; --color-chart-3: #cccccc;
+    --color-chart-4: #dddddd; --color-chart-5: #eeeeee;
+  }
+}
+:root {
+  --color-surface: #ffffff;
+  --color-chart-1: #111111; --color-chart-2: #222222; --color-chart-3: #333333;
+  --color-chart-4: #444444; --color-chart-5: #555555;
+}`
+	light, dark, err := design.ParseTokens(src)
+	if err != nil {
+		t.Fatalf("ParseTokens: %v", err)
+	}
+	if got := light.Surface.Hex(); got != "#ffffff" {
+		t.Errorf("light surface = %s, want #ffffff — the dark block was read as light", got)
+	}
+	if got := light.Chart[0].Hex(); got != "#111111" {
+		t.Errorf("light chart-1 = %s, want #111111", got)
+	}
+	if got := dark.Surface.Hex(); got != "#000000" {
+		t.Errorf("dark surface = %s, want #000000", got)
 	}
 }
 

@@ -69,23 +69,42 @@ func TestGuardRejectsThePreRederivePalette(t *testing.T) {
 	}
 }
 
-// The guard's value is the failure text, so assert it names the pair, the
-// deficiency and both colours rather than only that it failed.
-func TestFailureTextNamesThePairAndBothMeasurements(t *testing.T) {
+// The guard's value is the failure text, so assert the text the rules actually
+// emit — not a reconstruction of it from the same parts.
+func TestFailureTextNamesTheOffenderAndBothMeasurements(t *testing.T) {
 	s := brokenSchemes(t)
-	light := s[0]
-	e, at := design.WorstDeltaE(light.Chart[0], light.Chart[1])
 
-	msg := strings.Join([]string{
-		design.ChartName(1), design.ChartName(2), light.Name,
-		at.String(), light.Chart[0].Hex(), light.Chart[1].Hex(),
-	}, " ")
-	for _, want := range []string{"chart-1", "chart-2", "light", "deuteranopia", "#2563eb", "#7c3aed"} {
+	msg, failed := separationFailure(s[0], [2]int{1, 2})
+	if !failed {
+		t.Fatal("rule 2 passed chart-1 against chart-2 on the pre-re-derive palette")
+	}
+	// The pair, the scheme, the deficiency, the measurement, the bar, and both
+	// colours, so the reader can fix the colour instead of the test.
+	for _, want := range []string{
+		"chart-1 vs chart-2", "(light)", "deuteranopia", "bar is 8.0", "#2563eb", "#7c3aed",
+	} {
 		if !strings.Contains(msg, want) {
-			t.Errorf("a rule 2 failure could not name %q (from %q)", want, msg)
+			t.Errorf("rule 2 failure does not name %q:\n  %s", want, msg)
 		}
 	}
-	if e <= 0 {
-		t.Errorf("ΔE %.1f is not a usable measurement", e)
+
+	msg, failed = salienceFloorFailure(s[0], 4)
+	if !failed {
+		t.Fatal("rule 1's floor passed light chart-4, which measured 3.19:1")
+	}
+	for _, want := range []string{"chart-4 (light)", "--color-surface #ffffff", "floor is 4.0"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("rule 1 floor failure does not name %q:\n  %s", want, msg)
+		}
+	}
+
+	msg, failed = salienceRankFailure(s)
+	if !failed {
+		t.Fatal("rule 1's rank check passed, but the pre-re-derive orders disagreed")
+	}
+	for _, want := range []string{"light [", "dark [", "chart-1"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("rule 1 rank failure does not name %q:\n  %s", want, msg)
+		}
 	}
 }

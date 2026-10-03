@@ -284,22 +284,26 @@ func (c Contrasts) Ranks() [ChartTokens]int {
 }
 
 // ParseTokens reads the light and dark chart palettes out of tokens.css. The
-// :root block is light; the one nested in the prefers-color-scheme: dark media
-// query is dark. A token that is absent or unparseable is an error, never a
-// skipped measurement.
+// top-level :root block is light; the one nested in the prefers-color-scheme:
+// dark media query is dark. A token that is absent or unparseable is an error,
+// never a skipped measurement.
 func ParseTokens(src string) (light, dark Scheme, err error) {
-	lightDecls, err := rootBlock(src)
-	if err != nil {
-		return light, dark, fmt.Errorf("light :root: %w", err)
-	}
 	const darkAt = "@media (prefers-color-scheme: dark)"
 	i := strings.Index(src, darkAt)
 	if i < 0 {
 		return light, dark, fmt.Errorf("no %q block", darkAt)
 	}
-	media, err := braceBlock(src[i:])
+	media, after, err := braceBlock(src[i:])
 	if err != nil {
 		return light, dark, fmt.Errorf("dark media query: %w", err)
+	}
+	// Light comes from the source with the dark media query excised, not from
+	// the first :root in the file: a dark block declared above the top-level
+	// :root would otherwise be measured as both schemes, leaving the light
+	// palette unmeasured and the cross-scheme rank rule trivially satisfied.
+	lightDecls, err := rootBlock(src[:i] + src[i+after:])
+	if err != nil {
+		return light, dark, fmt.Errorf("light :root: %w", err)
 	}
 	darkDecls, err := rootBlock(media)
 	if err != nil {
@@ -343,18 +347,19 @@ func rootBlock(src string) (map[string]string, error) {
 	if i < 0 {
 		return nil, fmt.Errorf("no :root block")
 	}
-	body, err := braceBlock(src[i:])
+	body, _, err := braceBlock(src[i:])
 	if err != nil {
 		return nil, err
 	}
 	return declarations(body), nil
 }
 
-// braceBlock returns the contents of the first brace-balanced block in src.
-func braceBlock(src string) (string, error) {
+// braceBlock returns the contents of the first brace-balanced block in src,
+// and the offset just past its closing brace.
+func braceBlock(src string) (string, int, error) {
 	open := strings.Index(src, "{")
 	if open < 0 {
-		return "", fmt.Errorf("no opening brace")
+		return "", 0, fmt.Errorf("no opening brace")
 	}
 	depth := 0
 	for i := open; i < len(src); i++ {
@@ -363,11 +368,11 @@ func braceBlock(src string) (string, error) {
 			depth++
 		case '}':
 			if depth--; depth == 0 {
-				return src[open+1 : i], nil
+				return src[open+1 : i], i + 1, nil
 			}
 		}
 	}
-	return "", fmt.Errorf("unbalanced braces")
+	return "", 0, fmt.Errorf("unbalanced braces")
 }
 
 func declarations(body string) map[string]string {
