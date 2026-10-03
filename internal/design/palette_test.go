@@ -235,6 +235,53 @@ func TestSimulationFixtures(t *testing.T) {
 	}
 }
 
+func TestSimulationIsNotGamutClamped(t *testing.T) {
+	// The gamut policy is pinned because it is a free parameter that moves the
+	// numbers, and it is the one that put two implementations of this ruler at
+	// 8.8 against 11.4 on the same pair. A pure blue leaves the cube under
+	// tritanopia by exactly the matrix entry it is multiplied by, so a clamp
+	// reintroduced anywhere in the pipeline fails here rather than silently in
+	// a palette measurement.
+	blue, err := design.ParseHex("#0000ff")
+	if err != nil {
+		t.Fatalf("ParseHex: %v", err)
+	}
+	sim := blue.Simulate(design.Tritanopia)
+	if want := design.Tritanopia.Matrix()[0][2]; math.Abs(sim.R-want) > 1e-9 {
+		t.Errorf("tritan simulation of #0000ff has R = %.6f, want %.6f", sim.R, want)
+	}
+	if sim.R >= 0 {
+		t.Errorf("tritan simulation of #0000ff has R = %.6f, want it to stay negative", sim.R)
+	}
+
+	// A negative cone response takes the signed cube root, so an out-of-gamut
+	// colour still measures a real number. math.Pow(x, 1.0/3) here would be NaN.
+	lab := sim.OKLab()
+	if math.IsNaN(lab.L) || math.IsNaN(lab.A) || math.IsNaN(lab.B) {
+		t.Errorf("OKLab of an out-of-gamut simulation = (%v, %v, %v), want real components",
+			lab.L, lab.A, lab.B)
+	}
+
+	// And the policy is load-bearing rather than decorative: clamping changes
+	// what a pair measures by far more than the tenth the doc tables print to.
+	green, err := design.ParseHex("#00ff00")
+	if err != nil {
+		t.Fatalf("ParseHex: %v", err)
+	}
+	clamp := func(l design.LinearRGB) design.LinearRGB {
+		to01 := func(v float64) float64 { return math.Min(1, math.Max(0, v)) }
+		return design.LinearRGB{R: to01(l.R), G: to01(l.G), B: to01(l.B)}
+	}
+	for _, d := range design.CVDs {
+		pinned := design.DeltaE(blue, green, d)
+		clamped := 100 * clamp(blue.Simulate(d)).OKLab().Distance(clamp(green.Simulate(d)).OKLab())
+		if math.Abs(pinned-clamped) < 1 {
+			t.Errorf("%s: clamping moves dE(#0000ff, #00ff00) from %.4f to %.4f; "+
+				"this fixture no longer distinguishes the two rulers", d, pinned, clamped)
+		}
+	}
+}
+
 func TestParseTokensRejectsMissingToken(t *testing.T) {
 	const src = `:root {
   --color-surface: #ffffff;

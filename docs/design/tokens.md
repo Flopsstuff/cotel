@@ -89,7 +89,7 @@ The dark values are **not** the light values lightened. Rule 1 makes the dark sc
 
 ### The ruler
 
-Both rules below are measured, not argued, so a proposed value can be checked before it ships. Simulate colour-vision deficiency with **Machado 2009 at severity 1.0** applied to linearised sRGB, then take **Euclidean distance in OKLab × 100** — that is what "ΔE" means on this page. Lightness is OKLab `L`. Salience is WCAG contrast against `--color-surface` (`#ffffff` light, `#0f172a` dark).
+Both rules below are measured, not argued, so a proposed value can be checked before it ships. Simulate colour-vision deficiency with **Machado 2009 at severity 1.0** applied to linearised sRGB, then take **Euclidean distance in OKLab × 100** — that is what "ΔE" means on this page. The simulated colour is **not** clamped back into the sRGB gamut on the way: clamping is a display concession, and it understates separation the reader still perceives. A tool that clamped measured `1–2` light at 8.8 where this ruler reads 11.4. Lightness is OKLab `L`. Salience is WCAG contrast against `--color-surface` (`#ffffff` light, `#0f172a` dark).
 
 The ruler is a pinned contract, not a recipe to reimplement: [ADR-0017](../decisions/0017-chart-palette-ruler-is-pinned.md) makes its matrices and constants normative in `internal/design/palette.go`, and the Go test beside them fails CI when either rule breaks. **Both tables below are generated output** — regenerate them with `go test ./internal/design/... -update` instead of editing rows by hand.
 
