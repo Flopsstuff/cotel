@@ -73,17 +73,19 @@ Applied via `@media (prefers-color-scheme: dark)` override on `:root`. All token
 
 ## Chart palette
 
-Ordered list used for multi-series charts (tool breakdowns, model comparisons). It varies hue *and* lightness so the series separate in greyscale as well as in colour. It is **not** safe for every pair at once — the two rules below say what it owes, on what ruler, and which pairs it currently fails.
+Ordered list used for multi-series charts (tool breakdowns, model comparisons). Every pair separates under colour-vision deficiency, and the series keep the same loudness order in both schemes. The two rules below say what that means, on what ruler, and what the palette measures today.
 
 | Token | Light value | Dark value | Usage |
 |---|---|---|---|
 | `--color-chart-1` | `#2563eb` | `#60a5fa` | Primary series (matches accent) |
-| `--color-chart-2` | `#7c3aed` | `#a78bfa` | Second series |
-| `--color-chart-3` | `#059669` | `#34d399` | Third series |
-| `--color-chart-4` | `#d97706` | `#fbbf24` | Fourth series |
-| `--color-chart-5` | `#db2777` | `#f472b6` | Fifth series |
+| `--color-chart-2` | `#8373bc` | `#8b6eda` | Second series |
+| `--color-chart-3` | `#046642` | `#01d699` | Third series |
+| `--color-chart-4` | `#b36519` | `#c89716` | Fourth series |
+| `--color-chart-5` | `#e4307e` | `#e965ab` | Fifth series |
 
 Use `--color-chart-1` → `--color-chart-5` in order; do not skip. When more than 5 series exist, group the tail as "Other" (use `--color-text-3`).
+
+The dark values are **not** the light values lightened. Rule 1 makes the dark scheme's lightness order the reverse of the light scheme's, because the surface flips underneath: against white a token is loud by being dark, against `#0f172a` it is loud by being light. A token that reads quiet in one scheme is therefore a *lighter* colour in light mode and a *darker* one in dark mode.
 
 ### The ruler
 
@@ -97,13 +99,15 @@ A token's rank by contrast against the surface is a promise about how loud that 
 
 | Token | Light contrast | Rank | Dark contrast | Rank |
 |---|---|---|---|---|
-| `--color-chart-1` | 5.17:1 | 2 | 7.02:1 | 4 |
-| `--color-chart-2` | 5.70:1 | 1 | 6.56:1 | 5 |
-| `--color-chart-3` | 3.77:1 | 4 | 9.29:1 | 2 |
-| `--color-chart-4` | 3.19:1 | 5 | 10.69:1 | 1 |
-| `--color-chart-5` | 4.60:1 | 3 | 6.74:1 | 3 |
+| `--color-chart-1` | 5.17:1 | 2 | 7.02:1 | 2 |
+| `--color-chart-2` | 4.08:1 | 5 | 4.54:1 | 5 |
+| `--color-chart-3` | 7.04:1 | 1 | 9.42:1 | 1 |
+| `--color-chart-4` | 4.38:1 | 3 | 6.71:1 | 3 |
+| `--color-chart-5` | 4.18:1 | 4 | 5.88:1 | 4 |
 
-**The palette fails this today, and fails it completely:** the dark order is the light order reversed. Lightness was mirrored into the dark scheme without accounting for the surface flipping under it, so the token picked to be quietest in light is loudest in dark. Where two of these share one plot — spans in `chart-1` against cost in `chart-4` on the Overview — the dark scheme promotes the secondary series over the primary, and the light scheme does not.
+The ranks agree. Where two of these share one plot — spans in `chart-1` against cost in `chart-4` on the Overview — the primary series is the louder one in both schemes; before this palette the dark scheme promoted cost over spans and the light scheme did not.
+
+The floor is 4:1, a third above the 3:1 WCAG 1.4.11 asks of a 2 px stroke. `chart-1` cannot be the loudest token: it is pinned to `--color-accent`, and rule 2 needs the other four spread far enough in lightness that two of them must land outside it on either side. Rank 2 of 5 is the loudest position available to it.
 
 ### Rule 2 — any two tokens that can share a plot stay ΔE ≥ 8 apart
 
@@ -111,18 +115,31 @@ Because the palette is used in order, "can share a plot" means every pair. The b
 
 | Pair | Light | Dark |
 |---|---|---|
-| 1–2 | **0.4** (deutan) | **0.3** (deutan) |
-| 1–3 | **6.6** (tritan) | **7.7** (tritan) |
-| 1–4 | 29.3 (tritan) | 24.6 (tritan) |
-| 1–5 | 18.7 (protan) | 10.9 (protan) |
-| 2–3 | 13.6 (tritan) | 15.4 (tritan) |
-| 2–4 | 25.6 (tritan) | 17.1 (tritan) |
-| 2–5 | 19.3 (protan) | 10.3 (protan) |
-| 3–4 | **7.9** (protan) | 10.6 (protan) |
-| 3–5 | **1.1** (deutan) | 6.6 (deutan) |
-| 4–5 | 9.7 (tritan) | 13.3 (tritan) |
+| 1–2 | 8.8 (tritan) | 9.7 (deutan) |
+| 1–3 | 12.5 (tritan) | 8.6 (tritan) |
+| 1–4 | 24.5 (tritan) | 22.4 (tritan) |
+| 1–5 | 17.6 (protan) | 13.0 (deutan) |
+| 2–3 | 16.0 (tritan) | 22.4 (tritan) |
+| 2–4 | 16.0 (tritan) | 16.0 (tritan) |
+| 2–5 | 10.7 (protan) | 9.2 (protan) |
+| 3–4 | 8.6 (protan) | 12.2 (deutan) |
+| 3–5 | 9.4 (protan) | 9.5 (deutan) |
+| 4–5 | 10.0 (deutan) | 9.3 (tritan) |
 
-`chart-1` and `chart-2` are the same colour to a deuteranope in both schemes. Since the ordered palette hands out 1 and 2 first, that is every two-series chart in the product. Until the palette is re-derived, a two-series chart must carry identity in something other than hue — a different mark per series, or a direct label — and must not rely on the legend swatch alone.
+The worst pair in the product is 8.6 — `3–4` under protanopia in light, `1–3` under tritanopia in dark. The previous palette put `chart-1` and `chart-2` at 0.4 and 0.3 — the same colour to a deuteranope — and since the palette is handed out in order, that was the pair every two-series chart drew.
+
+ΔE 8 is "tellable apart", not "comfortable". It does not license colour as the only channel: a chart whose series must be identified at a glance still earns a direct label or a different mark per series. It licenses the legend swatch to work for a reader who has one.
+
+### How the values were derived
+
+Re-deriving the palette means solving both rules at once; nudging one token cannot do it. The constraints a replacement value must satisfy:
+
+- `chart-1` is pinned — it is `--color-accent`, and it is the one chart token with product meaning.
+- Hue family per index is kept: blue, violet, green, amber, pink. Every value here is within 3° of the hue it replaces; only lightness and chroma moved.
+- ≥ 4:1 against the surface, and chroma ≥ 0.10 in OKLab. The chroma floor is what keeps a quiet token a colour rather than a tint — a pale near-neutral reads as "no series assigned", which is how an earlier candidate palette failed by eye while passing both rules on paper.
+- `chart-4` must no longer be byte-identical to `--color-warning`, which it was in both schemes.
+
+The Tailwind ramps the rest of this file is built from cannot satisfy this: at a 4:1 floor no assignment of their shades meets both rules, because a ramp steps lightness for one surface and rule 1 needs the two schemes ordered oppositely. These ten values are therefore off-ramp, and are the only colour tokens in the file that are.
 
 ---
 
@@ -251,10 +268,10 @@ Copy into `src/styles/tokens.css` as the canonical token file. All CSS Modules i
 
   /* Chart palette */
   --color-chart-1: #2563eb;
-  --color-chart-2: #7c3aed;
-  --color-chart-3: #059669;
-  --color-chart-4: #d97706;
-  --color-chart-5: #db2777;
+  --color-chart-2: #8373bc;
+  --color-chart-3: #046642;
+  --color-chart-4: #b36519;
+  --color-chart-5: #e4307e;
 
   /* Typography */
   --font-sans:  system-ui, -apple-system, 'Segoe UI', sans-serif;
@@ -329,10 +346,10 @@ Copy into `src/styles/tokens.css` as the canonical token file. All CSS Modules i
     --color-neutral:     #94a3b8;
 
     --color-chart-1: #60a5fa;
-    --color-chart-2: #a78bfa;
-    --color-chart-3: #34d399;
-    --color-chart-4: #fbbf24;
-    --color-chart-5: #f472b6;
+    --color-chart-2: #8b6eda;
+    --color-chart-3: #01d699;
+    --color-chart-4: #c89716;
+    --color-chart-5: #e965ab;
   }
 }
 
