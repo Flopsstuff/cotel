@@ -29,10 +29,23 @@ worst case is tritanopia — 1–2 light reads 11.4 (protan) against a recorded 
 exactly, and those are the two columns that were independently re-checked at
 review time; the ΔE column has had one tool behind it.
 
-So the divergence is confined to the tritanopia simulation, and it is large
-enough to move a cell across the bar. A guard that re-derives the ruler from
-prose is therefore not a guard: it can fail CI on a palette the doc certifies as
-passing, and the cheapest way out of that failure is to delete the test.
+So the divergence is large enough to move a cell across the bar. A guard that
+re-derives the ruler from prose is therefore not a guard: it can fail CI on a
+palette the doc certifies as passing, and the cheapest way out of that failure
+is to delete the test.
+
+The cause was identified after this ADR was first accepted, and it was not the
+matrices: both tools use these same constants in linear space. The derivation
+tool behind the recorded table clamped the simulated colour back into the sRGB
+cube before converting to OKLab. Re-adding that one step to an independent
+implementation reproduces the recorded table on all twenty cells and all twenty
+CVD labels. The diagnosis above — that the divergence is confined to tritanopia
+— was therefore wrong: `1–5` light is a protanopia cell and it moved too, 17.6
+against 18.3, which is what rules a matrix difference out. Tritanopia merely
+dominated the symptom, because the tritan matrix is the one that leaves the cube
+often and far: across both schemes it takes 5 of 10 tokens out of gamut, against
+2 for protanopia and 1 for deuteranopia. The Decision below pins the gamut
+policy, which is the degree of freedom that was never written down.
 
 ## Options considered
 
@@ -67,6 +80,19 @@ tritanopia   1.255528 -0.076749 -0.178779
              0.004733  0.691367  0.303900
 ```
 
+**The simulated colour is not clamped to the sRGB gamut.** The matrix product
+is carried into OKLab as-is, and the cube root takes the signed continuation
+for a negative cone response. This clause is as normative as the matrices, and
+for the same reason: it is a free parameter that changes the numbers. Clamping
+is a display concession — out-of-gamut output means the percept is not
+displayable on this monitor, not that two percepts have moved closer together,
+and folding two of them onto a cube face books a loss of separation the reader
+still perceives. It is also not conservative but merely noisy: clamping lowers
+eight of the twenty cells and *raises* `1–3` dark, so its bias has no
+consistent sign. On the binding pair it is the more generous of the two
+candidate rulers (8.56 clamped against 8.41 pinned), and a gate should not be
+the more generous one on the pair with the least room.
+
 The bar stays ADR-0015's ΔE ≥ 8; the contrast floor stays 4:1. A Go test in
 `internal/design` parses `frontend/src/styles/tokens.css`, measures both
 schemes, and fails CI when either rule breaks. Go, because `go test ./...`
@@ -100,13 +126,16 @@ palette change.
 - A palette change that breaks either rule fails CI with the offending pair or
   rank inversion and both measurements named, so it can be fixed at the value
   rather than at the test.
-- The tritan divergence is resolved by decree, not by reconciliation. Iris's
-  derivation tool and this ruler will still disagree on tritan-dominated cells;
-  hers is upstream of a proposal, this one is the gate. If her tool is the more
-  faithful reading of Machado 2009, that is a change to this ADR's constants —
-  a one-line edit and a regenerated table — and worth making, because the
-  constants are now in one place rather than spread across two unrecorded
-  implementations.
+- The divergence was reconciled rather than left to decree, and the constants
+  survived it unchanged: the disagreement was the gamut clamp, now pinned
+  above, and the recorded table main carries is the correct one. The ΔE column
+  has since been reproduced by two further independent implementations that
+  agree with it on all twenty cells.
+- There is one ruler and it has an address. A palette proposal should be
+  measured with `internal/design`'s own `ParseHex`, `DeltaE`, `WorstDeltaE` and
+  `ParseTokens` rather than a fresh script, because a second implementation is
+  what opened this question — and the gamut policy shows that getting every
+  published constant right is not sufficient to land on the same number.
 - The margins are documented as thin. The next palette proposal should treat
   8.4 and 4.08:1 as "passing, with no room", not as headroom.
 - `internal/design` carries no production consumer. It is imported by nothing
