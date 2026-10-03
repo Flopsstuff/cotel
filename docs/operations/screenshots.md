@@ -9,8 +9,12 @@ Redo them whenever a page in the shot changes shape.
 ## 1. Build the image under test
 
 ```bash
-docker build -t cotel:shots .
+docker build -t cotel:shots \
+  --label org.opencontainers.image.revision="$(git rev-parse HEAD)" .
 ```
+
+The label is what step 3 checks the image against; without it there is nothing to
+compare and you are back to trusting your memory of when you built.
 
 ## 2. Run it on a fresh volume, with retention off
 
@@ -26,7 +30,46 @@ docker run -d --name cotel-shots \
   cotel:shots
 ```
 
-## 3. Seed it
+## 3. Check the image is not stale
+
+Do this *before* the seed. The dashboard assets are `go:embed`-ed into the binary,
+so an image built before a design token moved serves the old CSS and the shot
+carries the old colours silently — the container is healthy, the seed is fine, the
+crop anchor matches, and nothing surfaces it until someone diffs a PNG. That is
+how the Overview hero in PR #109 landed on the pre-repaint palette and had to be
+re-shot in #111.
+
+The cheap guard first — the image should have been built from the commit you intend
+to publish:
+
+```bash
+docker inspect -f '{{index .Config.Labels "org.opencontainers.image.revision"}}' \
+  cotel:shots
+git rev-parse origin/main
+```
+
+Then the one that actually proves it, by diffing the palette the container serves
+against the token source at that commit. Compare declarations rather than
+hardcoded hex values — the tokens are expected to change, so a literal is wrong by
+the next repaint:
+
+```bash
+tokens() { grep -oE -- '--color-[a-z0-9-]+: *#[0-9a-fA-F]{3,8}' | tr -d ' ' | sort -u; }
+CSS=$(curl -s http://localhost:18080/ | grep -oE '/assets/[^"]+\.css' | head -1)
+
+diff <(curl -s "http://localhost:18080$CSS" | tokens) \
+     <(git show origin/main:frontend/src/styles/tokens.css | tokens) \
+  && echo "palette matches origin/main"
+```
+
+Vite minifies away the whitespace but keeps the custom-property declarations
+verbatim, so both sides normalise to the same ~46 lines. Both the light `:root`
+block and the `prefers-color-scheme: dark` override are in there; the shots are
+dark, and the dark values are the ones that drifted last time. Any output at all
+means the image predates a token change — rebuild from step 1 before spending an
+hour on the seed.
+
+## 4. Seed it
 
 ```bash
 python3 -u scripts/seed-demo.py --dash-url http://localhost:18080 \
@@ -51,7 +94,7 @@ weighted by weekday, and the 90-day window lands on a different weekday
 alignment each time, so session and span totals drift by a few percent and the
 30-day stat cards move with them. The curve shape stays the same.
 
-## 4. Shoot
+## 5. Shoot
 
 ```bash
 BASE=http://localhost:18080 node scripts/shoot-screenshots.mjs
@@ -74,7 +117,7 @@ directory chain either way, and the repo root is not ignored there, so a root
 `node_modules/` is one `git add -A` away from being committed. Chromium comes from `CHROMIUM`
 (default `/usr/bin/chromium`); this box has no Playwright-managed browser.
 
-## 5. Tear down
+## 6. Tear down
 
 ```bash
 docker rm -f cotel-shots && docker volume rm cotel-shots-data
