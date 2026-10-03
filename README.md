@@ -269,11 +269,20 @@ container reports `healthy` and **fails the deploy** on any of:
 | Still `starting` when the timeout expires | fail |
 | Service defines no `HEALTHCHECK` | fail |
 
-On failure it dumps `docker compose ps`, the last health-probe output and
-`docker compose logs --tail=200`, so the reason lands in the workflow run log
-instead of needing shell access to the runner. The healthcheck itself is defined
-in the `Dockerfile` and compose inherits it from the image; the "no `HEALTHCHECK`"
-row means the gate cannot be quietly defeated by dropping it.
+On failure it dumps `docker compose ps`, the last health-probe output, the
+**crash cause**, and `docker compose logs --tail=200`, so the reason lands in the
+workflow run log instead of needing shell access to the runner. The healthcheck
+itself is defined in the `Dockerfile` and compose inherits it from the image; the
+"no `HEALTHCHECK`" row means the gate cannot be quietly defeated by dropping it.
+
+The crash cause is reported separately from the tail because a tail cannot carry
+it. A Go crash names its fault on the *first* line — `fatal error: …`, `panic: …`,
+`[signal SIGABRT…]` — and then prints a goroutine dump thousands of lines long,
+so `--tail=200` reliably starts mid-stack, past the only line that says why the
+process died. The gate therefore searches the whole log for that header and
+prints the first one with the following 25 lines, plus how many headers the log
+holds in total — more than one means the container died repeatedly. Tune with
+`LOG_TAIL`, `CRASH_CONTEXT`.
 
 Only restarts observed *during* the wait count against a deploy. A restart count
 of its own does not: `up -d` leaves an already-current container in place, and a
