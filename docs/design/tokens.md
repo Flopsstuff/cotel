@@ -89,7 +89,9 @@ The dark values are **not** the light values lightened. Rule 1 makes the dark sc
 
 ### The ruler
 
-Both rules below are measured, not argued, so a proposed value can be checked before it ships. Simulate colour-vision deficiency with **Machado 2009 at severity 1.0**, then take **Euclidean distance in OKLab × 100** — that is what "ΔE" means on this page, and it reproduces the figures recorded in ADR-0015 exactly. Lightness is OKLab `L`. Salience is WCAG contrast against `--color-surface` (`#ffffff` light, `#0f172a` dark).
+Both rules below are measured, not argued, so a proposed value can be checked before it ships. Simulate colour-vision deficiency with **Machado 2009 at severity 1.0** applied to linearised sRGB, then take **Euclidean distance in OKLab × 100** — that is what "ΔE" means on this page. Lightness is OKLab `L`. Salience is WCAG contrast against `--color-surface` (`#ffffff` light, `#0f172a` dark).
+
+The ruler is a pinned contract, not a recipe to reimplement: [ADR-0017](../decisions/0017-chart-palette-ruler-is-pinned.md) makes its matrices and constants normative in `internal/design/palette.go`, and the Go test beside them fails CI when either rule breaks. **Both tables below are generated output** — regenerate them with `go test ./internal/design/... -update` instead of editing rows by hand.
 
 There is no lightness ceiling. A bare `L` cap was proposed and rejected: it reads a symptom of rule 1 off a single token while leaving the same fault in the neighbouring ones.
 
@@ -115,18 +117,18 @@ Because the palette is used in order, "can share a plot" means every pair. The b
 
 | Pair | Light | Dark |
 |---|---|---|
-| 1–2 | 8.8 (tritan) | 9.7 (deutan) |
-| 1–3 | 12.5 (tritan) | 8.6 (tritan) |
-| 1–4 | 24.5 (tritan) | 22.4 (tritan) |
-| 1–5 | 17.6 (protan) | 13.0 (deutan) |
-| 2–3 | 16.0 (tritan) | 22.4 (tritan) |
+| 1–2 | 11.4 (protan) | 9.7 (deutan) |
+| 1–3 | 12.9 (tritan) | 8.4 (tritan) |
+| 1–4 | 31.6 (protan) | 24.2 (tritan) |
+| 1–5 | 18.3 (protan) | 13.0 (deutan) |
+| 2–3 | 17.4 (tritan) | 23.2 (tritan) |
 | 2–4 | 16.0 (tritan) | 16.0 (tritan) |
 | 2–5 | 10.7 (protan) | 9.2 (protan) |
 | 3–4 | 8.6 (protan) | 12.2 (deutan) |
 | 3–5 | 9.4 (protan) | 9.5 (deutan) |
 | 4–5 | 10.0 (deutan) | 9.3 (tritan) |
 
-The worst pair in the product is 8.6 — `3–4` under protanopia in light, `1–3` under tritanopia in dark. The previous palette put `chart-1` and `chart-2` at 0.4 and 0.3 — the same colour to a deuteranope — and since the palette is handed out in order, that was the pair every two-series chart drew.
+The worst pair in the product is 8.4 — `1–3` under tritanopia in dark, with `3–4` under protanopia in light next at 8.6. Treat both as "passing, with no room". The previous palette put `chart-1` and `chart-2` at 0.4 and 0.3 — the same colour to a deuteranope — and since the palette is handed out in order, that was the pair every two-series chart drew.
 
 ΔE 8 is "tellable apart", not "comfortable". It does not license colour as the only channel: a chart whose series must be identified at a glance still earns a direct label or a different mark per series. It licenses the legend swatch to work for a reader who has one.
 
