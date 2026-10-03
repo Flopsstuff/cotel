@@ -32,6 +32,25 @@
   white-space: nowrap;
 }
 
+/* Its own row rather than a legend floating inside the plot: when the labels no
+   longer fit they wrap above the chart instead of over the right axis ticks. */
+.chartLegend {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: var(--space-1) var(--space-4);
+  min-height: 24px;
+  /* lands the labels' right edge on the right axis tick labels' */
+  padding-right: var(--space-3);
+}
+
+.legendEntry {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
 .legendLabel {
   font-size: var(--text-xs);
   color: var(--color-text-2);

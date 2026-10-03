@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import {
   ComposedChart, Line, Area,
-  XAxis, YAxis, Tooltip, Legend, ResponsiveContainer,
+  XAxis, YAxis, Tooltip, ResponsiveContainer,
 } from 'recharts'
 import {
   useOverview, useSessions, useHistory, useTools, useModels, useUsersPage,
@@ -134,7 +134,22 @@ function ActivitySection({ range, userId }: SectionProps) {
           earlier days in this range survive only as whole-day totals.
         </p>
       )}
-      <ResponsiveContainer width="100%" height={200}>
+      <div className={styles.chartLegend}>
+        <span className={styles.legendEntry}>
+          <svg width="14" height="10" aria-hidden="true">
+            <rect x="0" y="4" width="14" height="6" fill="var(--color-chart-1)" opacity="0.25" />
+            <line x1="0" y1="4" x2="14" y2="4" stroke="var(--color-chart-1)" strokeWidth="2" />
+          </svg>
+          <span className={styles.legendLabel}>Spans (left axis)</span>
+        </span>
+        <span className={styles.legendEntry}>
+          <svg width="14" height="10" aria-hidden="true">
+            <line x1="0" y1="5" x2="14" y2="5" stroke="var(--color-chart-4)" strokeWidth="2" />
+          </svg>
+          <span className={styles.legendLabel}>Cost (right axis)</span>
+        </span>
+      </div>
+      <ResponsiveContainer width="100%" height={176}>
         <ComposedChart data={data.buckets} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
           <defs>
             <linearGradient id="grad-activity-spans" x1="0" y1="0" x2="0" y2="1">
@@ -170,18 +185,6 @@ function ActivitySection({ range, userId }: SectionProps) {
                 }
               />
             }
-          />
-          <Legend
-            verticalAlign="top"
-            align="right"
-            height={24}
-            iconType="plainline"
-            iconSize={12}
-            formatter={(value) => (
-              <span className={styles.legendLabel}>
-                {value} {value === 'Cost' ? '(right axis, USD)' : '(left axis)'}
-              </span>
-            )}
           />
           <Area
             yAxisId="spans"
@@ -436,7 +439,7 @@ export default function Overview() {
       )}
 
       <StatSection
-        title="Activity & Cost"
+        title="Spans & cost"
         links={[
           { label: 'History', href: `/history${userParam}` },
           { label: 'Costs', href: `/costs${userParam}` },
