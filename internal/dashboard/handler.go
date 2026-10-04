@@ -90,7 +90,6 @@ func (h *Handler) serveHealthz(w http.ResponseWriter, r *http.Request) {
 }
 
 func writeJSON(w http.ResponseWriter, v any) {
-	if err := json.NewEncoder(w).Encode(v); err != nil {
-		_ = err // headers already sent; nothing useful to do
-	}
+	// The header is already out, so a write error has nowhere left to go.
+	_ = json.NewEncoder(w).Encode(v)
 }

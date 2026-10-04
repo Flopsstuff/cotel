@@ -103,13 +103,21 @@ func TestHealthzImportedSpanStaysStale(t *testing.T) {
 		t.Fatalf("ImportSpans: n=%d err=%v", n, err)
 	}
 
-	_, body := getHealthz(t, dashboard.New(ro))
+	code, body := getHealthz(t, dashboard.New(ro))
 	age, ok := body["newest_span_age_seconds"].(float64)
 	if !ok {
 		t.Fatalf("want numeric newest_span_age_seconds, got %v", body["newest_span_age_seconds"])
 	}
 	if age < 5*24*3600 {
 		t.Errorf("imported span must keep its original ingest age, got %v seconds", age)
+	}
+	// The container HEALTHCHECK reads only the status code, so six days of
+	// silence has to stay 200 or a quiet weekend reports the container broken.
+	if code != http.StatusOK {
+		t.Errorf("staleness must not change the status code: want 200, got %d", code)
+	}
+	if body["ok"] != true {
+		t.Errorf("a stale but readable database is still ok, got %v", body["ok"])
 	}
 }
 
