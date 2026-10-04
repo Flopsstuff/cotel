@@ -95,10 +95,11 @@ If you need the token out of the container entirely, use [local-config mode](./c
 
 The image carries a `cloudflared` pinned by `CLOUDFLARED_VERSION` in the `Dockerfile` (currently **2026.9.3**) rather than tracking `latest`, so a rebuild of an old commit produces the same binary it did originally. Override it at build time with `--build-arg CLOUDFLARED_VERSION=…`.
 
-Two things about recent versions are worth knowing when reading the startup log:
+A few things are worth knowing when reading the startup log:
 
 - **Edge IP version.** 2026.4.0 changed the `--edge-ip-version` default from `4` to `auto`, which connects over whichever address family the system resolver answers with first and falls back to the other one only after a connection has already failed. In token mode the entrypoint sets `TUNNEL_EDGE_IP_VERSION=4` unless you set it yourself, because a container with a resolver that answers `AAAA` first but no working IPv6 egress would otherwise spend its first connection attempts failing. Set `TUNNEL_EDGE_IP_VERSION=auto` (or `6`) in your deployment to opt back in. This is token mode only - in local-config mode the setting belongs in your `config.yml`, and an env var would silently outrank it.
 - **Connectivity pre-checks.** Since 2026 cloudflared probes DNS, QUIC, HTTP/2 and the Cloudflare API at startup and logs a `CONNECTIVITY PRE-CHECKS` table (about twenty lines) before the tunnel registers. They are diagnostic only - they run concurrently with startup, do not gate it, and a `FAIL` row does not stop the tunnel. The table is the fastest way to tell a blocked UDP path from a bad token. `TUNNEL_NO_PRECHECKS=true` silences it.
+- **QUIC receive-buffer warning.** quic-go, the library behind cloudflared's QUIC path, may log `failed to sufficiently increase receive buffer size (was: …, wanted: …, got: …)` plus a link to the [quic-go UDP-Buffer-Sizes wiki](https://github.com/quic-go/quic-go/wiki/UDP-Buffer-Sizes). The line is advisory and may predate the 2026.9.3 bump - the previous container is gone with the deploy, so the two versions cannot be compared. On the 2026.9.3 deploy every `CONNECTIVITY PRE-CHECKS` row still read `PASS`, the summary still picked `quic` as the primary protocol, four tunnel connections registered over IPv4, and public ingest accepted shortly after. The ceiling is the host's socket-buffer limit (`net.core.rmem_max` on Linux); the current deploy host is darwin, so the image has no knob for it.
 
 ### Why not `--token-file`
 
