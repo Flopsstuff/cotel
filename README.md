@@ -276,6 +276,35 @@ rather than a misleading healthy state while ingest is still dark; it flips to
 docker inspect --format '{{.State.Health.Status}}' cotel   # starting → healthy
 ```
 
+#### What `/healthz` returns
+
+```json
+{"ok": true, "spans": 128402, "last_ingest_at": "2026-10-04T03:12:44.118Z", "newest_span_age_seconds": 97}
+```
+
+| Field | Meaning |
+|---|---|
+| `ok` | `false` when the database could not be queried at all |
+| `spans` | Rows in `spans` |
+| `last_ingest_at` | When the newest span was **accepted** (RFC 3339), or `null` if nothing was ever ingested |
+| `newest_span_age_seconds` | Seconds since `last_ingest_at`, or `null` if nothing was ever ingested |
+
+The age is measured from `ingested_at`, not `start_time`: importing an archive
+replays the original ingest time, so a restore cannot make a dark instance look
+alive, and a span arriving late with an old `start_time` still counts as fresh
+traffic. An empty database reports `null` rather than `0`, because "nothing ever
+arrived" is not "something arrived just now".
+
+A growing age is the signal that the process is up but spans are not reaching
+it — a state that otherwise looks identical to a healthy idle instance. **It
+does not change the status code**: staleness answers `200` like any other
+readable database, because the right threshold ("nothing for 2 hours" vs "a
+quiet weekend") belongs to whoever polls, not to the container. Only a failed
+query is a failure: that answers `503` with `{"ok": false}`, so the probe cannot
+report a dead database as healthy. The same two fields are on
+`GET /api/v1/health` — see
+[docs/operations/api-reference.md](docs/operations/api-reference.md).
+
 ### The deploy waits for healthy
 
 `docker compose up -d` returns as soon as the container has *started*, which is

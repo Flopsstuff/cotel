@@ -352,11 +352,15 @@ func (f usageFilter) cte() string {
 // ---- /api/v1/health ----
 
 type healthResponse struct {
-	Status          string          `json:"status"`
-	SpanCount       int64           `json:"span_count"`
-	DBSizeBytes     int64           `json:"db_size_bytes"`
-	Retention       retentionHealth `json:"retention"`
-	PublicIngestURL string          `json:"public_ingest_url,omitempty"`
+	Status    string `json:"status"`
+	SpanCount int64  `json:"span_count"`
+	// Null until something has been ingested — an empty database has no age,
+	// and reporting 0 would read as "ingested just now".
+	LastIngestAt         *string         `json:"last_ingest_at"`
+	NewestSpanAgeSeconds *int64          `json:"newest_span_age_seconds"`
+	DBSizeBytes          int64           `json:"db_size_bytes"`
+	Retention            retentionHealth `json:"retention"`
+	PublicIngestURL      string          `json:"public_ingest_url,omitempty"`
 }
 
 // retentionHealth surfaces the outcome of the last retention-worker cycle so a
@@ -368,8 +372,8 @@ type retentionHealth struct {
 }
 
 func (h *Handler) handleHealth(w http.ResponseWriter, _ *http.Request) {
-	var spans int64
-	if err := h.db.QueryRow("SELECT COUNT(*) FROM spans").Scan(&spans); !scanOK(err) {
+	fresh, err := storage.QueryIngestFreshness(h.db)
+	if err != nil {
 		queryFailed(w)
 		return
 	}
@@ -392,11 +396,13 @@ func (h *Handler) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	}
 
 	jsonOK(w, healthResponse{
-		Status:          status,
-		SpanCount:       spans,
-		DBSizeBytes:     dbSize,
-		Retention:       ret,
-		PublicIngestURL: h.publicIngestURL,
+		Status:               status,
+		SpanCount:            fresh.SpanCount,
+		LastIngestAt:         fresh.Timestamp(),
+		NewestSpanAgeSeconds: fresh.AgeSeconds(time.Now()),
+		DBSizeBytes:          dbSize,
+		Retention:            ret,
+		PublicIngestURL:      h.publicIngestURL,
 	})
 }
 
