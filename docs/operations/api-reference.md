@@ -244,6 +244,38 @@ returns one user in the same shape and accepts `range`. See
 [Users and Authentication](./users-and-auth.md) for the management endpoints
 (create, rotate, delete).
 
+## `GET /health`
+
+Instance health. Takes no parameters and is never range-scoped.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `status` | `ok` \| `degraded` | `degraded` when the last retention roll-up failed |
+| `span_count` | integer | Rows in `spans` |
+| `last_ingest_at` | RFC 3339 string \| `null` | When the newest span was **accepted**; `null` if nothing was ever ingested |
+| `newest_span_age_seconds` | integer \| `null` | Seconds since `last_ingest_at`; `null` if nothing was ever ingested |
+| `db_size_bytes` | integer | Approximate database file size |
+| `retention` | object | `status` (`ok` \| `error` \| `unknown`), `last_run_at`, `last_error` |
+| `public_ingest_url` | string | Omitted unless `COTEL_PUBLIC_INGEST_URL` is set |
+
+The two freshness fields are measured from the span's `ingested_at`, not its
+`start_time`. That is what makes them answer "is traffic still arriving":
+
+- Importing an archive replays the **original** `ingested_at`, so a restore does
+  not make a dark instance look like it is receiving data again.
+- A span that arrives late with an old `start_time` is still a fresh ingest.
+
+An empty database reports `null` for both, never `0` — "nothing ever arrived" is
+not the same as "something arrived just now". Staleness never changes `status`
+or the HTTP code; the caller owns the threshold at which "no spans for N hours"
+becomes an alert. A failed query answers `500` with an `error` body rather than
+a `200` of zeros.
+
+The dashboard port also serves a smaller, container-facing `GET /healthz`
+(outside `/api/v1/`): `{"ok": …, "spans": …, "last_ingest_at": …,
+"newest_span_age_seconds": …}`, with the same freshness semantics. See the
+README's *Health check* section for how the container `HEALTHCHECK` uses it.
+
 ## References
 
 - [ADR-0011 — Users list: ranged stats and server-side sort](../decisions/0011-users-list-ranged-stats-and-server-side-sort.md)
