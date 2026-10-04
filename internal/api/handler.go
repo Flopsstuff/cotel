@@ -786,7 +786,7 @@ func (h *Handler) handleSession(w http.ResponseWriter, _ *http.Request, sessionI
 			input_tokens,
 			output_tokens,
 			status_code,
-			COALESCE(attributes, '{}')
+			COALESCE(attributes::VARCHAR, '{}')
 		FROM spans
 		WHERE session_id = ?
 		ORDER BY start_time ASC

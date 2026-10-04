@@ -30,7 +30,7 @@ RUN npm run build
 ##############################################################################
 # Go builder (CGo required for go-duckdb)
 ##############################################################################
-FROM golang:1.23-bookworm AS builder
+FROM golang:1.24-bookworm AS builder
 
 WORKDIR /src
 COPY go.mod go.sum ./
