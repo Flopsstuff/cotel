@@ -64,9 +64,9 @@ func main() {
 
 	// An open that aborts inside libduckdb kills the process from C++, where no
 	// Go handler runs, so this warning is the only breadcrumb linking the crash
-	// to the shutdown that produced the unreplayable WAL.
+	// to the checkpoint that produced the unreplayable WAL.
 	if marker, ok := readCheckpointFailureMarker(dbPath); ok {
-		log.Printf("WARNING: last shutdown left %s (%s); if this open crashes, follow docs/operations/duckdb-recovery.md",
+		log.Printf("WARNING: a previous checkpoint left %s (%s); if this open crashes, follow docs/operations/duckdb-recovery.md",
 			checkpointFailureMarkerPath(dbPath), marker)
 	}
 
@@ -78,6 +78,18 @@ func main() {
 	}
 	defer db.Close()
 	log.Printf("db ready: schema/migrations applied in %s", time.Since(openStart).Round(time.Millisecond))
+
+	// Fold (and thereby verify) indexes now that ALTER/CREATE INDEX have run.
+	// A hard failure here exits before the gates open, so a migration that
+	// corrupts an ART index fails the deploy instead of serving traffic.
+	ckCtx, ckCancel := context.WithTimeout(context.Background(), shutdownCheckpointTimeout)
+	if code := runCheckpoint(ckCtx, db, dbPath, checkpointPhaseStartup); code != 0 {
+		ckCancel()
+		srv.Close()
+		db.Close() //nolint:errcheck // the deferred Close never runs past os.Exit
+		os.Exit(code)
+	}
+	ckCancel()
 
 	retentionCfg := storage.RetentionConfig{
 		RawDays:       envInt("COTEL_RETENTION_RAW_DAYS", storage.DefaultRetention.RawDays),
@@ -113,30 +125,38 @@ func main() {
 	srv.Close() // quiesce ingest so no writes race the checkpoint
 
 	ctx, cancel := context.WithTimeout(context.Background(), shutdownCheckpointTimeout)
-	code := shutdownCheckpoint(ctx, db, dbPath)
+	code := runCheckpoint(ctx, db, dbPath, checkpointPhaseShutdown)
 	cancel()
 	db.Close() //nolint:errcheck // the deferred Close never runs past os.Exit
 	os.Exit(code)
 }
 
-// shutdownCheckpointTimeout bounds the shutdown CHECKPOINT so it stays inside the
-// container stop grace period (docker-compose stop_grace_period) and a stuck
-// checkpoint degrades to a hard kill + WAL replay rather than a hung stop.
+// shutdownCheckpointTimeout bounds a CHECKPOINT so a stuck fold cannot hang
+// the process. On shutdown it stays inside the container stop grace period
+// (docker-compose stop_grace_period); on startup it keeps a wedged fold from
+// blocking the deploy. A hit deadline is benign at both sites.
 const shutdownCheckpointTimeout = 8 * time.Second
 
-// exitCheckpointFailed is the exit code for a shutdown CHECKPOINT that failed
-// outright, as opposed to one that merely ran out of time.
+// exitCheckpointFailed is the exit code for a CHECKPOINT that failed outright,
+// as opposed to one that merely ran out of time. Used at both startup (after
+// schema apply) and shutdown.
 const exitCheckpointFailed = 3
 
-// checkpointer is the shutdown-checkpoint surface of *storage.DB, narrowed so
-// the shutdown path can be exercised without a live database.
+const (
+	checkpointPhaseStartup  = "startup"
+	checkpointPhaseShutdown = "shutdown"
+)
+
+// checkpointer is the CHECKPOINT surface of *storage.DB, narrowed so the
+// fold can be exercised without a live database.
 type checkpointer interface {
 	Checkpoint(ctx context.Context) error
 }
 
-// shutdownCheckpoint folds the WAL and returns the process exit code.
+// runCheckpoint folds the WAL and returns the process exit code the caller
+// should use if it is going to stop.
 //
-// A hit deadline is benign and exits 0: the WAL is whole and the next open
+// A hit deadline is benign and returns 0: the WAL is whole and the next open
 // replays it, which is the cost the checkpoint was trying to avoid, not a
 // threat to the data. Any other failure is the opposite case. A CHECKPOINT that
 // errors out does so because the database is damaged, and the WAL it leaves
@@ -144,31 +164,48 @@ type checkpointer interface {
 // code can catch - so the database never opens again until someone repairs it
 // by hand. That cannot look like a clean exit: it gets a non-zero code plus a
 // marker beside the database file, which outlives the container's logs.
-func shutdownCheckpoint(ctx context.Context, db checkpointer, dbPath string) int {
+//
+// Startup and shutdown share this function so a failed fold is the same
+// observable (exit 3, `<db>.checkpoint-failed`) wherever it happens. A timeout
+// stays 0 at both sites: at shutdown the process exits cleanly with the WAL
+// left for replay; at startup the process continues and serves traffic.
+func runCheckpoint(ctx context.Context, db checkpointer, dbPath, phase string) int {
 	start := time.Now()
 	err := db.Checkpoint(ctx)
 	elapsed := time.Since(start).Round(time.Millisecond)
 
 	switch {
 	case err == nil:
-		log.Printf("checkpoint complete in %s; exiting", elapsed)
+		if phase == checkpointPhaseShutdown {
+			log.Printf("checkpoint complete in %s; exiting", elapsed)
+		} else {
+			log.Printf("startup checkpoint complete in %s", elapsed)
+		}
 		clearCheckpointFailureMarker(dbPath)
 		return 0
 	case errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil:
-		log.Printf("checkpoint on shutdown timed out after %s, WAL left for replay on next start: %v", elapsed, err)
+		if phase == checkpointPhaseShutdown {
+			log.Printf("checkpoint on shutdown timed out after %s, WAL left for replay on next start: %v", elapsed, err)
+		} else {
+			log.Printf("startup checkpoint timed out after %s, continuing: %v", elapsed, err)
+		}
 		return 0
 	default:
-		log.Printf("checkpoint on shutdown FAILED after %s, the WAL left behind may not be replayable: %v", elapsed, err)
-		writeCheckpointFailureMarker(dbPath, err)
+		if phase == checkpointPhaseShutdown {
+			log.Printf("checkpoint on shutdown FAILED after %s, the WAL left behind may not be replayable: %v", elapsed, err)
+		} else {
+			log.Printf("startup checkpoint FAILED after %s: %v", elapsed, err)
+		}
+		writeCheckpointFailureMarker(dbPath, err, phase)
 		return exitCheckpointFailed
 	}
 }
 
 func checkpointFailureMarkerPath(dbPath string) string { return dbPath + ".checkpoint-failed" }
 
-func writeCheckpointFailureMarker(dbPath string, cause error) {
+func writeCheckpointFailureMarker(dbPath string, cause error, phase string) {
 	path := checkpointFailureMarkerPath(dbPath)
-	line := fmt.Sprintf("%s checkpoint on shutdown failed: %v\n", time.Now().UTC().Format(time.RFC3339), cause)
+	line := fmt.Sprintf("%s checkpoint on %s failed: %v\n", time.Now().UTC().Format(time.RFC3339), phase, cause)
 	if err := os.WriteFile(path, []byte(line), 0o644); err != nil {
 		log.Printf("could not write checkpoint failure marker %s: %v", path, err)
 		return
@@ -177,7 +214,7 @@ func writeCheckpointFailureMarker(dbPath string, cause error) {
 }
 
 // clearCheckpointFailureMarker drops the marker after a clean fold, so it only
-// ever describes the most recent shutdown.
+// ever describes the most recent failed checkpoint.
 func clearCheckpointFailureMarker(dbPath string) {
 	path := checkpointFailureMarkerPath(dbPath)
 	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {

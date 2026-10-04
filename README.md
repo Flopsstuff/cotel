@@ -204,8 +204,21 @@ Startup is logged so the open duration is visible (no more guessing from a bare
 listening on ingest :4318 and dashboard :8080 (storage initialising, serving 503 until ready)
 opening db /data/cotel.duckdb
 db ready: schema/migrations applied in 2m58s
+startup checkpoint complete in 8ms
 ready: serving live traffic on ingest :4318 and dashboard :8080
 ```
+
+After schema/migrations apply, cotel runs the same DuckDB `CHECKPOINT` used on
+shutdown, before the gates open and before the retention worker starts. ALTER
+and `CREATE INDEX` have already run, so this fold serializes the indexes. A
+hard failure exits **3** and writes `<db path>.checkpoint-failed` without ever
+serving live traffic, so the deploy health gate fails the rollout instead of
+discovering a damaged file days later. A checkpoint that merely hits its 8s
+deadline stays benign: the process continues and serves traffic, the same
+distinction shutdown makes between a failed fold (exit 3) and a timeout (exit
+0). On a healthy 35 000-span file the extra start checkpoint is **<1 ms** when
+schema is skipped, and **8 ms** immediately after a schema re-apply that
+rebuilds the four ART indexes.
 
 ### Stopping — checkpoint on shutdown
 
@@ -239,28 +252,31 @@ Two caveats:
   folds the log into the main file once it passes the threshold, so a hard kill
   finds little left to replay. The exception is a *damaged* database — see below.
 
-### When the shutdown checkpoint fails
+### When the checkpoint fails
 
 A checkpoint that runs out of time is benign; one that fails outright is not. It
 fails because the database itself is damaged, and the WAL it leaves behind can
 then abort the next open inside `libduckdb` (a C++ `abort()` Go cannot catch), so
-the database never opens again until someone repairs it by hand. The two cases are
-therefore reported differently:
+the database never opens again until someone repairs it by hand. Startup and
+shutdown share this reporting:
 
-| Outcome | Log | Exit code | Marker |
-|---|---|---|---|
-| Checkpoint succeeded | `checkpoint complete in …; exiting` | 0 | removed if present |
-| Checkpoint hit its 8s deadline | `checkpoint on shutdown timed out …, WAL left for replay on next start` | 0 | — |
-| Checkpoint failed | `checkpoint on shutdown FAILED …, the WAL left behind may not be replayable` | **3** | `<db path>.checkpoint-failed` |
+| When | Outcome | Log | Exit code | Marker |
+|---|---|---|---|---|
+| Shutdown | succeeded | `checkpoint complete in …; exiting` | 0 | removed if present |
+| Shutdown | 8s deadline | `checkpoint on shutdown timed out …, WAL left for replay on next start` | 0 | — |
+| Shutdown | failed | `checkpoint on shutdown FAILED …, the WAL left behind may not be replayable` | **3** | `<db path>.checkpoint-failed` |
+| Startup | succeeded | `startup checkpoint complete in …` | continues | removed if present |
+| Startup | 8s deadline | `startup checkpoint timed out …, continuing` | continues | — |
+| Startup | failed | `startup checkpoint FAILED …` | **3** | `<db path>.checkpoint-failed` |
 
 ```bash
-docker inspect --format '{{.State.ExitCode}}' cotel    # 3 = the stop did not fold the WAL
+docker inspect --format '{{.State.ExitCode}}' cotel    # 3 = a checkpoint did not fold the WAL
 ```
 
 The marker file sits next to the database on the `/data` volume and outlives the
 container's logs; cotel logs a warning about it on the next start, just before it
-opens the database, and clears it after the next clean shutdown. If you find it,
-or the container restart-loops with exit code 134, follow
+opens the database, and clears it after the next clean fold (startup or shutdown).
+If you find it, or the container restart-loops with exit code 134, follow
 **[docs/operations/duckdb-recovery.md](docs/operations/duckdb-recovery.md)**.
 
 ### Health check

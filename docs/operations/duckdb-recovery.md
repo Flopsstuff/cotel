@@ -10,8 +10,8 @@ This page is the recovery procedure. It was written from an incident in which pr
 
 | Signal | What you see |
 |---|---|
-| Container state | Restart loop; `docker ps -a` shows **`Exited (134)`** (SIGABRT) |
-| Log | Ends immediately after `opening db /data/cotel.duckdb` — **no** `db ready` line |
+| Container state | Restart loop; `docker ps -a` shows **`Exited (134)`** (SIGABRT) or **`Exited (3)`** (checkpoint failed after the database opened) |
+| Log | Ends immediately after `opening db /data/cotel.duckdb` — **no** `db ready` line — or shows `db ready` then `startup checkpoint FAILED` and never `ready: serving live traffic` |
 | Log (the abort) | `INTERNAL Error: Invalid node type for GetAllocatorIdx: 0`, or another `InternalException` out of `duckdb_open_ext` |
 | Volume | A `cotel.duckdb.wal` file is present and never shrinks |
 | Volume | `cotel.duckdb.checkpoint-failed` is present (see [Marker file](#the-checkpoint-failure-marker)) |
@@ -181,22 +181,25 @@ The last two are the ones that prove the file is actually healthy, because they 
 
 ## The checkpoint-failure marker
 
-cotel folds the WAL on SIGTERM so the next start does not have to replay it. That fold is also the earliest honest warning that the database is damaged, so its outcomes are kept apart:
+cotel folds the WAL on SIGTERM so the next start does not have to replay it, and again immediately after schema apply so a migration that corrupts an ART index fails the deploy instead of serving traffic. That fold is the earliest honest warning that the database is damaged, so its outcomes are kept apart:
 
-| Outcome | Log | Exit code | Marker file |
-|---|---|---|---|
-| Fold succeeded | `checkpoint complete in …; exiting` | 0 | removed if present |
-| Fold hit the 8 s deadline | `checkpoint on shutdown timed out …, WAL left for replay on next start` | 0 | not written |
-| Fold failed | `checkpoint on shutdown FAILED …, the WAL left behind may not be replayable` | **3** | `<db>.checkpoint-failed` written |
+| When | Outcome | Log | Exit code | Marker file |
+|---|---|---|---|---|
+| Shutdown | succeeded | `checkpoint complete in …; exiting` | 0 | removed if present |
+| Shutdown | 8 s deadline | `checkpoint on shutdown timed out …, WAL left for replay on next start` | 0 | not written |
+| Shutdown | failed | `checkpoint on shutdown FAILED …, the WAL left behind may not be replayable` | **3** | `<db>.checkpoint-failed` written |
+| Startup | succeeded | `startup checkpoint complete in …` | continues | removed if present |
+| Startup | 8 s deadline | `startup checkpoint timed out …, continuing` | continues | not written |
+| Startup | failed | `startup checkpoint FAILED …` | **3** | `<db>.checkpoint-failed` written |
 
-A deadline is benign: the WAL is whole and the next open replays it. A *failed* fold is not — it fails because the database is damaged, and the WAL it leaves can abort the next open inside `libduckdb`. So that case exits non-zero — `docker ps -a` shows `Exited (3)`, and:
+A deadline is benign: the WAL is whole and the next open replays it (or, at startup, the process continues). A *failed* fold is not — it fails because the database is damaged, and the WAL it leaves can abort the next open inside `libduckdb`. So that case exits non-zero — `docker ps -a` shows `Exited (3)`, and:
 
 ```bash
 docker inspect --format '{{.State.ExitCode}}' cotel    # 3
 ```
 
-— and writes a marker next to the database file, which outlives the container's logs.
+— and writes a marker next to the database file, which outlives the container's logs. A failed *startup* checkpoint never opens the gates, so the container never reports healthy.
 
-On the next start, cotel logs a warning if the marker is there, immediately before it opens the database — if the open then aborts in C++, that warning is the only line connecting the crash to the shutdown that caused it. The marker is advisory: cotel still tries to open the database, because refusing to start on a stale marker would turn a healthy file into an outage.
+On the next start, cotel logs a warning if the marker is there, immediately before it opens the database — if the open then aborts in C++, that warning is the only line connecting the crash to the checkpoint that caused it. The marker is advisory: cotel still tries to open the database, because refusing to start on a stale marker would turn a healthy file into an outage.
 
-**If you find the marker, start at step 1 of this page.** Clear it only by letting cotel shut down cleanly once (the clean fold removes it), so it never describes anything but the most recent shutdown.
+**If you find the marker, start at step 1 of this page.** Clear it only by letting cotel complete a clean fold (a successful start checkpoint, or a clean shutdown), so it never describes anything but the most recent failed checkpoint.
