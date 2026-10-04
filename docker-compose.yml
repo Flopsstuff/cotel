@@ -29,4 +29,10 @@ services:
       COTEL_PUBLIC_INGEST_URL: ${COTEL_PUBLIC_INGEST_URL:-}
 
 volumes:
+  # Named explicitly so the deploy can be pointed at a different volume without
+  # writing to this one. Docker has no `volume rename`, so recovering from a
+  # database the binary cannot open otherwise means overwriting the only copy of
+  # it in place — the evidence and the fallback both. The default is the name
+  # compose derives on its own, so setting nothing keeps the existing volume.
   cotel-data:
+    name: ${COTEL_DATA_VOLUME:-cotel_cotel-data}
