@@ -445,6 +445,7 @@ go test ./...
 | `COTEL_WAL_AUTOCHECKPOINT` | `4MB` | DuckDB `checkpoint_threshold`: the write-ahead log is folded into the main file once it grows past this size. Lower values bound how much WAL an ungraceful kill leaves to replay on the next open; higher values checkpoint less often during ingest. DuckDB's own default is `16MB`. |
 | `CLOUDFLARE_TUNNEL_TOKEN` | _(unset)_ | When set, starts `cloudflared tunnel run` before cotel; enables public HTTPS access via Cloudflare Tunnel |
 | `COTEL_PUBLIC_INGEST_URL` | _(unset)_ | Absolute `http`/`https` URL of the public OTLP ingest endpoint (e.g. `https://cotel-ingest.yourdomain.com`). When set, the Setup page substitutes this URL into the copy-paste Claude Code snippets. |
+| `COTEL_DATA_VOLUME` | `cotel-data-repaired-20261004` | Read by `docker-compose.yml`, not by the binary: the Docker volume mounted at `/data`. Point it at a restored copy to bring an instance up *without* writing to the volume being restored from — Docker has no `volume rename`, so the only other way to serve repaired data under the expected name is to overwrite the damaged original, which is also the forensic evidence. The default is a restored copy, not the `cotel_cotel-data` name compose derives by itself: that volume holds a database the binary can no longer open and is kept untouched as evidence. A fresh install that has neither volume gets the default created empty, which is correct. |
 
 ## Architecture
 
