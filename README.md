@@ -397,6 +397,10 @@ running and self-heals on the next tick.
 
 ## Development
 
+Building needs **Go 1.24.0 or newer** and a C toolchain — the DuckDB driver is
+CGo ([ADR-0018](docs/decisions/0018-duckdb-go-v2-driver.md)). `docker compose
+build` brings its own; a local `go build` does not.
+
 ```bash
 # Build locally
 docker compose build
@@ -405,8 +409,12 @@ docker compose build
 docker compose up
 
 # Run tests
-go test ./...
+CGO_ENABLED=1 go test ./...
 ```
+
+The runtime image is ≈ 294 MB. Most of that is the statically linked DuckDB
+engine (it was 213 MB on the DuckDB 1.1.3 driver, which loaded the ICU extension
+from the network at startup instead of bundling it).
 
 ## Environment variables
 
