@@ -12,7 +12,7 @@ import (
 	"strconv"
 	"time"
 
-	_ "github.com/marcboeker/go-duckdb"
+	_ "github.com/duckdb/duckdb-go/v2"
 )
 
 // DefaultWALAutocheckpoint caps how large the write-ahead log grows before
@@ -29,6 +29,19 @@ const DefaultWALAutocheckpoint = "4MB"
 
 // walSizeRe matches a DuckDB byte-size literal like "4MB" or "512KB".
 var walSizeRe = regexp.MustCompile(`(?i)^[0-9]+\s*(b|kb|mb|gb|tb)?$`)
+
+// StorageCompatibilityVersion pins the on-disk format a newly created database
+// file is written in. It names the oldest DuckDB release that can read the
+// result, and it maps to the `storage_version` number in the file header —
+// v0.10.2 is 64, v1.2.0 is 65, and each later minor adds one. 64 is what every
+// DuckDB from 1.1.3 onwards reads, so pinning it keeps a rollback to an older
+// binary possible: a file at 65 or above is refused outright
+// ("Trying to read a database file with version number 68, but we can only read
+// version 64"). It happens to be today's engine default too, but a default is
+// behaviour, not a contract — unpinned, a future minor could raise it and close
+// that door with no diff of ours to point at. Raising this value is a one-way
+// door for new files and needs its own decision.
+const StorageCompatibilityVersion = "v0.10.2"
 
 // Option configures Open.
 type Option func(*openConfig)
@@ -97,6 +110,7 @@ func Open(path string, opts ...Option) (*DB, error) {
 	if path == ":memory:" {
 		dsn = "" // go-duckdb uses "" for in-memory, not ":memory:"
 	}
+	dsn += "?storage_compatibility_version=" + StorageCompatibilityVersion
 	rw, err := sql.Open("duckdb", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open duckdb %q: %w", path, err)
