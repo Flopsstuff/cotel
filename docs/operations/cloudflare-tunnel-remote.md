@@ -72,7 +72,24 @@ docker run -d \
 docker compose up -d
 ```
 
-The entrypoint detects `CLOUDFLARE_TUNNEL_TOKEN` and runs `cloudflared tunnel run --token …` in the background.
+The entrypoint detects `CLOUDFLARE_TUNNEL_TOKEN`, removes it from the environment it passes on, and runs `cloudflared tunnel run --token …` in the background.
+
+## Where the token is visible
+
+The token is the authority to serve your public hostnames, so it is worth knowing which of these places an operator can read it from.
+
+| Place | Token readable? |
+|---|---|
+| `docker compose logs cotel` / `docker logs` | No - the entrypoint keeps the variable out of cloudflared's environment, and cloudflared redacts the `--token` flag to `token:*****` |
+| `docker inspect` / `docker compose config` | **Yes** - it is container configuration; whoever can run these can read it |
+| `/proc/1/environ` inside the container | **Yes** - a process's environment block is a snapshot taken at `exec`, so unsetting the variable afterwards does not clear it |
+| `ps` inside the container | **Yes** - it is an argument to `cloudflared` |
+
+The log line matters separately from the rest: the deploy health gate (`scripts/wait-for-healthy.sh`) copies container logs into the CI run log on a failed deploy, which is a far wider audience than "someone with a shell on the host". The other three rows all require host or container access, which already implies access to the token by other means.
+
+Do not lower cloudflared's log level to `debug` on a public deployment: `--loglevel debug` logs request URLs and all request and response headers.
+
+If you need the token out of the container entirely, use [local-config mode](./cloudflare-tunnel-local.md) - the credentials then live in a file mounted from the host and never enter the container's environment or command line.
 
 ## Verifying the tunnel
 
@@ -86,6 +103,10 @@ docker compose logs cotel
 # Quick smoke test
 curl -s https://ingest.example.com/healthz
 curl -s https://dash.example.com
+
+# The log must not contain the token. Grep for a prefix of the value rather
+# than reading the log, which is thousands of lines after a WAL replay.
+docker compose logs --no-color cotel | grep -cF "$(printf %.24s "$CLOUDFLARE_TUNNEL_TOKEN")"   # must print 0
 ```
 
 ## Securing the dashboard with Cloudflare Access

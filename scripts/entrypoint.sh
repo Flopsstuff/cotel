@@ -39,8 +39,16 @@ terminate() {
 
 trap terminate TERM INT
 
-if [ -n "${CLOUDFLARE_TUNNEL_TOKEN}" ]; then
-    cloudflared tunnel run --token "${CLOUDFLARE_TUNNEL_TOKEN}" &
+# cloudflared logs the value of every environment variable whose whole KEY=VALUE
+# pair merely *contains* "TUNNEL_", and redacts only the two names it owns
+# itself - so our own CLOUDFLARE_TUNNEL_TOKEN would be printed in plaintext on
+# every start. Hand the token over as a flag, which cloudflared does redact, and
+# keep it out of the environment cloudflared inherits.
+cfd_token="${CLOUDFLARE_TUNNEL_TOKEN:-}"
+unset CLOUDFLARE_TUNNEL_TOKEN
+
+if [ -n "${cfd_token}" ]; then
+    cloudflared tunnel run --token "${cfd_token}" &
     CLOUDFLARED_PID=$!
     echo "entrypoint: cloudflared started in token mode (PID ${CLOUDFLARED_PID})"
 elif [ -f "${CLOUDFLARED_CONFIG:-${CLOUDFLARED_CONFIG_DEFAULT}}" ]; then
