@@ -23,13 +23,18 @@ stop_cloudflared() {
 }
 
 terminate() {
+    # cotel exits non-zero when the shutdown CHECKPOINT failed, which means the
+    # WAL it leaves behind may not replay; exiting 0 here would hide that as a
+    # clean container stop.
+    STATUS=0
     if [ -n "${COTEL_PID}" ]; then
         echo "entrypoint: forwarding stop signal to cotel (PID ${COTEL_PID})"
         kill -TERM "${COTEL_PID}" 2>/dev/null || true
-        wait "${COTEL_PID}" 2>/dev/null || true
+        wait "${COTEL_PID}"
+        STATUS=$?
     fi
     stop_cloudflared
-    exit 0
+    exit $STATUS
 }
 
 trap terminate TERM INT

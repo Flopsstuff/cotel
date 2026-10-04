@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -61,6 +62,14 @@ func main() {
 	}
 	log.Printf("listening on ingest %s and dashboard %s (storage initialising, serving 503 until ready)", srv.ingestAddr, srv.dashAddr)
 
+	// An open that aborts inside libduckdb kills the process from C++, where no
+	// Go handler runs, so this warning is the only breadcrumb linking the crash
+	// to the shutdown that produced the unreplayable WAL.
+	if marker, ok := readCheckpointFailureMarker(dbPath); ok {
+		log.Printf("WARNING: last shutdown left %s (%s); if this open crashes, follow docs/operations/duckdb-recovery.md",
+			checkpointFailureMarkerPath(dbPath), marker)
+	}
+
 	openStart := time.Now()
 	log.Printf("opening db %s", dbPath)
 	db, err := storage.Open(dbPath, storage.WithWALAutocheckpoint(env("COTEL_WAL_AUTOCHECKPOINT", storage.DefaultWALAutocheckpoint)))
@@ -103,22 +112,86 @@ func main() {
 	log.Printf("received %s: stopping listeners and checkpointing before shutdown", sig)
 	srv.Close() // quiesce ingest so no writes race the checkpoint
 
-	ckStart := time.Now()
 	ctx, cancel := context.WithTimeout(context.Background(), shutdownCheckpointTimeout)
-	defer cancel()
-	if err := db.Checkpoint(ctx); err != nil {
-		// Never hang on a stuck checkpoint - log and let the deferred Close and
-		// process exit proceed. A hard kill mid-checkpoint just replays next time.
-		log.Printf("checkpoint on shutdown failed (exiting anyway): %v", err)
-	} else {
-		log.Printf("checkpoint complete in %s; exiting", time.Since(ckStart).Round(time.Millisecond))
-	}
+	code := shutdownCheckpoint(ctx, db, dbPath)
+	cancel()
+	db.Close() //nolint:errcheck // the deferred Close never runs past os.Exit
+	os.Exit(code)
 }
 
 // shutdownCheckpointTimeout bounds the shutdown CHECKPOINT so it stays inside the
 // container stop grace period (docker-compose stop_grace_period) and a stuck
 // checkpoint degrades to a hard kill + WAL replay rather than a hung stop.
 const shutdownCheckpointTimeout = 8 * time.Second
+
+// exitCheckpointFailed is the exit code for a shutdown CHECKPOINT that failed
+// outright, as opposed to one that merely ran out of time.
+const exitCheckpointFailed = 3
+
+// checkpointer is the shutdown-checkpoint surface of *storage.DB, narrowed so
+// the shutdown path can be exercised without a live database.
+type checkpointer interface {
+	Checkpoint(ctx context.Context) error
+}
+
+// shutdownCheckpoint folds the WAL and returns the process exit code.
+//
+// A hit deadline is benign and exits 0: the WAL is whole and the next open
+// replays it, which is the cost the checkpoint was trying to avoid, not a
+// threat to the data. Any other failure is the opposite case. A CHECKPOINT that
+// errors out does so because the database is damaged, and the WAL it leaves
+// behind can abort the next open inside libduckdb - a C++ abort() that no Go
+// code can catch - so the database never opens again until someone repairs it
+// by hand. That cannot look like a clean exit: it gets a non-zero code plus a
+// marker beside the database file, which outlives the container's logs.
+func shutdownCheckpoint(ctx context.Context, db checkpointer, dbPath string) int {
+	start := time.Now()
+	err := db.Checkpoint(ctx)
+	elapsed := time.Since(start).Round(time.Millisecond)
+
+	switch {
+	case err == nil:
+		log.Printf("checkpoint complete in %s; exiting", elapsed)
+		clearCheckpointFailureMarker(dbPath)
+		return 0
+	case errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil:
+		log.Printf("checkpoint on shutdown timed out after %s, WAL left for replay on next start: %v", elapsed, err)
+		return 0
+	default:
+		log.Printf("checkpoint on shutdown FAILED after %s, the WAL left behind may not be replayable: %v", elapsed, err)
+		writeCheckpointFailureMarker(dbPath, err)
+		return exitCheckpointFailed
+	}
+}
+
+func checkpointFailureMarkerPath(dbPath string) string { return dbPath + ".checkpoint-failed" }
+
+func writeCheckpointFailureMarker(dbPath string, cause error) {
+	path := checkpointFailureMarkerPath(dbPath)
+	line := fmt.Sprintf("%s checkpoint on shutdown failed: %v\n", time.Now().UTC().Format(time.RFC3339), cause)
+	if err := os.WriteFile(path, []byte(line), 0o644); err != nil {
+		log.Printf("could not write checkpoint failure marker %s: %v", path, err)
+		return
+	}
+	log.Printf("wrote checkpoint failure marker %s; recovery procedure: docs/operations/duckdb-recovery.md", path)
+}
+
+// clearCheckpointFailureMarker drops the marker after a clean fold, so it only
+// ever describes the most recent shutdown.
+func clearCheckpointFailureMarker(dbPath string) {
+	path := checkpointFailureMarkerPath(dbPath)
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		log.Printf("could not remove stale checkpoint failure marker %s: %v", path, err)
+	}
+}
+
+func readCheckpointFailureMarker(dbPath string) (string, bool) {
+	body, err := os.ReadFile(checkpointFailureMarkerPath(dbPath))
+	if err != nil {
+		return "", false
+	}
+	return strings.TrimSpace(string(body)), true
+}
 
 // readyGate is an http.Handler that returns 503 until its real handler is
 // installed via set, then delegates every request to it. It lets a listener
