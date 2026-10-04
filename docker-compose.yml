@@ -29,4 +29,12 @@ services:
       COTEL_PUBLIC_INGEST_URL: ${COTEL_PUBLIC_INGEST_URL:-}
 
 volumes:
+  # Named explicitly so the deploy can be pointed at a different volume without
+  # writing to this one. Docker has no `volume rename`, so recovering from a
+  # database the binary cannot open otherwise means overwriting the only copy of
+  # it in place — the evidence and the fallback both. The default is a restored
+  # copy rather than the name compose derives on its own (`cotel_cotel-data`),
+  # because that one holds a database the binary can no longer open. Compose
+  # warns that it did not create a hand-made volume; that warning is expected.
   cotel-data:
+    name: ${COTEL_DATA_VOLUME:-cotel-data-repaired-20261004}

@@ -169,9 +169,9 @@ docker update --restart=unless-stopped cotel   # if you disabled it in step 1
 | Check | Expected |
 |---|---|
 | `docker logs cotel \| grep 'db ready'` | one line, with the open duration |
-| `curl -sf localhost:8080/healthz` | `{"ok":true,"spans":N}` with the expected `N` |
+| `curl -sf localhost:8080/healthz` | `"ok":true` with the expected `"spans":N` |
 | `docker exec cotel ls /data` | **no** `cotel.duckdb.wal`, **no** `cotel.duckdb.checkpoint-failed` |
-| POST a span, then re-check `/healthz` | `spans` increases |
+| POST a span, then re-check `/healthz` | `spans` increases and `newest_span_age_seconds` drops to single digits |
 | `docker compose stop cotel` → `docker logs --tail 5 cotel` | `checkpoint complete in …; exiting` |
 | after that stop: `docker run --rm -v "$VOL":/data:ro alpine ls /data` | no `.wal` file left behind |
 

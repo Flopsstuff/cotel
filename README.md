@@ -292,6 +292,35 @@ rather than a misleading healthy state while ingest is still dark; it flips to
 docker inspect --format '{{.State.Health.Status}}' cotel   # starting → healthy
 ```
 
+#### What `/healthz` returns
+
+```json
+{"ok": true, "spans": 128402, "last_ingest_at": "2026-10-04T03:12:44.118Z", "newest_span_age_seconds": 97}
+```
+
+| Field | Meaning |
+|---|---|
+| `ok` | `false` when the database could not be queried at all |
+| `spans` | Rows in `spans` |
+| `last_ingest_at` | When the newest span was **accepted** (RFC 3339), or `null` if nothing was ever ingested |
+| `newest_span_age_seconds` | Seconds since `last_ingest_at`, or `null` if nothing was ever ingested |
+
+The age is measured from `ingested_at`, not `start_time`: importing an archive
+replays the original ingest time, so a restore cannot make a dark instance look
+alive, and a span arriving late with an old `start_time` still counts as fresh
+traffic. An empty database reports `null` rather than `0`, because "nothing ever
+arrived" is not "something arrived just now".
+
+A growing age is the signal that the process is up but spans are not reaching
+it — a state that otherwise looks identical to a healthy idle instance. **It
+does not change the status code**: staleness answers `200` like any other
+readable database, because the right threshold ("nothing for 2 hours" vs "a
+quiet weekend") belongs to whoever polls, not to the container. Only a failed
+query is a failure: that answers `503` with `{"ok": false}`, so the probe cannot
+report a dead database as healthy. The same two fields are on
+`GET /api/v1/health` — see
+[docs/operations/api-reference.md](docs/operations/api-reference.md).
+
 ### The deploy waits for healthy
 
 `docker compose up -d` returns as soon as the container has *started*, which is
@@ -437,6 +466,10 @@ running and self-heals on the next tick.
 
 ## Development
 
+Building needs **Go 1.24.0 or newer** and a C toolchain — the DuckDB driver is
+CGo ([ADR-0018](docs/decisions/0018-duckdb-go-v2-driver.md)). `docker compose
+build` brings its own; a local `go build` does not.
+
 ```bash
 # Build locally
 docker compose build
@@ -445,8 +478,12 @@ docker compose build
 docker compose up
 
 # Run tests
-go test ./...
+CGO_ENABLED=1 go test ./...
 ```
+
+The runtime image is ≈ 294 MB. Most of that is the statically linked DuckDB
+engine (it was 213 MB on the DuckDB 1.1.3 driver, which loaded the ICU extension
+from the network at startup instead of bundling it).
 
 ## Environment variables
 
@@ -461,6 +498,7 @@ go test ./...
 | `COTEL_WAL_AUTOCHECKPOINT` | `4MB` | DuckDB `checkpoint_threshold`: the write-ahead log is folded into the main file once it grows past this size. Lower values bound how much WAL an ungraceful kill leaves to replay on the next open; higher values checkpoint less often during ingest. DuckDB's own default is `16MB`. |
 | `CLOUDFLARE_TUNNEL_TOKEN` | _(unset)_ | When set, starts `cloudflared tunnel run` before cotel; enables public HTTPS access via Cloudflare Tunnel |
 | `COTEL_PUBLIC_INGEST_URL` | _(unset)_ | Absolute `http`/`https` URL of the public OTLP ingest endpoint (e.g. `https://cotel-ingest.yourdomain.com`). When set, the Setup page substitutes this URL into the copy-paste Claude Code snippets. |
+| `COTEL_DATA_VOLUME` | `cotel-data-repaired-20261004` | Read by `docker-compose.yml`, not by the binary: the Docker volume mounted at `/data`. Point it at a restored copy to bring an instance up *without* writing to the volume being restored from — Docker has no `volume rename`, so the only other way to serve repaired data under the expected name is to overwrite the damaged original, which is also the forensic evidence. The default is a restored copy, not the `cotel_cotel-data` name compose derives by itself: that volume holds a database the binary can no longer open and is kept untouched as evidence. A fresh install that has neither volume gets the default created empty, which is correct. |
 
 ## Architecture
 

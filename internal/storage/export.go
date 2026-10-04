@@ -32,7 +32,7 @@ func (db *DB) ExportSpans(from, to time.Time) ([]Span, error) {
 		       start_time, end_time, service_name,
 		       session_id, model, tool_name, user_id, status_code,
 		       input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd,
-		       attributes, resource_attrs, ingested_at
+		       attributes::VARCHAR AS attributes, resource_attrs::VARCHAR AS resource_attrs, ingested_at
 		FROM spans
 		WHERE start_time >= ? AND start_time < ?
 		ORDER BY start_time`, from, to)

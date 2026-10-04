@@ -22,6 +22,10 @@ jobs:
       COMPOSE_PROJECT_NAME: cotel
       CLOUDFLARE_TUNNEL_TOKEN: ${{ secrets.CLOUDFLARE_TUNNEL_TOKEN }}
       COTEL_PUBLIC_INGEST_URL: ${{ secrets.COTEL_PUBLIC_INGEST_URL }}
+      # Repo variable, so moving the deploy onto another volume later is a
+      # variable change rather than a commit. Unset resolves to empty, which
+      # compose treats as absent and falls back to the compose-file default.
+      COTEL_DATA_VOLUME: ${{ vars.COTEL_DATA_VOLUME }}
     steps:
       - uses: actions/checkout@v5
 

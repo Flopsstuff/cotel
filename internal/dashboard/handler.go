@@ -4,10 +4,13 @@ package dashboard
 import (
 	"database/sql"
 	"embed"
-	"fmt"
+	"encoding/json"
 	"io/fs"
 	"net/http"
 	"strings"
+	"time"
+
+	"github.com/Flopsstuff/cotel/internal/storage"
 )
 
 //go:embed static
@@ -53,9 +56,40 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Write(idx) //nolint:errcheck
 }
 
+// healthzResponse is the container-facing health contract. Fields are only
+// ever added here: "ok" and "spans" keep their original meaning and names.
+type healthzResponse struct {
+	OK    bool  `json:"ok"`
+	Spans int64 `json:"spans"`
+	// Null until something has been ingested — an empty database has no age,
+	// and reporting 0 would read as "ingested just now".
+	LastIngestAt         *string `json:"last_ingest_at"`
+	NewestSpanAgeSeconds *int64  `json:"newest_span_age_seconds"`
+}
+
+// serveHealthz reports liveness plus ingest freshness. Staleness never changes
+// the status code: this endpoint drives the container HEALTHCHECK, and a quiet
+// weekend is not a broken service — the poller owns the staleness threshold.
+// A failed query is different: the body says ok:false and the code says
+// unavailable, matching the pre-storage readiness gate.
 func (h *Handler) serveHealthz(w http.ResponseWriter, r *http.Request) {
-	var spans int64
-	_ = h.db.QueryRow("SELECT COUNT(*) FROM spans").Scan(&spans)
 	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, `{"ok":true,"spans":%d}`, spans)
+
+	fresh, err := storage.QueryIngestFreshness(h.db)
+	if err != nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		writeJSON(w, healthzResponse{OK: false})
+		return
+	}
+	writeJSON(w, healthzResponse{
+		OK:                   true,
+		Spans:                fresh.SpanCount,
+		LastIngestAt:         fresh.Timestamp(),
+		NewestSpanAgeSeconds: fresh.AgeSeconds(time.Now()),
+	})
+}
+
+func writeJSON(w http.ResponseWriter, v any) {
+	// The header is already out, so a write error has nowhere left to go.
+	_ = json.NewEncoder(w).Encode(v)
 }
