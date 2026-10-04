@@ -164,6 +164,10 @@ docker compose up -d cotel
 docker update --restart=unless-stopped cotel   # if you disabled it in step 1
 ```
 
+The recovery is not finished when the service is healthy: it leaves three volumes
+behind, one of which is a named trap. See [What a recovery leaves
+behind](#what-a-recovery-leaves-behind-and-when-to-delete-it).
+
 ### Acceptance
 
 | Check | Expected |
@@ -203,3 +207,78 @@ docker inspect --format '{{.State.ExitCode}}' cotel    # 3
 On the next start, cotel logs a warning if the marker is there, immediately before it opens the database — if the open then aborts in C++, that warning is the only line connecting the crash to the checkpoint that caused it. The marker is advisory: cotel still tries to open the database, because refusing to start on a stale marker would turn a healthy file into an outage.
 
 **If you find the marker, start at step 1 of this page.** Clear it only by letting cotel complete a clean fold (a successful start checkpoint, or a clean shutdown), so it never describes anything but the most recent failed checkpoint.
+
+---
+
+## What a recovery leaves behind, and when to delete it
+
+A recovery ends with three volumes where there was one, and nothing removes any of
+them on its own. Worse, the live one is now the compose default, so the other two
+stop appearing in any deploy path and quietly become unexplained disk. The names
+below are from the 2026-10-04 production recovery; the roles generalise.
+
+| Volume | Role | Size | Delete when |
+|---|---|---|---|
+| `cotel-data-repaired-20261004` | live production, mounted at `/data`, the compose default | 146 MB | never, it is prod |
+| `cotel_cotel-data` | the damaged original, untouched: the only artifact that reproduces the `abort()` | 147 MB | upstream [duckdb#25360](https://github.com/duckdb/duckdb/issues/25360) is resolved *and* cotel no longer links a DuckDB that can hit it |
+| `cotel-data-backup-20261004` | byte-identical copy of the damaged original, from step 2 | 147 MB | immediately, see below |
+
+Disk is not what forces any of this: the host had 94 GB free. The reason to decide
+now is that in six months nobody will remember which of the two leftovers is safe
+to remove, and the safe-looking one is the dangerous one.
+
+### The step-2 "backup" is not a fallback
+
+After the repair, verify what the snapshot actually holds:
+
+```bash
+for v in cotel_cotel-data "cotel-data-backup-$STAMP"; do
+  docker run --rm -v "$v":/data:ro alpine sha256sum /data/cotel.duckdb /data/cotel.duckdb.wal
+done
+```
+
+On 2026-10-04 both volumes returned the same two hashes (`7eb82bbe…` for the
+database, `33e13061…` for the WAL). That is the expected result and it is the point:
+the step-2 snapshot is taken *before* the repair, so it preserves the state that
+does not open. Restoring it reproduces the outage. In particular it cannot insure
+against a defect in the repaired copy that surfaces weeks later, which is the risk
+people assume a volume named `…-backup-…` covers.
+
+So it buys exactly one thing the original already provides, and it offers a name
+that invites a tired operator to restore a crashing database into production.
+Delete it and keep the original, which carries the same bytes under an honest name.
+Docker has no `volume rename`, so there is no middle option.
+
+```bash
+docker volume rm "cotel-data-backup-$STAMP"
+```
+
+Its real job ends the moment step 6 passes: until then it is what lets you rebuild
+the probe copy without ever mounting the original. Deleting it after the promotion
+in step 7 is the last step of the recovery, not a later cleanup.
+
+### The damaged original has two separate lifetimes
+
+As a **data fallback** it expires on its own. Its newest span was 2026-09-27 and raw
+spans are purged at `COTEL_RETENTION_RAW_DAYS` (default 30), so from roughly
+2026-10-27 re-repairing it recovers nothing retention would have kept anyway.
+
+As a **bug-repro artifact** it lives as long as the upstream defect. It is the only
+file in existence that aborts DuckDB 1.1.3 inside `duckdb_open_ext`, and it cannot
+be regenerated: the schema change that damaged the index ran once, against data that
+no longer exists. duckdb#25360 is open and had no upstream reply a month after
+filing, so a request for a reproduction is still plausible.
+
+Therefore: **hold `cotel_cotel-data` indefinitely**, mounted read-only only, and
+re-examine at both of these moments rather than on a calendar:
+
+- the upstream issue changes state, or
+- the DuckDB version linked into cotel moves, which is also when the repro becomes
+  the natural acceptance test for the bump.
+
+### There is no backup of the live database
+
+Three volumes look like redundancy and are not. Two of them are the same damaged
+file and the third is production itself; once the leftovers are gone, the live
+database has no snapshot anywhere. That gap predates this incident and is tracked
+separately. Do not read the table above as a backup policy.
