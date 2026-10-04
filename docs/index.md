@@ -100,3 +100,4 @@ Single Go binary. Single DuckDB file. Single named volume. No sidecars.
 
 - [Architecture Decisions](/decisions/) — ADRs explaining key technical choices
 - [Design Docs](/design/) — UI information architecture, page specs, components, tokens
+- [Production /healthz probe](/operations/health-probe) — hourly check of production `/healthz` and who is woken when it is red
