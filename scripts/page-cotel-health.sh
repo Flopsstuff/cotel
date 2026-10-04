@@ -46,25 +46,48 @@ if [ -n "${CF_ACCESS_CLIENT_ID:-}" ] && [ -n "${CF_ACCESS_CLIENT_SECRET:-}" ]; t
     )
 fi
 
-pc() {
+# pc_into writes the response body to $1 and sets PC_HTTP / PC_BODY in this
+# shell. Call it directly — a command substitution would drop those assignments.
+pc_into() {
+    local dest="$1"
+    shift
     local raw http body
+    PC_HTTP=""
+    PC_BODY=""
     raw="$(curl -sS --max-time 30 -w '\n%{http_code}' "${AUTH_HEADERS[@]}" "$@")" || {
         echo "page-cotel-health: FAILED — request error" >&2
         return 1
     }
     http="${raw##*$'\n'}"
     body="${raw%$'\n'*}"
+    PC_HTTP="$http"
+    PC_BODY="$body"
+    printf '%s' "$body" >"$dest"
     if [[ ! "$http" =~ ^[0-9]{3}$ ]]; then
         echo "page-cotel-health: FAILED — no HTTP status from API" >&2
         printf '%s\n' "$raw" >&2
         return 1
     fi
     if [ "$http" -lt 200 ] || [ "$http" -ge 300 ]; then
-        echo "page-cotel-health: FAILED — HTTP ${http}" >&2
-        printf '%s\n' "$body" >&2
+        if [ "${PC_QUIET_HTTP:-}" != "1" ]; then
+            echo "page-cotel-health: FAILED — HTTP ${http}" >&2
+            printf '%s\n' "$body" >&2
+        fi
         return 1
     fi
-    printf '%s' "$body"
+    return 0
+}
+
+pc() {
+    local tmp rc
+    tmp="$(mktemp)"
+    set +e
+    pc_into "$tmp" "$@"
+    rc=$?
+    set -e
+    cat "$tmp"
+    rm -f "$tmp"
+    return "$rc"
 }
 
 find_open() {
@@ -190,7 +213,27 @@ case "$ACTION" in
         fi
         comment="$(printf 'Probe is green again.\n\n%s\n' "$RUN_LINE")"
         payload="$(jq -cn --arg comment "$comment" '{status: "done", comment: $comment}')"
-        resp="$(pc -X PATCH "${PC_API_URL}/api/issues/${EXISTING_ID}" -d "$payload")"
+        # A red alert is assigned to someone, which checks it out. PATCH then
+        # returns 409 until that run releases. The assignee is already awake,
+        # so a green hour must not fail the job or open another alert.
+        PC_QUIET_HTTP=1
+        resp_file="$(mktemp)"
+        set +e
+        pc_into "$resp_file" -X PATCH "${PC_API_URL}/api/issues/${EXISTING_ID}" -d "$payload"
+        resolve_rc=$?
+        set -e
+        PC_QUIET_HTTP=0
+        resp="$(cat "$resp_file")"
+        rm -f "$resp_file"
+        if [ "$resolve_rc" -ne 0 ]; then
+            if [ "${PC_HTTP:-}" = "409" ]; then
+                echo "page-cotel-health: alert ${EXISTING_IDENT:-$EXISTING_ID} ${EXISTING_ID} is checked out; leaving it open"
+                exit 0
+            fi
+            echo "page-cotel-health: FAILED — HTTP ${PC_HTTP:-unknown}" >&2
+            printf '%s\n' "${PC_BODY:-}" >&2
+            exit 1
+        fi
         got_status="$(printf '%s' "$resp" | jq -r '.status // empty')"
         if [ "$got_status" != "done" ]; then
             echo "page-cotel-health: FAILED — resolve did not mark the issue done"

@@ -69,8 +69,12 @@ case "$method" in
         fi
         ;;
     PATCH)
-        code=200
-        body='{"id":"alert-id","identifier":"ALT-1","status":"done","title":"cotel prod /healthz is red [cotel-health-probe]"}'
+        code="${PAGE_TEST_PATCH_STATUS:-200}"
+        if [ "$code" = "409" ]; then
+            body='{"error":"Issue run ownership conflict"}'
+        else
+            body='{"id":"alert-id","identifier":"ALT-1","status":"done","title":"cotel prod /healthz is red [cotel-health-probe]"}'
+        fi
         ;;
 esac
 printf '%s\n%s' "$body" "$code"
@@ -97,6 +101,7 @@ run_page() {
     PAGE_TEST_FIXTURE="$TMP/fixture.json" \
     PAGE_TEST_CREATE_BODY="$TMP/create.json" \
     PAGE_TEST_SEARCH_STATUS="${1:-200}" \
+    PAGE_TEST_PATCH_STATUS="${PAGE_TEST_PATCH_STATUS:-200}" \
         bash "$PAGE" "${@:2}"
 }
 
@@ -295,7 +300,37 @@ else
 fi
 assert_log_lacks "search failure does not create" "POST "
 
-# 8. Usage and missing probe file.
+# 8. Resolve while the alert is checked out leaves it open and exits 0.
+write_fixture <<'JSON'
+[
+  {
+    "id": "alert-id",
+    "identifier": "ALT-1",
+    "title": "cotel prod /healthz is red [cotel-health-probe]",
+    "status": "in_progress"
+  }
+]
+JSON
+reset_log
+PAGE_TEST_PATCH_STATUS=409
+set +e
+out="$(run_page 200 resolve 2>"$TMP/err")"
+rc=$?
+set -e
+PAGE_TEST_PATCH_STATUS=200
+if [ "$rc" -ne 0 ]; then
+    fail "checked-out resolve exited $rc: $out"
+    cat "$TMP/err"
+else
+    case "$out" in
+        "page-cotel-health: alert ALT-1 alert-id is checked out; leaving it open")
+            pass "checked-out resolve leaves the alert open"
+            ;;
+        *) fail "checked-out resolve — output: $out" ;;
+    esac
+fi
+
+# 9. Usage and missing probe file.
 set +e
 out="$(bash "$PAGE" 2>"$TMP/err")"
 rc=$?

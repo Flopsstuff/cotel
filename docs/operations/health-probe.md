@@ -72,11 +72,15 @@ alert, and a longer marker such as `[cotel-health-probe-selftest]` is not this
 one. The create request does not send `originId`: the issues API drops unknown
 fields, and list search does not query that column.
 
-A green hour marks that same issue done. Paperclip budget is spent only when
-the probe is red (create or comment) or when it recovers. A green hour with
-no open alert does not write. A scheduled Paperclip routine that fires every
-hour regardless of health is the more expensive alternative (24 heartbeats a
-day). It is not enabled.
+A green hour marks that same issue done. If the assignee still has the alert
+checked out, the status change comes back as a run-ownership conflict. The
+probe leaves the issue open and does not fail the job, because that assignee
+is already awake. The next green hour closes it once the checkout is released.
+
+Paperclip budget is spent only when the probe is red (create or comment) or
+when it recovers. A green hour with no open alert does not write. A scheduled
+Paperclip routine that fires every hour regardless of health is the more
+expensive alternative (24 heartbeats a day). It is not enabled.
 
 ## Local use
 
