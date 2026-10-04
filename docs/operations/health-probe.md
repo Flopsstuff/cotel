@@ -49,6 +49,13 @@ Manual run: Actions → **Health probe** → **Run workflow**. Optional URL
 override is for demonstrating a red run against a dead endpoint; leave **page**
 unchecked unless you intend to open a Paperclip alert.
 
+The schedule runs only from the default branch. On a public repository GitHub
+disables scheduled workflows after 60 days with no repository activity. The
+notice for that goes to GitHub notifications, which do not wake anyone here —
+the same silence this probe exists to close. A push is repository activity and
+resets that 60-day clock. If the repository sits idle long enough for GitHub
+to disable the schedule, this probe goes quiet with it.
+
 ## Who is woken, and how
 
 A red GitHub Actions run is **not** the page. Notifications on the Fl0p
@@ -56,16 +63,20 @@ account are unproven (no `notifications` API scope, no public mailbox, agent
 identities are not GitHub users), and this company has already watched red
 Actions sit unnoticed.
 
-On red, the workflow creates (or comments on) a Paperclip issue with
-`originId: cotel-health-probe`, assigned to Daedalus. That assignment is the
-wake — the same path `paperclip-issue-sync.yml` already uses for GitHub issue
-intake. Paperclip budget is spent only when the probe is red or when it
-recovers (the standing issue is marked done). Green hourly ticks do not create
-issues.
+On red, the workflow opens a Paperclip issue titled
+`cotel prod /healthz is red [cotel-health-probe]`, assigned to Daedalus.
+That assignment is the wake. A later red hour searches `q=cotel-health-probe`
+and comments on the open issue whose **title** contains `[cotel-health-probe]`.
+Search also matches comments and descriptions, so the first hit is not the
+alert, and a longer marker such as `[cotel-health-probe-selftest]` is not this
+one. The create request does not send `originId`: the issues API drops unknown
+fields, and list search does not query that column.
 
-A scheduled Paperclip *routine* that fires every hour regardless of health is
-the more expensive alternative (24 execution issues a day, each a heartbeat).
-It is not enabled.
+A green hour marks that same issue done. Paperclip budget is spent only when
+the probe is red (create or comment) or when it recovers. A green hour with
+no open alert does not write. A scheduled Paperclip routine that fires every
+hour regardless of health is the more expensive alternative (24 heartbeats a
+day). It is not enabled.
 
 ## Local use
 
