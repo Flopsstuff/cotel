@@ -237,7 +237,31 @@ Two caveats:
   open — but that open pays the replay again. `COTEL_WAL_AUTOCHECKPOINT` (below)
   bounds how large the WAL, and therefore that worst-case replay, can get: it
   folds the log into the main file once it passes the threshold, so a hard kill
-  finds little left to replay.
+  finds little left to replay. The exception is a *damaged* database — see below.
+
+### When the shutdown checkpoint fails
+
+A checkpoint that runs out of time is benign; one that fails outright is not. It
+fails because the database itself is damaged, and the WAL it leaves behind can
+then abort the next open inside `libduckdb` (a C++ `abort()` Go cannot catch), so
+the database never opens again until someone repairs it by hand. The two cases are
+therefore reported differently:
+
+| Outcome | Log | Exit code | Marker |
+|---|---|---|---|
+| Checkpoint succeeded | `checkpoint complete in …; exiting` | 0 | removed if present |
+| Checkpoint hit its 8s deadline | `checkpoint on shutdown timed out …, WAL left for replay on next start` | 0 | — |
+| Checkpoint failed | `checkpoint on shutdown FAILED …, the WAL left behind may not be replayable` | **3** | `<db path>.checkpoint-failed` |
+
+```bash
+docker inspect --format '{{.State.ExitCode}}' cotel    # 3 = the stop did not fold the WAL
+```
+
+The marker file sits next to the database on the `/data` volume and outlives the
+container's logs; cotel logs a warning about it on the next start, just before it
+opens the database, and clears it after the next clean shutdown. If you find it,
+or the container restart-loops with exit code 134, follow
+**[docs/operations/duckdb-recovery.md](docs/operations/duckdb-recovery.md)**.
 
 ### Health check
 

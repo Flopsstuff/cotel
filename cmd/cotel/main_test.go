@@ -1,12 +1,100 @@
 package main
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
+
+// fakeCheckpointer stands in for *storage.DB: the failure this guards against
+// comes from a damaged database file, which cannot be produced in a unit test.
+type fakeCheckpointer struct {
+	err   error
+	block bool // wait for ctx to expire, like a CHECKPOINT that outruns the deadline
+}
+
+func (f fakeCheckpointer) Checkpoint(ctx context.Context) error {
+	if f.block {
+		<-ctx.Done()
+		return fmt.Errorf("checkpoint: %w", ctx.Err())
+	}
+	return f.err
+}
+
+// TestShutdownCheckpoint pins what each shutdown outcome shows the outside
+// world. A CHECKPOINT that fails outright can leave a WAL that aborts the next
+// open inside libduckdb, so it must not exit 0; a CHECKPOINT that merely ran out
+// of time leaves a replayable WAL and must stay the benign case it was.
+func TestShutdownCheckpoint(t *testing.T) {
+	t.Run("success exits 0 and leaves no marker", func(t *testing.T) {
+		dbPath := filepath.Join(t.TempDir(), "cotel.duckdb")
+		if code := shutdownCheckpoint(context.Background(), fakeCheckpointer{}, dbPath); code != 0 {
+			t.Fatalf("clean checkpoint: want exit 0, got %d", code)
+		}
+		if _, err := os.Stat(checkpointFailureMarkerPath(dbPath)); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("clean checkpoint: marker should not exist, stat err = %v", err)
+		}
+	})
+
+	t.Run("success clears a marker from an earlier failed shutdown", func(t *testing.T) {
+		dbPath := filepath.Join(t.TempDir(), "cotel.duckdb")
+		marker := checkpointFailureMarkerPath(dbPath)
+		if err := os.WriteFile(marker, []byte("stale\n"), 0o644); err != nil {
+			t.Fatalf("seed marker: %v", err)
+		}
+		if code := shutdownCheckpoint(context.Background(), fakeCheckpointer{}, dbPath); code != 0 {
+			t.Fatalf("clean checkpoint: want exit 0, got %d", code)
+		}
+		if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("clean checkpoint: stale marker should be gone, stat err = %v", err)
+		}
+	})
+
+	t.Run("hard failure exits non-zero and records a marker", func(t *testing.T) {
+		dbPath := filepath.Join(t.TempDir(), "cotel.duckdb")
+		cause := errors.New("checkpoint: Invalid node type for TransformToDeprecated: 0")
+		code := shutdownCheckpoint(context.Background(), fakeCheckpointer{err: cause}, dbPath)
+		if code != exitCheckpointFailed {
+			t.Fatalf("failed checkpoint: want exit %d, got %d", exitCheckpointFailed, code)
+		}
+		body, ok := readCheckpointFailureMarker(dbPath)
+		if !ok {
+			t.Fatalf("failed checkpoint: no marker written at %s", checkpointFailureMarkerPath(dbPath))
+		}
+		if !strings.Contains(body, cause.Error()) {
+			t.Errorf("marker should carry the cause, got %q", body)
+		}
+	})
+
+	t.Run("timeout stays benign: exit 0, no marker", func(t *testing.T) {
+		dbPath := filepath.Join(t.TempDir(), "cotel.duckdb")
+		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		defer cancel()
+		if code := shutdownCheckpoint(ctx, fakeCheckpointer{block: true}, dbPath); code != 0 {
+			t.Fatalf("timed-out checkpoint: want exit 0, got %d", code)
+		}
+		if _, err := os.Stat(checkpointFailureMarkerPath(dbPath)); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("timed-out checkpoint: marker should not exist, stat err = %v", err)
+		}
+	})
+
+	t.Run("unwritable marker path still exits non-zero", func(t *testing.T) {
+		// Exit code is the signal that must survive; the marker is a bonus that
+		// a read-only or full volume can legitimately deny.
+		dbPath := filepath.Join(t.TempDir(), "missing-dir", "cotel.duckdb")
+		code := shutdownCheckpoint(context.Background(), fakeCheckpointer{err: errors.New("boom")}, dbPath)
+		if code != exitCheckpointFailed {
+			t.Fatalf("want exit %d, got %d", exitCheckpointFailed, code)
+		}
+	})
+}
 
 // TestReadyGate covers the gate contract in isolation: closed → retryable 503,
 // open → delegate to the installed handler.

@@ -30,6 +30,7 @@ export default defineConfig({
             { text: 'Cloudflare Tunnel — Token Mode', link: '/operations/cloudflare-tunnel-remote' },
             { text: 'Cloudflare Tunnel — Local Config', link: '/operations/cloudflare-tunnel-local' },
             { text: 'Export / Import', link: '/operations/export-import' },
+            { text: 'DuckDB Recovery', link: '/operations/duckdb-recovery' },
             { text: 'README Screenshots', link: '/operations/screenshots' },
           ],
         },
