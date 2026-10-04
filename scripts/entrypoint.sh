@@ -48,6 +48,12 @@ cfd_token="${CLOUDFLARE_TUNNEL_TOKEN:-}"
 unset CLOUDFLARE_TUNNEL_TOKEN
 
 if [ -n "${cfd_token}" ]; then
+    # cloudflared 2026.4.0 changed the --edge-ip-version default from 4 to auto,
+    # which follows whichever family the resolver answers with first and only
+    # falls back to the other one after a connection has already failed. Keep
+    # the old default here, where cotel owns the whole invocation; local-config
+    # mode is left alone because this env var outranks a config.yml setting.
+    export TUNNEL_EDGE_IP_VERSION="${TUNNEL_EDGE_IP_VERSION:-4}"
     cloudflared tunnel run --token "${cfd_token}" &
     CLOUDFLARED_PID=$!
     echo "entrypoint: cloudflared started in token mode (PID ${CLOUDFLARED_PID})"

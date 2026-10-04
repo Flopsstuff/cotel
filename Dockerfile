@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 # Multi-stage build — Node frontend first, then CGo Go build.
 
-ARG CLOUDFLARED_VERSION=2024.11.1
+ARG CLOUDFLARED_VERSION=2026.9.3
 
 ##############################################################################
 # cloudflared binary (multi-arch: TARGETARCH = amd64 | arm64)

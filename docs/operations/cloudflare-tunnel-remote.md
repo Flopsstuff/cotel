@@ -91,6 +91,19 @@ Do not lower cloudflared's log level to `debug` on a public deployment: `--logle
 
 If you need the token out of the container entirely, use [local-config mode](./cloudflare-tunnel-local.md) - the credentials then live in a file mounted from the host and never enter the container's environment or command line.
 
+## The bundled cloudflared
+
+The image carries a `cloudflared` pinned by `CLOUDFLARED_VERSION` in the `Dockerfile` (currently **2026.9.3**) rather than tracking `latest`, so a rebuild of an old commit produces the same binary it did originally. Override it at build time with `--build-arg CLOUDFLARED_VERSION=…`.
+
+Two things about recent versions are worth knowing when reading the startup log:
+
+- **Edge IP version.** 2026.4.0 changed the `--edge-ip-version` default from `4` to `auto`, which connects over whichever address family the system resolver answers with first and falls back to the other one only after a connection has already failed. In token mode the entrypoint sets `TUNNEL_EDGE_IP_VERSION=4` unless you set it yourself, because a container with a resolver that answers `AAAA` first but no working IPv6 egress would otherwise spend its first connection attempts failing. Set `TUNNEL_EDGE_IP_VERSION=auto` (or `6`) in your deployment to opt back in. This is token mode only - in local-config mode the setting belongs in your `config.yml`, and an env var would silently outrank it.
+- **Connectivity pre-checks.** Since 2026 cloudflared probes DNS, QUIC, HTTP/2 and the Cloudflare API at startup and logs a `CONNECTIVITY PRE-CHECKS` table (about twenty lines) before the tunnel registers. They are diagnostic only - they run concurrently with startup, do not gate it, and a `FAIL` row does not stop the tunnel. The table is the fastest way to tell a blocked UDP path from a bad token. `TUNNEL_NO_PRECHECKS=true` silences it.
+
+### Why not `--token-file`
+
+Newer cloudflared can read the token from a file (`--token-file`) instead of an argument, which would flip the last row of the table above to "No". cotel does not use it, because that row is the only one it changes: whoever can run `ps` inside the container can read `/proc/1/environ` too, so the same person reaches the same value by a path `--token-file` does not touch. It would need a tmpfs mount and a secret on disk to close nothing. Getting the token out of the container altogether means [local-config mode](./cloudflare-tunnel-local.md), where the credentials are a host-mounted file.
+
 ## Verifying the tunnel
 
 ```sh
