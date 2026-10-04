@@ -29,7 +29,7 @@ Rolling custom TLS + auth in-app would inflate the deployment surface (a second 
 
 Implementation details:
 
-- The Dockerfile downloads the `cloudflared` binary in a separate build stage, pinned to a specific version (`v2024.11.1`), multi-arch (amd64/arm64).
+- The Dockerfile downloads the `cloudflared` binary in a separate build stage, pinned to an explicit version via the `CLOUDFLARED_VERSION` build arg, multi-arch (amd64/arm64).
 - `scripts/entrypoint.sh` supports two modes (token takes precedence):
   - **Token mode:** `CLOUDFLARE_TUNNEL_TOKEN` env var → `cloudflared tunnel run --token …`. Ingress rules live in the Cloudflare dashboard.
   - **Local-config mode:** `/etc/cloudflared/config.yml` mounted into the container → `cloudflared tunnel --config … run`. Ingress rules live in a YAML file, reviewable in git.

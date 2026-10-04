@@ -148,6 +148,7 @@ This gates the dashboard UI without any changes to cotel itself. The ingest endp
 - **HA / multi-replica:** the `<UUID>.json` credentials file must be present on every host that runs the container. Synchronizing credentials across hosts is out of scope — consider token mode for multi-host setups, as the token is just an env var.
 - **`cert.pem` is only needed for bootstrap.** You can delete or archive it after step 3; the container only needs `<UUID>.json` and `config.yml` at runtime.
 - **Migrating from token mode:** create a new tunnel (`tunnel create`), add DNS routes, write `config.yml`, remove `CLOUDFLARE_TUNNEL_TOKEN`, mount `~/.cloudflared`, restart. The old token-mode tunnel can be deleted in the Cloudflare dashboard after confirming the new one is healthy.
+- **`edge-ip-version` now defaults to `auto`.** cloudflared 2026.4.0 changed it from `4`; it connects over whichever address family the resolver answers with first and falls back only after a failed connection. In local-config mode cotel does not override this - your `config.yml` owns it. Add `edge-ip-version: 4` there if the container has no working IPv6 egress. (Token mode pins `4` instead, because it has no config file to put it in.)
 
 ## References
 
