@@ -46,6 +46,11 @@ if [ -n "${CF_ACCESS_CLIENT_ID:-}" ] && [ -n "${CF_ACCESS_CLIENT_SECRET:-}" ]; t
     )
 fi
 
+# Names the request in every failure line. The search, create, comment and
+# resolve calls answer with overlapping status codes for unrelated reasons, so
+# a bare status does not say which of them failed.
+PC_CALL="request"
+
 # pc_into writes the response body to $1 and sets PC_HTTP / PC_BODY in this
 # shell. Call it directly — a command substitution would drop those assignments.
 pc_into() {
@@ -55,7 +60,7 @@ pc_into() {
     PC_HTTP=""
     PC_BODY=""
     raw="$(curl -sS --max-time 30 -w '\n%{http_code}' "${AUTH_HEADERS[@]}" "$@")" || {
-        echo "page-cotel-health: FAILED — request error" >&2
+        echo "page-cotel-health: FAILED — ${PC_CALL}: request error" >&2
         return 1
     }
     http="${raw##*$'\n'}"
@@ -64,13 +69,13 @@ pc_into() {
     PC_BODY="$body"
     printf '%s' "$body" >"$dest"
     if [[ ! "$http" =~ ^[0-9]{3}$ ]]; then
-        echo "page-cotel-health: FAILED — no HTTP status from API" >&2
+        echo "page-cotel-health: FAILED — ${PC_CALL}: no HTTP status from API" >&2
         printf '%s\n' "$raw" >&2
         return 1
     fi
     if [ "$http" -lt 200 ] || [ "$http" -ge 300 ]; then
         if [ "${PC_QUIET_HTTP:-}" != "1" ]; then
-            echo "page-cotel-health: FAILED — HTTP ${http}" >&2
+            echo "page-cotel-health: FAILED — ${PC_CALL}: HTTP ${http}" >&2
             printf '%s\n' "$body" >&2
         fi
         return 1
@@ -93,6 +98,7 @@ pc() {
 find_open() {
     local encoded
     encoded="$(python3 -c "import urllib.parse, os; print(urllib.parse.quote(os.environ['ORIGIN_ID']))")"
+    PC_CALL="issue search"
     pc "${PC_API_URL}/api/companies/${PC_COMPANY_ID}/issues?q=${encoded}&status=todo,in_progress,in_review,blocked,backlog&limit=100" \
         | python3 -c '
 import json, os, sys
@@ -102,16 +108,16 @@ if not raw.strip():
 try:
     data = json.loads(raw)
 except json.JSONDecodeError:
-    print("page-cotel-health: FAILED — issue search did not return JSON", file=sys.stderr)
+    print("page-cotel-health: FAILED — issue search: did not return JSON", file=sys.stderr)
     print(raw[:500], file=sys.stderr)
     sys.exit(1)
 if isinstance(data, dict) and data.get("error"):
-    print("page-cotel-health: FAILED — issue search error", file=sys.stderr)
+    print("page-cotel-health: FAILED — issue search: error body", file=sys.stderr)
     print(raw[:500], file=sys.stderr)
     sys.exit(1)
 items = data if isinstance(data, list) else (data.get("issues") or [])
 if not isinstance(items, list):
-    print("page-cotel-health: FAILED — issue search returned an unexpected shape", file=sys.stderr)
+    print("page-cotel-health: FAILED — issue search: unexpected shape", file=sys.stderr)
     sys.exit(1)
 origin = os.environ["ORIGIN_ID"]
 marker = "[" + origin + "]"
@@ -164,10 +170,11 @@ case "$ACTION" in
         if [ -n "$EXISTING_ID" ]; then
             body="$(printf 'Still red.\n\n```\n%s\n```\n\n%s\n' "$reason" "$RUN_LINE")"
             payload="$(jq -cn --arg body "$body" '{body: $body}')"
+            PC_CALL="alert comment"
             resp="$(pc -X POST "${PC_API_URL}/api/issues/${EXISTING_ID}/comments" -d "$payload")"
             comment_id="$(printf '%s' "$resp" | jq -r '.id // empty')"
             if [ -z "$comment_id" ]; then
-                echo "page-cotel-health: FAILED — comment did not return an id"
+                echo "page-cotel-health: FAILED — alert comment: no id in response"
                 printf '%s\n' "$resp"
                 exit 1
             fi
@@ -186,19 +193,20 @@ case "$ACTION" in
                 priority: "high",
                 assigneeAgentId: $assigneeAgentId
             }')"
+        PC_CALL="issue create"
         resp="$(pc -X POST "${PC_API_URL}/api/companies/${PC_COMPANY_ID}/issues" -d "$payload")"
         ident="$(printf '%s' "$resp" | jq -r '.identifier // empty')"
         issue_id="$(printf '%s' "$resp" | jq -r '.id // empty')"
         got_title="$(printf '%s' "$resp" | jq -r '.title // empty')"
         if [ -z "$ident" ] || [ -z "$issue_id" ]; then
-            echo "page-cotel-health: FAILED — create did not return an issue"
+            echo "page-cotel-health: FAILED — issue create: no issue in response"
             printf '%s\n' "$resp"
             exit 1
         fi
         case "$got_title" in
             *"$MARKER"*) ;;
             *)
-                echo "page-cotel-health: FAILED — created issue title is missing ${MARKER}"
+                echo "page-cotel-health: FAILED — issue create: created title is missing ${MARKER}"
                 printf '%s\n' "$resp"
                 exit 1
                 ;;
@@ -213,9 +221,10 @@ case "$ACTION" in
         fi
         comment="$(printf 'Probe is green again.\n\n%s\n' "$RUN_LINE")"
         payload="$(jq -cn --arg comment "$comment" '{status: "done", comment: $comment}')"
-        # A red alert is assigned to someone, which checks it out. PATCH then
-        # returns 409 until that run releases. The assignee is already awake,
-        # so a green hour must not fail the job or open another alert.
+        # A red alert is assigned to someone, which checks it out. The assignee
+        # is already awake, so a lost race for that checkout must not fail the
+        # job or open another alert.
+        PC_CALL="alert resolve"
         PC_QUIET_HTTP=1
         resp_file="$(mktemp)"
         set +e
@@ -230,13 +239,22 @@ case "$ACTION" in
                 echo "page-cotel-health: alert ${EXISTING_IDENT:-$EXISTING_ID} ${EXISTING_ID} is checked out; leaving it open"
                 exit 0
             fi
-            echo "page-cotel-health: FAILED — HTTP ${PC_HTTP:-unknown}" >&2
+            echo "page-cotel-health: FAILED — alert resolve: HTTP ${PC_HTTP:-unknown}" >&2
             printf '%s\n' "${PC_BODY:-}" >&2
+            # Both of these mean "this credential cannot write to an issue at
+            # all", not "this alert is unavailable right now": an issue write
+            # by an agent needs a heartbeat run to attribute it to, and a CI
+            # job has none. Retrying later cannot help.
+            case "${PC_HTTP:-}" in
+                401 | 403)
+                    echo "page-cotel-health: PC_API_TOKEN must be a board API key to close an alert — an agent key has no run to attribute the write to. See docs/operations/health-probe.md." >&2
+                    ;;
+            esac
             exit 1
         fi
         got_status="$(printf '%s' "$resp" | jq -r '.status // empty')"
         if [ "$got_status" != "done" ]; then
-            echo "page-cotel-health: FAILED — resolve did not mark the issue done"
+            echo "page-cotel-health: FAILED — alert resolve: issue is not done"
             printf '%s\n' "$resp"
             exit 1
         fi

@@ -98,6 +98,11 @@ own optional URL override (`url` for the edge, `loopback_url` for the host) for
 demonstrating a red run against a dead endpoint; leave **page** unchecked
 unless you intend to open a Paperclip alert.
 
+To exercise the pager end to end, dispatch twice with **page** checked: once
+with `loopback_url=http://127.0.0.1:9` (a closed port — raises the alert and
+wakes its assignee), then once with the default (green — should close that same
+alert). Never break production to get a red run.
+
 The schedule runs only from the default branch. On a public repository GitHub
 disables scheduled workflows after 60 days with no repository activity. The
 notice for that goes to GitHub notifications, which do not wake anyone here —
@@ -121,10 +126,45 @@ descriptions, so the first hit is not the alert, and a longer marker such as
 send `originId`: the issues API drops unknown fields, and list search does not
 query that column.
 
-A green hour marks that same issue done. If the assignee still has the alert
-checked out, the status change comes back as a run-ownership conflict. The
-probe leaves the issue open and does not fail the job, because that assignee
-is already awake. The next green hour closes it once the checkout is released.
+A green hour is meant to mark that same issue done, so that a recovered
+outage does not leave an alert standing — and, because dedup attaches the next
+red hour to whatever is already open, so that a stale alert cannot swallow the
+next real one.
+
+### Recovery does not close the alert yet (`PAPERCLIP_API_TOKEN` is an agent key)
+
+`PAPERCLIP_API_TOKEN` is a long-lived **agent** API key (`github-actions`, on
+Daedalus). An agent identity writing to an issue must attribute the write to a
+heartbeat run; a CI job has no run. Two independent gates enforce that, and the
+pager hits them in sequence:
+
+1. Assigning the alert *is* the wake. The assignee's run starts within
+   milliseconds of the create and checks the issue out. Because the alert is
+   assigned to the key's **own** agent, the write then takes the self-assignee
+   branch and demands that run's id: `401 {"error":"Agent run id required"}` —
+   which reads like a rejected token and is really a checkout precondition.
+2. Assign it to a different agent and the first gate opens (manager-chain
+   checkout management needs no run id), but every agent field update is also
+   counted against a per-run cross-issue cap, and with no run there is nothing
+   to count against: `403 cross_issue_influence_run_context_required`.
+
+Both were observed live, in that order, on the dispatch drills. There is no
+agent-key path past the second gate — the same applies to the `Still red.`
+dedup comment, so after the first red hour the only call the pager can still
+make is a fresh `create`.
+
+**What closes this:** `PAPERCLIP_API_TOKEN` has to hold a **board** API key.
+Board actors take the `assertBoard` branch and are exempt from the cross-issue
+run-context gate entirely, so `status: done` goes through with no run id and
+regardless of who holds the checkout. Minting and placing that credential is a
+board action, not an agent one.
+
+Until then, a green hour leaves the alert open and reports
+`alert resolve: HTTP 403` as a warning, and the alert's **assignee** is who
+closes it — they hold a run, so they can. Every pager failure line names the
+call that produced it (`issue search`, `issue create`, `alert comment`,
+`alert resolve`), because these calls share status codes and a bare `HTTP 401`
+is not debuggable.
 
 **A paging failure is a warning, never the job's verdict.** Each job's red or
 green means "production is red or green" and nothing else; if the pager itself
@@ -152,6 +192,9 @@ scripts/probe-healthz.sh http://127.0.0.1:1/healthz
 
 # the classification tests, including 503 vs stale vs empty vs refused
 bash scripts/probe-healthz_test.sh
+
+# the pager against a fake curl — dedup and per-call failure labels
+bash scripts/page-cotel-health_test.sh
 ```
 
 Exit codes: `0` healthy, `1` unreachable, `2` HTTP non-200, `3` stale/empty,

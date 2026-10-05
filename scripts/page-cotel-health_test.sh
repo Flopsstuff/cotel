@@ -70,11 +70,12 @@ case "$method" in
         ;;
     PATCH)
         code="${PAGE_TEST_PATCH_STATUS:-200}"
-        if [ "$code" = "409" ]; then
-            body='{"error":"Issue run ownership conflict"}'
-        else
-            body='{"id":"alert-id","identifier":"ALT-1","status":"done","title":"cotel prod /healthz is red [cotel-health-probe]"}'
-        fi
+        case "$code" in
+            409) body='{"error":"Issue run ownership conflict"}' ;;
+            401) body='{"error":"Agent run id required"}' ;;
+            403) body='{"error":"Cross-issue writes need a run to attribute them to","code":"cross_issue_influence_run_context_required"}' ;;
+            *) body='{"id":"alert-id","identifier":"ALT-1","status":"done","title":"cotel prod /healthz is red [cotel-health-probe]"}' ;;
+        esac
         ;;
 esac
 printf '%s\n%s' "$body" "$code"
@@ -127,6 +128,17 @@ assert_log_has() {
         fail "$name — log missing '$needle'"
         echo "----- log -----"
         cat "$TMP/log"
+    fi
+}
+
+assert_err_has() {
+    local name="$1" needle="$2"
+    if grep -qF -- "$needle" "$TMP/err"; then
+        pass "$name"
+    else
+        fail "$name — stderr missing '$needle'"
+        echo "----- stderr -----"
+        cat "$TMP/err"
     fi
 }
 
@@ -299,6 +311,7 @@ else
     pass "search failure exits non-zero"
 fi
 assert_log_lacks "search failure does not create" "POST "
+assert_err_has "search failure names the search" "issue search: HTTP 500"
 
 # 8. Resolve while the alert is checked out leaves it open and exits 0.
 write_fixture <<'JSON'
@@ -330,7 +343,27 @@ else
     esac
 fi
 
-# 9. Usage and missing probe file.
+# 9. A resolve the credential cannot perform names the resolve call and says
+# the token class is the problem, so the log is not ambiguous with a failed
+# search and nobody retries it.
+for status in 401 403; do
+    reset_log
+    PAGE_TEST_PATCH_STATUS="$status"
+    set +e
+    out="$(run_page 200 resolve 2>"$TMP/err")"
+    rc=$?
+    set -e
+    PAGE_TEST_PATCH_STATUS=200
+    if [ "$rc" -eq 0 ]; then
+        fail "$status resolve exited 0: $out"
+    else
+        pass "$status resolve exits non-zero"
+    fi
+    assert_err_has "$status resolve names the resolve call" "alert resolve: HTTP $status"
+    assert_err_has "$status resolve names the token class" "must be a board API key"
+done
+
+# 10. Usage and missing probe file.
 set +e
 out="$(bash "$PAGE" 2>"$TMP/err")"
 rc=$?
