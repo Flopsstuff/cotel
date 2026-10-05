@@ -99,9 +99,12 @@ demonstrating a red run against a dead endpoint; leave **page** unchecked
 unless you intend to open a Paperclip alert.
 
 To exercise the pager end to end, dispatch twice with **page** checked: once
-with `loopback_url=http://127.0.0.1:9` (a closed port — raises the alert and
-wakes its assignee), then once with the default (green — should close that same
-alert). Never break production to get a red run.
+with `loopback_url=http://127.0.0.1:9` (a closed port — raises the alert, and
+the assignment wakes its assignee), then once with the default (green). The
+green half does **not** yet close the alert — that write is refused, see
+"Recovery does not close the alert yet" below — so the alert it opened is a real
+one on the real dedup marker, assigned to a real agent. Close the alert you
+minted when the drill is done, and never break production to get a red run.
 
 The schedule runs only from the default branch. On a public repository GitHub
 disables scheduled workflows after 60 days with no repository activity. The
@@ -156,12 +159,23 @@ make is a fresh `create`.
 **What closes this:** not a wider credential. A board API key would walk past
 both gates with no code change, and it was declined — it is instance-admin
 authority over the whole tracker, handed to a public repository's CI, to close
-one issue that CI opened itself. The pager will instead **wake the alert's
-assignee**, who closes it from a run of their own; `POST
-/api/agents/{id}/wakeup` accepts this key for its own agent and is not an issue
-write. See [ADR-0019](../decisions/0019-ci-never-mutates-an-issue) for the
-options and the rule it sets: the tracker credential in CI is create-only on
-issues and may wake only the agent it authenticates as.
+one issue that CI opened itself.
+
+Nor a bare wake of the assignee. `POST /api/agents/{id}/wakeup` accepts this key
+for its own agent and is not an issue write, but the run it starts is bound to
+**no task** — no `PAPERCLIP_TASK_ID`, and no field in the request that could
+supply one — so that run's write to the alert is cross-issue with no run to
+attribute it to, and hits gate 2 above. The woken agent can read the alert and
+can `create`; it cannot close it.
+
+So a green hour instead **creates a recovery notice** assigned to the alert's
+assignee, and `raise` stops deduping into an alert older than a bounded window,
+so a never-closed alert cannot swallow the next real outage. `create` is the one
+write this credential and that woken run can both make; the notice's assignment
+is what finally produces a run allowed to close the alert. See
+[ADR-0020](../decisions/0020-recovery-arrives-as-a-new-issue) for the options and
+the rule: the tracker credential in CI is create-only on issues, and anything
+that must mutate an existing issue is carried by an issue it creates.
 
 Until that lands, a green hour leaves the alert open and reports
 `alert resolve: HTTP 403` as a warning, and the alert's **assignee** is who
