@@ -1,0 +1,192 @@
+name: Health probe
+
+# Hourly is the interval: six silent days was the failure mode, and catching
+# it the same day is the acceptance bar. The 6h ingest-age threshold is
+# independent — a quiet night is not an alert; six hours without a span is.
+#
+# Two halves, neither sufficient alone. The loopback half runs on the deploy
+# host and sees the application; it is blind to its own host being down. The
+# edge half runs on a GitHub runner and sees host, tunnel, DNS and Access; it
+# cannot see /healthz at all until the Access service token is allowed on the
+# cotel.aignite.pl application, so it reports that as a warning rather than an
+# outage.
+on:
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+    inputs:
+      url:
+        description: "Override the edge /healthz URL (empty = production dashboard)"
+        required: false
+        default: ""
+      loopback_url:
+        description: "Override the on-host /healthz URL (empty = http://127.0.0.1:8080/healthz)"
+        required: false
+        default: ""
+      page:
+        description: "Create or resolve a Paperclip alert for this run"
+        type: boolean
+        default: false
+  pull_request:
+  push:
+    branches: [main]
+    paths:
+      - "scripts/probe-healthz.sh"
+      - "scripts/probe-healthz_test.sh"
+      - "scripts/page-cotel-health.sh"
+      - "scripts/page-cotel-health_test.sh"
+      - ".github/workflows/health-probe.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Probe script tests
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Run probe-healthz tests
+        run: bash scripts/probe-healthz_test.sh
+      - name: Run pager tests
+        run: bash scripts/page-cotel-health_test.sh
+
+  probe-loopback:
+    name: Probe /healthz on the deploy host
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: [self-hosted, flopsstuff, docker]
+    # This job cannot report its own host being down: with the runner offline
+    # the run sits in the queue, and timeout-minutes does not bound queue time
+    # — it starts counting once a runner picks the job up. So an absent host
+    # produces no colour at all, which is what the edge half is for. The cap
+    # only bounds a job that is running and stuck (6h by default), and the
+    # concurrency group keeps each hour superseding the last queued attempt
+    # instead of piling up a day's worth of them.
+    timeout-minutes: 5
+    concurrency:
+      group: health-probe-loopback
+      cancel-in-progress: true
+    env:
+      STALE_AFTER_SECONDS: "21600"
+      CONNECT_TIMEOUT: "15"
+      PC_API_URL: ${{ secrets.PAPERCLIP_API_URL }}
+      PC_API_TOKEN: ${{ secrets.PAPERCLIP_API_TOKEN }}
+      PC_COMPANY_ID: ${{ secrets.PAPERCLIP_COMPANY_ID }}
+      GITHUB_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v5
+
+      # The pager is the only thing here that wakes anyone, and this runner is
+      # a developer Mac rather than a managed image. Check its interpreters on
+      # every green hour, so a missing one surfaces before an incident needs
+      # them.
+      - name: Check pager prerequisites
+        run: |
+          for bin in jq python3; do
+            command -v "$bin" >/dev/null \
+              || echo "::warning title=Pager prerequisite missing::${bin} is not on this runner's PATH; a red hour would not page"
+          done
+
+      # No CF_ACCESS_* here: loopback has no Cloudflare in front of it, and the
+      # probe sends the Access headers whenever both are set.
+      - name: Probe /healthz
+        env:
+          HEALTHZ_URL: ${{ inputs.loopback_url || 'http://127.0.0.1:8080/healthz' }}
+        run: |
+          set -o pipefail
+          mkdir -p "$RUNNER_TEMP"
+          PROBE_OUT="$RUNNER_TEMP/probe-loopback.out"
+          set +e
+          scripts/probe-healthz.sh | tee "$PROBE_OUT"
+          rc=${PIPESTATUS[0]}
+          set -e
+          echo "PROBE_OUT=$PROBE_OUT" >> "$GITHUB_ENV"
+          echo "PROBE_RC=$rc" >> "$GITHUB_ENV"
+
+      # Paging failures are a warning, never the job's verdict: this job's
+      # red/green must mean "production is red/green" and nothing else.
+      - name: Page Paperclip on red
+        if: env.PROBE_RC != '0' && (github.event_name == 'schedule' || inputs.page)
+        env:
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+        run: |
+          scripts/page-cotel-health.sh raise "$PROBE_OUT" \
+            || echo "::warning title=Pager failed::could not raise the Paperclip alert; nobody was woken for this red hour"
+
+      - name: Resolve Paperclip alert on green
+        if: env.PROBE_RC == '0' && (github.event_name == 'schedule' || inputs.page)
+        env:
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+        run: |
+          scripts/page-cotel-health.sh resolve \
+            || echo "::warning title=Pager failed::could not resolve the standing Paperclip alert"
+
+      - name: Fail the job when the probe is red
+        if: env.PROBE_RC != '0'
+        run: |
+          echo "probe-healthz exited ${PROBE_RC}"
+          cat "$PROBE_OUT"
+          exit 1
+
+  probe-edge:
+    name: Probe /healthz through Cloudflare
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    env:
+      HEALTHZ_URL: ${{ inputs.url || 'https://cotel.aignite.pl/healthz' }}
+      STALE_AFTER_SECONDS: "21600"
+      CONNECT_TIMEOUT: "15"
+      CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+      CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+      PC_API_URL: ${{ secrets.PAPERCLIP_API_URL }}
+      PC_API_TOKEN: ${{ secrets.PAPERCLIP_API_TOKEN }}
+      PC_COMPANY_ID: ${{ secrets.PAPERCLIP_COMPANY_ID }}
+      # A separate dedup marker from the loopback half. On one marker the two
+      # halves would fight: a green loopback hour would resolve the alert the
+      # edge half had just raised.
+      PC_ORIGIN_ID: cotel-health-probe-edge
+      GITHUB_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Probe /healthz
+        run: |
+          set -o pipefail
+          mkdir -p "$RUNNER_TEMP"
+          PROBE_OUT="$RUNNER_TEMP/probe-edge.out"
+          set +e
+          scripts/probe-healthz.sh | tee "$PROBE_OUT"
+          rc=${PIPESTATUS[0]}
+          set -e
+          echo "PROBE_OUT=$PROBE_OUT" >> "$GITHUB_ENV"
+          echo "PROBE_RC=$rc" >> "$GITHUB_ENV"
+
+      - name: Page Paperclip on red
+        if: env.PROBE_RC != '0' && env.PROBE_RC != '4' && (github.event_name == 'schedule' || inputs.page)
+        run: |
+          scripts/page-cotel-health.sh raise "$PROBE_OUT" \
+            || echo "::warning title=Pager failed::could not raise the Paperclip alert; nobody was woken for this red hour"
+
+      - name: Resolve Paperclip alert on green
+        if: env.PROBE_RC == '0' && (github.event_name == 'schedule' || inputs.page)
+        run: |
+          scripts/page-cotel-health.sh resolve \
+            || echo "::warning title=Pager failed::could not resolve the standing Paperclip alert"
+
+      # Exit 4 is "cannot see /healthz", not "cotel is down". Failing on it
+      # would paint this job red every hour until the Access service token is
+      # allowed on the application, and an alarm that is always on is one
+      # nobody reads. It stays a warning until it can actually observe.
+      - name: Report the probe verdict
+        if: env.PROBE_RC != '0'
+        run: |
+          cat "$PROBE_OUT"
+          if [ "$PROBE_RC" = "4" ]; then
+            echo "::warning title=Edge probe cannot observe /healthz::Cloudflare Access blocked the probe, so this half is not watching anything. Allow the CF_ACCESS service token on the cotel.aignite.pl application."
+            exit 0
+          fi
+          echo "probe-healthz exited ${PROBE_RC}"
+          exit 1

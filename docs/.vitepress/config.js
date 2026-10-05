@@ -29,6 +29,7 @@ export default defineConfig({
             { text: 'JSON API Reference', link: '/operations/api-reference' },
             { text: 'Cloudflare Tunnel — Token Mode', link: '/operations/cloudflare-tunnel-remote' },
             { text: 'Cloudflare Tunnel — Local Config', link: '/operations/cloudflare-tunnel-local' },
+            { text: 'Production /healthz probe', link: '/operations/health-probe' },
             { text: 'Export / Import', link: '/operations/export-import' },
             { text: 'DuckDB Recovery', link: '/operations/duckdb-recovery' },
             { text: 'README Screenshots', link: '/operations/screenshots' },
