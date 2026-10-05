@@ -24,6 +24,6 @@ New ADRs go in this directory as `NNNN-short-title.md`, numbered sequentially.
 | [ADR-0014](./0014-overview-single-range-selector) | Overview — one range selector every panel obeys | Accepted |
 | [ADR-0015](./0015-overview-activity-and-cost-one-block) | Overview — spans and cost share one block, and one plot | Accepted |
 | [ADR-0016](./0016-overview-activity-grid) | Overview — an activity grid, one cell per bucket | Accepted |
-| [ADR-0017](./0017-recovery-arrives-as-a-new-issue) | CI never closes an alert: recovery arrives as a new issue | Accepted |
 | [ADR-0017](./0017-chart-palette-ruler-is-pinned) | The chart-palette ruler is pinned, and a Go test holds it | Accepted |
 | [ADR-0018](./0018-duckdb-go-v2-driver) | DuckDB driver — `duckdb/duckdb-go/v2`, with the storage format pinned | Accepted |
+| [ADR-0019](./0019-recovery-arrives-as-a-new-issue) | CI never closes an alert: recovery arrives as a new issue | Accepted |

@@ -1,4 +1,4 @@
-# ADR 0017 — CI never closes an alert: recovery arrives as a new issue
+# ADR 0019 — CI never closes an alert: recovery arrives as a new issue
 
 **Date:** 2026-10-05
 **Status:** Accepted
