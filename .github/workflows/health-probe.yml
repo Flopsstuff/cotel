@@ -1,18 +1,17 @@
 name: Health probe
 
-# Hourly is the interval: six silent days was the failure mode, and catching
-# it the same day is the acceptance bar. The 6h ingest-age threshold is
-# independent — a quiet night is not an alert; six hours without a span is.
+# This workflow no longer schedules anything. `cron: "17 * * * *"` sat on the
+# default branch for nine hours and produced one run: GitHub schedules public
+# repositories on a best-effort basis and *drops* ticks rather than delaying
+# them, so the detection delay it bought was unbounded — the same silence the
+# probe exists to close. The scheduled probe is now a systemd timer on the Pi
+# (`~/ops/cotel-healthz.sh`, every 10 minutes), which owns the production alert
+# marker. See docs/operations/health-probe.md and ADR-0022.
 #
-# Two halves, neither sufficient alone. The loopback half runs on the deploy
-# host and sees the application; it is blind to its own host being down. The
-# edge half runs on a GitHub runner and sees host, tunnel, DNS and Access; it
-# cannot see /healthz at all until the Access service token is allowed on the
-# cotel.aignite.pl application, so it reports that as a warning rather than an
-# outage.
+# What is left here is dispatch-only: a drill of the pager, and the only
+# vantage point outside the LAN. Both jobs therefore page the *drill* markers,
+# never production.
 on:
-  schedule:
-    - cron: "17 * * * *"
   workflow_dispatch:
     inputs:
       url:
@@ -54,15 +53,15 @@ jobs:
 
   probe-loopback:
     name: Probe /healthz on the deploy host
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch'
     runs-on: [self-hosted, flopsstuff, docker]
     # This job cannot report its own host being down: with the runner offline
     # the run sits in the queue, and timeout-minutes does not bound queue time
     # — it starts counting once a runner picks the job up. So an absent host
-    # produces no colour at all, which is what the edge half is for. The cap
-    # only bounds a job that is running and stuck (6h by default), and the
-    # concurrency group keeps each hour superseding the last queued attempt
-    # instead of piling up a day's worth of them.
+    # produces no colour at all, which is why the Pi timer probes this host
+    # over the LAN instead. The cap only bounds a job that is running and stuck
+    # (6h by default), and the concurrency group keeps a re-dispatch superseding
+    # the last queued attempt instead of stacking them.
     timeout-minutes: 5
     concurrency:
       group: health-probe-loopback
@@ -78,20 +77,20 @@ jobs:
       # drill can neither mint an alert that reads like an outage nor act on a
       # standing real one. Set explicitly rather than left to the script
       # default: inheriting the default is what made the drills invisible.
-      PC_ORIGIN_ID: ${{ github.event_name == 'workflow_dispatch' && 'cotel-health-probe-drill' || 'cotel-health-probe' }}
+      PC_ORIGIN_ID: cotel-health-probe-drill
       GITHUB_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
       - uses: actions/checkout@v5
 
       # The pager is the only thing here that wakes anyone, and this runner is
       # a developer Mac rather than a managed image. Check its interpreters on
-      # every green hour, so a missing one surfaces before an incident needs
-      # them.
+      # every run, so a missing one surfaces during a drill rather than when an
+      # incident needs them.
       - name: Check pager prerequisites
         run: |
           for bin in jq python3; do
             command -v "$bin" >/dev/null \
-              || echo "::warning title=Pager prerequisite missing::${bin} is not on this runner's PATH; a red hour would not page"
+              || echo "::warning title=Pager prerequisite missing::${bin} is not on this runner's PATH; a red probe would not page"
           done
 
       # No CF_ACCESS_* here: loopback has no Cloudflare in front of it, and the
@@ -114,22 +113,22 @@ jobs:
       # Paging failures are a warning, never the job's verdict: this job's
       # red/green must mean "production is red/green" and nothing else.
       - name: Page Paperclip on red
-        if: env.PROBE_RC != '0' && (github.event_name == 'schedule' || inputs.page)
+        if: env.PROBE_RC != '0' && inputs.page
         env:
           CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
           CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
         run: |
           scripts/page-cotel-health.sh raise "$PROBE_OUT" \
-            || echo "::warning title=Pager failed::could not raise the Paperclip alert; nobody was woken for this red hour"
+            || echo "::warning title=Pager failed::could not raise the Paperclip alert; nobody was woken for this red probe"
 
       - name: Wake the alert's assignee on green
-        if: env.PROBE_RC == '0' && (github.event_name == 'schedule' || inputs.page)
+        if: env.PROBE_RC == '0' && inputs.page
         env:
           CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
           CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
         run: |
           scripts/page-cotel-health.sh resolve "$PROBE_OUT" \
-            || echo "::warning title=Pager failed::could not wake the alert's assignee; the standing Paperclip alert will keep deduping later red hours"
+            || echo "::warning title=Pager failed::could not wake the alert's assignee; the standing Paperclip alert will keep deduping later red probes"
 
       - name: Fail the job when the probe is red
         if: env.PROBE_RC != '0'
@@ -140,7 +139,7 @@ jobs:
 
   probe-edge:
     name: Probe /healthz through Cloudflare
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     env:
       HEALTHZ_URL: ${{ inputs.url || 'https://cotel.aignite.pl/healthz' }}
@@ -155,7 +154,7 @@ jobs:
       # halves would fight: a green loopback hour would resolve the alert the
       # edge half had just raised. A dispatched run is an exercise and gets a
       # separate marker again, for the same reason the loopback half does.
-      PC_ORIGIN_ID: ${{ github.event_name == 'workflow_dispatch' && 'cotel-health-probe-drill-edge' || 'cotel-health-probe-edge' }}
+      PC_ORIGIN_ID: cotel-health-probe-drill-edge
       GITHUB_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
       - uses: actions/checkout@v5
@@ -173,19 +172,19 @@ jobs:
           echo "PROBE_RC=$rc" >> "$GITHUB_ENV"
 
       - name: Page Paperclip on red
-        if: env.PROBE_RC != '0' && env.PROBE_RC != '4' && (github.event_name == 'schedule' || inputs.page)
+        if: env.PROBE_RC != '0' && env.PROBE_RC != '4' && inputs.page
         run: |
           scripts/page-cotel-health.sh raise "$PROBE_OUT" \
-            || echo "::warning title=Pager failed::could not raise the Paperclip alert; nobody was woken for this red hour"
+            || echo "::warning title=Pager failed::could not raise the Paperclip alert; nobody was woken for this red probe"
 
       - name: Wake the alert's assignee on green
-        if: env.PROBE_RC == '0' && (github.event_name == 'schedule' || inputs.page)
+        if: env.PROBE_RC == '0' && inputs.page
         run: |
           scripts/page-cotel-health.sh resolve "$PROBE_OUT" \
-            || echo "::warning title=Pager failed::could not wake the alert's assignee; the standing Paperclip alert will keep deduping later red hours"
+            || echo "::warning title=Pager failed::could not wake the alert's assignee; the standing Paperclip alert will keep deduping later red probes"
 
       # Exit 4 is "cannot see /healthz", not "cotel is down". Failing on it
-      # would paint this job red every hour until the Access service token is
+      # would paint this job red on every run until the Access service token is
       # allowed on the application, and an alarm that is always on is one
       # nobody reads. It stays a warning until it can actually observe.
       - name: Report the probe verdict

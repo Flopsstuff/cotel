@@ -798,6 +798,70 @@ else
     pass "missing action exits non-zero"
 fi
 
+# 13. A caller that is not GitHub Actions replaces both Actions-specific halves
+# of the alert body. The re-probe hint is the load-bearing one: telling an agent
+# to dispatch a workflow whose runner lives on the possibly-dead host is advice
+# that cannot be followed during the outage it describes.
+write_fixture <<'JSON'
+[]
+JSON
+reset_log
+out="$(run_page 200 raise "$PROBE_FILE" 2>"$TMP/err")" || { fail "default raise — exit $?"; cat "$TMP/err"; }
+assert_log_has "default body keeps the Actions origin line" "The health probe in Flopsstuff/cotel opened this issue"
+assert_log_has "default body keeps the dispatch re-probe hint" "Re-probe by dispatching **Health probe**"
+
+reset_log
+out="$(
+    export PC_SOURCE_LINE="The systemd timer cotel-healthz.timer on the Pi opened this issue."
+    export PC_REPROBE_HINT="Re-probe with \`~/ops/cotel-healthz.sh --probe-only\` on the Pi."
+    run_page 200 raise "$PROBE_FILE"
+)"
+case "$out" in
+    "page-cotel-health: opened ALT-9 new-id") pass "overridden raise creates" ;;
+    *) fail "overridden raise creates — output: $out" ;;
+esac
+assert_log_has "overridden body names the timer as the origin" "cotel-healthz.timer on the Pi opened this issue"
+assert_log_has "overridden body names the local re-probe" "cotel-healthz.sh --probe-only"
+assert_log_lacks "overridden body drops the dispatch hint" "Re-probe by dispatching"
+assert_log_lacks "overridden body drops the Actions origin line" "The health probe in Flopsstuff/cotel"
+
+# 14. PC_CALL_ID is the recovery key's unique half for a caller with no run id.
+# A timer repeating one key would wake the assignee once for an alert it keeps
+# finding open; repeating a coarse bucket retries a dropped wake a few times a
+# day instead.
+write_fixture <<'JSON'
+[
+  {
+    "id": "alert-id",
+    "identifier": "ALT-1",
+    "title": "cotel prod /healthz is red [cotel-health-probe]",
+    "status": "in_progress",
+    "assigneeAgentId": "agent-on-call"
+  }
+]
+JSON
+reset_log
+out="$(export PC_CALL_ID="pi-2026-10-05T12"; run_page 200 resolve "$GREEN_FILE" 2>"$TMP/err")" \
+    || { fail "recovery wake with PC_CALL_ID — exit $?"; cat "$TMP/err"; }
+python3 - "$(wake_body)" <<'PY2'
+import json, sys
+body = json.loads(sys.argv[1])
+if body.get("idempotencyKey") != "cotel-health-recovery:alert-id:pi-2026-10-05T12":
+    raise SystemExit("idempotencyKey=" + str(body.get("idempotencyKey")))
+PY2
+pass "PC_CALL_ID is the recovery key's unique half"
+
+reset_log
+out="$(export PC_CALL_ID="pi-bucket" GITHUB_RUN_ID="4242"; run_page 200 resolve "$GREEN_FILE" 2>"$TMP/err")" \
+    || { fail "PC_CALL_ID precedence — exit $?"; cat "$TMP/err"; }
+python3 - "$(wake_body)" <<'PY2'
+import json, sys
+body = json.loads(sys.argv[1])
+if body.get("idempotencyKey") != "cotel-health-recovery:alert-id:pi-bucket":
+    raise SystemExit("idempotencyKey=" + str(body.get("idempotencyKey")))
+PY2
+pass "PC_CALL_ID wins over GITHUB_RUN_ID"
+
 echo
 echo "passed=$PASS failed=$FAIL"
 if [ "$FAIL" -ne 0 ]; then

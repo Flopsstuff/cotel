@@ -61,6 +61,7 @@ export default defineConfig({
             { text: 'ADR-0019 — CI Never Mutates an Issue (superseded)', link: '/decisions/0019-ci-never-mutates-an-issue' },
             { text: 'ADR-0020 — Recovery Arrives as a New Issue (superseded)', link: '/decisions/0020-recovery-arrives-as-a-new-issue' },
             { text: "ADR-0021 — Recovery Wakes the Alert's Assignee", link: '/decisions/0021-recovery-wakes-the-alerts-assignee' },
+            { text: 'ADR-0022 — Health Probe Scheduler Outside This Repo', link: '/decisions/0022-health-probe-scheduler-outside-github' },
           ],
         },
       ],
