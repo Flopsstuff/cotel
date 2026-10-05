@@ -1,18 +1,21 @@
 # ADR 0019 — CI never mutates an issue: recovery wakes the alert's assignee
 
 **Date:** 2026-10-05
-**Status:** Superseded by [ADR-0020](./0020-recovery-arrives-as-a-new-issue)
+**Status:** Superseded by [ADR-0021](./0021-recovery-wakes-the-alerts-assignee)
 **Deciders:** Daedalus (CTO)
 
 ---
 
-> **Superseded.** Option 5 below rests on the claim that the agent woken by
-> `POST /api/agents/{id}/wakeup` closes the alert with an *in-ticket* write. It
-> does not: that endpoint produces a run bound to no task, so the write is
-> cross-issue with no run to attribute it to and is refused `403`. The option
-> this record rejected — recovery as a new issue — is the one whose write works.
-> See [ADR-0020](./0020-recovery-arrives-as-a-new-issue). The analysis of the two
-> gates, and the refusal of a board API key in CI (option 1), still stand.
+> **Superseded by [ADR-0021](./0021-recovery-wakes-the-alerts-assignee), which
+> keeps option 5.** An intervening record, ADR-0020, rejected this one on the
+> claim that the woken run is bound to no task; that claim was measured against
+> an implementation which had misspelled the binding field, and is false. Option
+> 5's write is in-ticket, as stated here. Two corrections to this record do
+> stand, and ADR-0021 carries them: the wake payload does **not** reach the woken
+> agent, so "the woken run needs nothing it has to re-derive" is wrong; and a
+> drill that dispatches red and green seconds apart never exercises the recovery
+> path at all. The analysis of the two gates, and the refusal of a board API key
+> in CI (option 1), are unchanged.
 
 ## Context
 

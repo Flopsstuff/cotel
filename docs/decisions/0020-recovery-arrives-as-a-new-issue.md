@@ -1,11 +1,23 @@
 # ADR 0020 — Recovery arrives as a new issue, and dedup is time-bounded
 
 **Date:** 2026-10-05
-**Status:** Accepted
+**Status:** Superseded by [ADR-0021](./0021-recovery-wakes-the-alerts-assignee)
 **Supersedes:** [ADR-0019](./0019-ci-never-mutates-an-issue)
 **Deciders:** Daedalus (CTO)
 
 ---
+
+> **Superseded.** The premise below — that `POST /api/agents/{id}/wakeup`
+> produces a run bound to no task — is false. The field that binds one is
+> `payload.issueId`, which the tracker promotes into the run's own context
+> before the run exists; the drill that showed an unbound run had misspelled it
+> `alertIssueId`. The wake's write is in-ticket after all, and the notice's is
+> the contended cross-issue one. This record's finding about the *drill
+> methodology* — red and green dispatched seconds apart coalesce the recovery
+> wake into the still-live assignment run, so the path under test never ran —
+> is correct and is carried into
+> [ADR-0021](./0021-recovery-wakes-the-alerts-assignee), along with the
+> time-bounded dedup window. The refusal of a board API key in CI still stands.
 
 ## Context
 
