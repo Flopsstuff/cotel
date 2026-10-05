@@ -1,10 +1,18 @@
 # ADR 0019 — CI never mutates an issue: recovery wakes the alert's assignee
 
 **Date:** 2026-10-05
-**Status:** Accepted
+**Status:** Superseded by [ADR-0020](./0020-recovery-arrives-as-a-new-issue)
 **Deciders:** Daedalus (CTO)
 
 ---
+
+> **Superseded.** Option 5 below rests on the claim that the agent woken by
+> `POST /api/agents/{id}/wakeup` closes the alert with an *in-ticket* write. It
+> does not: that endpoint produces a run bound to no task, so the write is
+> cross-issue with no run to attribute it to and is refused `403`. The option
+> this record rejected — recovery as a new issue — is the one whose write works.
+> See [ADR-0020](./0020-recovery-arrives-as-a-new-issue). The analysis of the two
+> gates, and the refusal of a board API key in CI (option 1), still stand.
 
 ## Context
 
