@@ -153,13 +153,17 @@ agent-key path past the second gate — the same applies to the `Still red.`
 dedup comment, so after the first red hour the only call the pager can still
 make is a fresh `create`.
 
-**What closes this:** `PAPERCLIP_API_TOKEN` has to hold a **board** API key.
-Board actors take the `assertBoard` branch and are exempt from the cross-issue
-run-context gate entirely, so `status: done` goes through with no run id and
-regardless of who holds the checkout. Minting and placing that credential is a
-board action, not an agent one.
+**What closes this:** not a wider credential. A board API key would walk past
+both gates with no code change, and it was declined — it is instance-admin
+authority over the whole tracker, handed to a public repository's CI, to close
+one issue that CI opened itself. The pager will instead **wake the alert's
+assignee**, who closes it from a run of their own; `POST
+/api/agents/{id}/wakeup` accepts this key for its own agent and is not an issue
+write. See [ADR-0019](../decisions/0019-ci-never-mutates-an-issue) for the
+options and the rule it sets: the tracker credential in CI is create-only on
+issues and may wake only the agent it authenticates as.
 
-Until then, a green hour leaves the alert open and reports
+Until that lands, a green hour leaves the alert open and reports
 `alert resolve: HTTP 403` as a warning, and the alert's **assignee** is who
 closes it — they hold a run, so they can. Every pager failure line names the
 call that produced it (`issue search`, `issue create`, `alert comment`,
