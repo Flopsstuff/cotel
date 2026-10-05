@@ -28,7 +28,8 @@
 # CF_ACCESS_CLIENT_ID / CF_ACCESS_CLIENT_SECRET (same pair as issue-sync).
 # PC_ASSIGNEE_AGENT_ID defaults to Daedalus. PC_ORIGIN_ID defaults to
 # cotel-health-probe. PC_RUN_ID, when set, is sent as X-Paperclip-Run-Id.
-# GITHUB_RUN_URL and HEALTHZ_URL are attached when the caller sets them.
+# GITHUB_RUN_URL, GITHUB_EVENT_NAME, GITHUB_ACTOR and HEALTHZ_URL are quoted
+# into a new alert when set, so the reader can place the run without Actions.
 
 set -euo pipefail
 
@@ -254,6 +255,20 @@ if [ -n "${GITHUB_RUN_URL:-}" ]; then
     RUN_SUFFIX=" (${GITHUB_RUN_URL})"
 fi
 
+# The woken reader must be able to tell an exercise from an outage without
+# opening Actions: a dispatched run against an overridden URL is a drill, the
+# hourly schedule against the real endpoint is not. The probe text alone does
+# not say — a closed-port drill and a dead process produce the same line.
+CONTEXT_BLOCK="Dedup marker: ${MARKER}"
+if [ -n "${GITHUB_EVENT_NAME:-}" ]; then
+    CONTEXT_BLOCK="${CONTEXT_BLOCK}
+Triggered by: ${GITHUB_EVENT_NAME}${GITHUB_ACTOR:+ (${GITHUB_ACTOR})}"
+fi
+if [ -n "${HEALTHZ_URL:-}" ]; then
+    CONTEXT_BLOCK="${CONTEXT_BLOCK}
+Probe URL: ${HEALTHZ_URL}"
+fi
+
 TITLE="cotel prod /healthz is red ${MARKER}"
 
 case "$ACTION" in
@@ -279,7 +294,7 @@ case "$ACTION" in
                 "$payload"
             exit 0
         fi
-        description="$(printf 'Production cotel /healthz probe is red.\n\n```\n%s\n```\n\n%s\n\nThe hourly probe in Flopsstuff/cotel opened this issue so an agent is woken. Do not treat a red GitHub Actions run as the page — that channel does not wake anyone here.\n\n## If you are woken on this issue again, re-probe before acting\n\n**This description always reads red.** The probe wrote it once, when the outage was detected, and cannot edit it afterwards; the wake that brought you here carries no probe output either. So nothing above tells you the state of production right now — check it yourself before you act.\n\nRe-probe by dispatching **Health probe** in Flopsstuff/cotel with **page unchecked** (Actions → Health probe → Run workflow), and read its verdict. Do not just `curl` the URL: the probe also classifies 503, stale ingest and an empty database, and `%s` may be the deploy host'"'"'s own loopback, which only that runner can reach. Never pass a `loopback_url` override while checking a real alert — that probes something else.\n\n- **Green** — the outage is over. Close this issue as done, citing the run you probed with.\n- **Still red** — the outage continues. Add that run'"'"'s output here as the current evidence.\n' "$reason" "$RUN_LINE" "$PROBED_URL")"
+        description="$(printf 'Production cotel /healthz probe is red.\n\n```\n%s\n```\n\n%s\n\n%s\n\nThe hourly probe in Flopsstuff/cotel opened this issue so an agent is woken. Do not treat a red GitHub Actions run as the page — that channel does not wake anyone here.\n\n## If you are woken on this issue again, re-probe before acting\n\n**This description always reads red.** The probe wrote it once, when the outage was detected, and cannot edit it afterwards; the wake that brought you here carries no probe output either. So nothing above tells you the state of production right now — check it yourself before you act.\n\nRe-probe by dispatching **Health probe** in Flopsstuff/cotel with **page unchecked** (Actions → Health probe → Run workflow), and read its verdict. Do not just `curl` the URL: the probe also classifies 503, stale ingest and an empty database, and `%s` may be the deploy host'"'"'s own loopback, which only that runner can reach. Never pass a `loopback_url` override while checking a real alert — that probes something else.\n\n- **Green** — the outage is over. Close this issue as done, citing the run you probed with.\n- **Still red** — the outage continues. Add that run'"'"'s output here as the current evidence.\n' "$reason" "$CONTEXT_BLOCK" "$RUN_LINE" "$PROBED_URL")"
         payload="$(jq -cn \
             --arg title "$TITLE" \
             --arg description "$description" \

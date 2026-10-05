@@ -68,11 +68,17 @@ jobs:
       group: health-probe-loopback
       cancel-in-progress: true
     env:
+      HEALTHZ_URL: ${{ inputs.loopback_url || 'http://127.0.0.1:8080/healthz' }}
       STALE_AFTER_SECONDS: "21600"
       CONNECT_TIMEOUT: "15"
       PC_API_URL: ${{ secrets.PAPERCLIP_API_URL }}
       PC_API_TOKEN: ${{ secrets.PAPERCLIP_API_TOKEN }}
       PC_COMPANY_ID: ${{ secrets.PAPERCLIP_COMPANY_ID }}
+      # A dispatched run is an exercise and gets its own dedup marker, so a
+      # drill can neither mint an alert that reads like an outage nor act on a
+      # standing real one. Set explicitly rather than left to the script
+      # default: inheriting the default is what made the drills invisible.
+      PC_ORIGIN_ID: ${{ github.event_name == 'workflow_dispatch' && 'cotel-health-probe-drill' || 'cotel-health-probe' }}
       GITHUB_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
       - uses: actions/checkout@v5
@@ -91,8 +97,6 @@ jobs:
       # No CF_ACCESS_* here: loopback has no Cloudflare in front of it, and the
       # probe sends the Access headers whenever both are set.
       - name: Probe /healthz
-        env:
-          HEALTHZ_URL: ${{ inputs.loopback_url || 'http://127.0.0.1:8080/healthz' }}
         run: |
           set -o pipefail
           mkdir -p "$RUNNER_TEMP"
@@ -149,8 +153,9 @@ jobs:
       PC_COMPANY_ID: ${{ secrets.PAPERCLIP_COMPANY_ID }}
       # A separate dedup marker from the loopback half. On one marker the two
       # halves would fight: a green loopback hour would resolve the alert the
-      # edge half had just raised.
-      PC_ORIGIN_ID: cotel-health-probe-edge
+      # edge half had just raised. A dispatched run is an exercise and gets a
+      # separate marker again, for the same reason the loopback half does.
+      PC_ORIGIN_ID: ${{ github.event_name == 'workflow_dispatch' && 'cotel-health-probe-drill-edge' || 'cotel-health-probe-edge' }}
       GITHUB_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
       - uses: actions/checkout@v5

@@ -98,6 +98,7 @@ export PC_COMPANY_ID="company-1"
 export PC_ORIGIN_ID="cotel-health-probe"
 export PC_RUN_ID=""
 unset CF_ACCESS_CLIENT_ID CF_ACCESS_CLIENT_SECRET PC_ASSIGNEE_AGENT_ID || true
+unset GITHUB_EVENT_NAME GITHUB_ACTOR || true
 # Set, because the wake's reason line is the one field the woken run is
 # guaranteed to read, and it has to carry this URL.
 export GITHUB_RUN_URL="https://github.com/Flopsstuff/cotel/actions/runs/999"
@@ -516,7 +517,81 @@ else
 fi
 assert_log_lacks "resolve search failure wakes nobody" "POST "
 
-# 10. Usage and missing probe file.
+# 10. A new alert quotes the trigger, the actor and the effective probe URL,
+# so a drill is distinguishable from an outage without opening Actions.
+write_fixture <<'JSON'
+[]
+JSON
+reset_log
+out="$(
+    export GITHUB_EVENT_NAME=workflow_dispatch GITHUB_ACTOR=someone
+    export HEALTHZ_URL=http://127.0.0.1:9/healthz
+    run_page 200 raise "$PROBE_FILE"
+)"
+case "$out" in
+    "page-cotel-health: opened ALT-9 new-id") pass "raise with trigger context creates" ;;
+    *) fail "raise with trigger context creates — output: $out" ;;
+esac
+for needle in \
+    "Triggered by: workflow_dispatch (someone)" \
+    "Probe URL: http://127.0.0.1:9/healthz" \
+    "Dedup marker: [cotel-health-probe]"
+do
+    assert_log_has "create body names '${needle%%:*}'" "$needle"
+done
+
+# 11. The drill marker and the production marker are different alerts in both
+# directions. The dangerous half is a drill acting on a standing real alert.
+write_fixture <<'JSON'
+[
+  {
+    "id": "prod-alert-id",
+    "identifier": "ALT-PROD",
+    "title": "cotel prod /healthz is red [cotel-health-probe]",
+    "status": "todo",
+    "assigneeAgentId": "agent-on-call"
+  }
+]
+JSON
+reset_log
+printf '%s\n' '{"id":"drill-id","identifier":"ALT-D","title":"cotel prod /healthz is red [cotel-health-probe-drill]"}' >"$TMP/create.json"
+out="$(export PC_ORIGIN_ID=cotel-health-probe-drill; run_page 200 raise "$PROBE_FILE")"
+case "$out" in
+    "page-cotel-health: opened ALT-D drill-id") pass "drill raise does not dedup onto the production alert" ;;
+    *) fail "drill raise does not dedup onto the production alert — output: $out" ;;
+esac
+# Every post-create write to an alert is a wake of its assignee, so "did not
+# touch the production alert" means no wake was posted at all.
+assert_log_lacks "drill raise does not wake the production alert's assignee" "/wakeup"
+
+reset_log
+out="$(export PC_ORIGIN_ID=cotel-health-probe-drill; run_page 200 resolve)"
+case "$out" in
+    "page-cotel-health: no open alert") pass "drill resolve ignores the production alert" ;;
+    *) fail "drill resolve ignores the production alert — output: $out" ;;
+esac
+assert_log_lacks "drill resolve does not wake the production alert's assignee" "/wakeup"
+
+write_fixture <<'JSON'
+[
+  {
+    "id": "drill-alert-id",
+    "identifier": "ALT-D1",
+    "title": "cotel prod /healthz is red [cotel-health-probe-drill]",
+    "status": "todo",
+    "assigneeAgentId": "agent-on-call"
+  }
+]
+JSON
+reset_log
+out="$(run_page 200 resolve)"
+case "$out" in
+    "page-cotel-health: no open alert") pass "production resolve ignores a drill alert" ;;
+    *) fail "production resolve ignores a drill alert — output: $out" ;;
+esac
+assert_log_lacks "production resolve does not wake the drill alert's assignee" "/wakeup"
+
+# 12. Usage and missing probe file.
 set +e
 out="$(bash "$PAGE" 2>"$TMP/err")"
 rc=$?

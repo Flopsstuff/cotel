@@ -20,7 +20,8 @@ points are blind to different things.
 | Catches | process dead, crash loop, 503 DuckDB, stale/empty ingest | all of that, **plus** host down, tunnel down, DNS, Access misconfigured |
 | Blind to | **its own host being down** — with the runner off the job queues, producing no colour at all | nothing in the path, but see the Access caveat below |
 | Access service token | not needed | required |
-| Alert dedup marker | `[cotel-health-probe]` | `[cotel-health-probe-edge]` |
+| Alert dedup marker (scheduled) | `[cotel-health-probe]` | `[cotel-health-probe-edge]` |
+| Alert dedup marker (dispatched) | `[cotel-health-probe-drill]` | `[cotel-health-probe-drill-edge]` |
 
 The loopback half is the one that would have caught the 2026-09-28 incident:
 the container was crash-looping and `/healthz` refused the connection on
@@ -42,7 +43,8 @@ and Access at all.
 
 The two halves use **different dedup markers** on purpose. On a single marker
 they would fight: a green loopback hour would ask for the close of the alert
-the edge half had just raised.
+the edge half had just raised. A dispatched run is separated from the schedule
+the same way — see [Running a drill](#running-a-drill).
 
 ## What the probe checks
 
@@ -96,14 +98,41 @@ interval: a quiet night is not an alert.
 Manual run: Actions → **Health probe** → **Run workflow**. Each half has its
 own optional URL override (`url` for the edge, `loopback_url` for the host) for
 demonstrating a red run against a dead endpoint; leave **page** unchecked
-unless you intend to open a Paperclip alert.
+unless you intend to open a Paperclip alert — see
+[Running a drill](#running-a-drill) for what a dispatch with **page** checked
+does.
+
+The schedule runs only from the default branch. On a public repository GitHub
+disables scheduled workflows after 60 days with no repository activity. The
+notice for that goes to GitHub notifications, which do not wake anyone here —
+the same silence this probe exists to close. A push is repository activity and
+resets that 60-day clock. If the repository sits idle long enough for GitHub
+to disable the schedule, this probe goes quiet with it.
+
+## Running a drill
+
+A dispatched run pages a **drill** marker, never the production one. The
+workflow derives `PC_ORIGIN_ID` from `github.event_name`:
+
+| Event | `probe-loopback` | `probe-edge` |
+|---|---|---|
+| `schedule` | `cotel-health-probe` | `cotel-health-probe-edge` |
+| `workflow_dispatch` | `cotel-health-probe-drill` | `cotel-health-probe-drill-edge` |
+
+Dedup is per marker, so the two sets never see each other: a red drill cannot
+attach itself to a standing real alert, and — the half that actually bites — a
+green drill cannot clear or file recovery against one nobody has read yet.
+
+Every alert body names the triggering event, the actor and the effective probe
+URL, so a woken reader can tell an exercise from an outage without opening
+Actions — the probe text cannot say, since a closed-port drill and a dead
+process produce the same line.
 
 To exercise the pager end to end, dispatch twice with **page** checked: once
 with `loopback_url=http://127.0.0.1:9` (a closed port — raises the alert, whose
 assignment wakes its assignee), then once with the default (green — wakes that
 assignee again, who closes the alert from their own run). Never break
-production to get a red run. A dispatched drill writes to the **production**
-alert marker, so do not run one while a genuine alert is standing.
+production to get a red run.
 
 **Leave a gap between the two halves.** Wait for the alert's *assignment* run to
 finish before dispatching the green half. Back to back, the recovery wake is
@@ -143,12 +172,15 @@ and it is the same `wakeup` call the assignment path makes, so the risk is low
 and the gap is in the evidence, not in the mechanism. Say which of the two you
 have when you cite a drill.
 
-The schedule runs only from the default branch. On a public repository GitHub
-disables scheduled workflows after 60 days with no repository activity. The
-notice for that goes to GitHub notifications, which do not wake anyone here —
-the same silence this probe exists to close. A push is repository activity and
-resets that 60-day clock. If the repository sits idle long enough for GitHub
-to disable the schedule, this probe goes quiet with it.
+**The dispatcher owns their own drill artifacts.** A drill alert is a real
+Paperclip issue assigned to a real agent, and it spends a heartbeat exactly
+like an outage does — the drill marker keeps it out of production's dedup, it
+does not make it free. The green half wakes that assignee to close it rather
+than closing it itself (see [Everything after the create is a wake, not a
+write](#everything-after-the-create-is-a-wake-not-a-write)), so a drill whose
+green half you never ran, or whose recovery wake was coalesced, leaves the
+alert standing. Check that the issues your dispatch minted are closed when the
+drill is over, and say in the close that they were drill artifacts.
 
 ## Who is woken, and how
 
@@ -254,7 +286,7 @@ Three more details matter in operation:
   `status: "skipped"` is what distinguishes the two, and
   `GET /api/issues/<id>/diagnostics/wakes` shows a coalesced wake sharing the
   live run's id. Correct in production, where red and green are an hour apart;
-  **in a drill it is a trap** — see the drill note under *Schedule*.
+  **in a drill it is a trap** — see [Running a drill](#running-a-drill).
 
   The "and ticket" is what makes this safe, and it is a property of the
   tracker, not an assumption: admission is decided against **that issue's**
