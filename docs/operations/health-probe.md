@@ -165,19 +165,27 @@ the rule it sets.
 | green | one open | **wakes** its assignee — "green again, close this alert" |
 | green | none open | nothing at all: no call, no wake |
 
-The wake carries everything the woken run needs. Four details matter in
-operation:
+Four details matter in operation:
 
-- **`payload.issueId` is what scopes the wake to the alert.** It is the field
-  the wake queue reads to decide which ticket the run is about; without it the
-  woken run starts with no ticket in hand and has to rediscover why it is
-  awake. The probe output, the alert's identifier and the run URL ride along in
-  the same payload, and the `reason` line — the one field the woken run is
-  guaranteed to read — repeats the verdict and the run URL.
+- **`payload.issueId` is what scopes the wake to the alert**, and it is the
+  only part of the payload the woken run is known to receive. It is the field
+  the wake queue reads to decide which ticket a run is about; without it the
+  wake is accepted but attached to nothing, and the woken agent has no idea why
+  it is awake. The probe output, the alert's identifier and the green run URL
+  are sent alongside it and are recorded on the wake request, but the agent's
+  wake payload has no passthrough for caller-supplied fields and the free-text
+  `reason` is bucketed to an enum, so **do not rely on the woken run reading
+  any of them**. What it reliably gets is the alert, assigned to itself, in a
+  state it can re-check — which is what both dispatch drills show it doing.
 - **`202 {"status":"skipped"}` is success.** It means a run is already live for
   that agent, and a live run reads current state — which is the state the wake
   was going to tell it about. A started wake answers with the run object
-  instead, so `status: "skipped"` is what distinguishes the two.
+  instead, so `status: "skipped"` is what distinguishes the two. A wake that
+  arrives while a run for the same agent and issue is live is **coalesced**
+  into it rather than spending a second heartbeat; `GET
+  /api/issues/<id>/diagnostics/wakes` shows that, and it is the normal outcome
+  of a dispatch drill, where red and green are seconds apart rather than an
+  hour.
 - **Idempotency keys differ by path.** Recovery uses
   `cotel-health-recovery:<alert id>:<GITHUB_RUN_ID>`, so a re-dispatched or
   retried job cannot mint a second heartbeat. The still-red wake buckets on a
