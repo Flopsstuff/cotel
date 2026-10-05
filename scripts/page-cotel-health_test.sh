@@ -862,6 +862,78 @@ if body.get("idempotencyKey") != "cotel-health-recovery:alert-id:pi-bucket":
 PY2
 pass "PC_CALL_ID wins over GITHUB_RUN_ID"
 
+# 15. A second watcher names its own subject. Without it the alert reads word
+# for word like a dead dashboard, which is the wrong half of the system: a
+# reachable process whose public ingest path is down needs Cloudflare looked at,
+# not the container.
+write_fixture <<'JSON'
+[]
+JSON
+reset_log
+printf '%s\n' '{"id":"edge-id","identifier":"ALT-E","title":"cotel public ingest at otlp.aignite.pl is red [cotel-ingest-edge]"}' >"$TMP/create.json"
+out="$(
+    export PC_ORIGIN_ID=cotel-ingest-edge
+    export PC_ALERT_SUBJECT="public ingest at otlp.aignite.pl"
+    export PC_ALERT_LEAD="cotel answers on the LAN, but its public ingest path is not accepting spans."
+    run_page 200 raise "$PROBE_FILE"
+)"
+case "$out" in
+    "page-cotel-health: opened ALT-E edge-id") pass "subject override creates" ;;
+    *) fail "subject override creates — output: $out" ;;
+esac
+python3 - "$(create_payload)" <<'PY'
+import json, sys
+payload = json.loads(sys.argv[1])
+bad = []
+title = payload.get("title") or ""
+if title != "cotel public ingest at otlp.aignite.pl is red [cotel-ingest-edge]":
+    bad.append("title=" + title)
+description = payload.get("description") or ""
+if not description.startswith("cotel answers on the LAN, but its public ingest path is not accepting spans."):
+    bad.append("description does not lead with PC_ALERT_LEAD: " + description[:120])
+if "/healthz" in title or "Production cotel /healthz probe is red." in description:
+    bad.append("the edge alert still reads as a dead dashboard")
+if bad:
+    raise SystemExit("; ".join(bad))
+PY
+pass "subject and lead replace both places the alert claims /healthz is red"
+
+# Both wake paths carry the subject too: the reason line is the only text a
+# woken run is guaranteed to read.
+write_fixture <<'JSON'
+[
+  {
+    "id": "edge-alert-id",
+    "identifier": "ALT-E1",
+    "title": "cotel public ingest at otlp.aignite.pl is red [cotel-ingest-edge]",
+    "status": "todo",
+    "assigneeAgentId": "agent-on-call"
+  }
+]
+JSON
+for action in raise resolve; do
+    reset_log
+    out="$(
+        export PC_ORIGIN_ID=cotel-ingest-edge
+        export PC_ALERT_SUBJECT="public ingest at otlp.aignite.pl"
+        export PC_CALL_ID="pi-edge-bucket"
+        run_page 200 "$action" "$PROBE_FILE" 2>"$TMP/err"
+    )" || { fail "edge $action wake — exit $?"; cat "$TMP/err"; }
+    python3 - "$(wake_body)" <<'PY'
+import json, sys
+body = json.loads(sys.argv[1])
+reason = body.get("reason") or ""
+instruction = (body.get("payload") or {}).get("instruction") or ""
+if "public ingest at otlp.aignite.pl" not in reason:
+    raise SystemExit("reason does not name the subject: " + reason)
+if "public ingest at otlp.aignite.pl" not in instruction:
+    raise SystemExit("instruction does not name the subject: " + instruction)
+if "/healthz" in reason:
+    raise SystemExit("reason still claims /healthz: " + reason)
+PY
+    pass "edge $action wake names the subject, not /healthz"
+done
+
 echo
 echo "passed=$PASS failed=$FAIL"
 if [ "$FAIL" -ne 0 ]; then

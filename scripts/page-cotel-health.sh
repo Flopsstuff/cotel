@@ -43,6 +43,11 @@
 #                     "manual"); a caller with no run id should pass a coarse
 #                     time bucket so a dropped recovery wake is retried
 #                     instead of leaving a resolved alert standing forever.
+#
+# A caller watching something other than the dashboard's /healthz overrides two
+# more, or its alert reads word for word like a dead process:
+#   PC_ALERT_SUBJECT  what is red, in the title and in every wake reason
+#   PC_ALERT_LEAD     the first line of a new alert's description
 
 set -euo pipefail
 
@@ -322,6 +327,13 @@ SOURCE_LINE="${PC_SOURCE_LINE:-The health probe in Flopsstuff/cotel opened this 
 DEFAULT_REPROBE="Re-probe by dispatching **Health probe** in Flopsstuff/cotel with **page unchecked** (Actions → Health probe → Run workflow), and read its verdict. Do not just \`curl\` the URL: the probe also classifies 503, stale ingest and an empty database, and \`${PROBED_URL}\` may be the deploy host's own loopback, which only that runner can reach. Never pass a \`loopback_url\` override while checking a real alert — that probes something else."
 REPROBE_HINT="${PC_REPROBE_HINT:-$DEFAULT_REPROBE}"
 
+# What this alert is about. The dedup marker already keeps two watchers out of
+# each other's alerts, but the marker is machine-facing: without its own subject
+# a second watcher mints an alert whose title and wake reason claim production
+# /healthz is red, which sends the reader to the wrong half of the system.
+SUBJECT="${PC_ALERT_SUBJECT:-prod /healthz}"
+LEAD="${PC_ALERT_LEAD:-Production cotel /healthz probe is red.}"
+
 # The woken reader must be able to tell an exercise from an outage without
 # opening Actions: a dispatched run against an overridden URL is a drill, the
 # hourly schedule against the real endpoint is not. The probe text alone does
@@ -343,7 +355,7 @@ if [ -n "$RUN_LINE" ]; then
 ${RUN_LINE}"
 fi
 
-TITLE="cotel prod /healthz is red ${MARKER}"
+TITLE="cotel ${SUBJECT} is red ${MARKER}"
 
 case "$ACTION" in
     raise)
@@ -368,16 +380,16 @@ case "$ACTION" in
                 # gate as the resolve, so a second red hour used to wake nobody.
                 bucket=$(( $(date +%s) / 21600 ))
                 payload="$(wake_payload "cotel_health_still_red" \
-                    "Production /healthz is still red and this alert is already open. Add the probe output below to the alert; do not open another." \
+                    "cotel ${SUBJECT} is still red and this alert is already open. Add the probe output below to the alert; do not open another." \
                     "$reason")"
                 wake_assignee \
                     "cotel-health-still-red:${EXISTING_ID}:${bucket}" \
-                    "cotel prod /healthz is still red${RUN_SUFFIX} — alert ${EXISTING_IDENT:-$EXISTING_ID} is already open; add the probe output to it" \
+                    "cotel ${SUBJECT} is still red${RUN_SUFFIX} — alert ${EXISTING_IDENT:-$EXISTING_ID} is already open; add the probe output to it" \
                     "$payload"
                 exit 0
             fi
         fi
-        description="$(printf 'Production cotel /healthz probe is red.\n\n```\n%s\n```\n\n%s\n\n%s\n\n## If you are woken on this issue again, re-probe before acting\n\n**This description always reads red.** The probe wrote it once, when the outage was detected, and cannot edit it afterwards; the wake that brought you here carries no probe output either. So nothing above tells you the state of production right now — check it yourself before you act.\n\n%s\n\n- **Green** — the outage is over. Close this issue as done, citing the probe you checked with.\n- **Still red** — the outage continues. Add that output here as the current evidence.\n' "$reason" "$CONTEXT_BLOCK" "$SOURCE_LINE" "$REPROBE_HINT")"
+        description="$(printf '%s\n\n```\n%s\n```\n\n%s\n\n%s\n\n## If you are woken on this issue again, re-probe before acting\n\n**This description always reads red.** The probe wrote it once, when the outage was detected, and cannot edit it afterwards; the wake that brought you here carries no probe output either. So nothing above tells you the state of production right now — check it yourself before you act.\n\n%s\n\n- **Green** — the outage is over. Close this issue as done, citing the probe you checked with.\n- **Still red** — the outage continues. Add that output here as the current evidence.\n' "$LEAD" "$reason" "$CONTEXT_BLOCK" "$SOURCE_LINE" "$REPROBE_HINT")"
         # Same-title creates collapse into a recent open issue unless this
         # asks not to. The stale alert is that issue, so without the opt-out
         # the response is the alert we just refused to dedup into.
@@ -438,11 +450,11 @@ case "$ACTION" in
             green="$(cat "$PROBE_OUT")"
         fi
         payload="$(wake_payload "cotel_health_recovery" \
-            "Production /healthz is green again. Close this alert as done, with the green run URL in the closing comment." \
+            "cotel ${SUBJECT} is green again. Close this alert as done, citing the green probe in the closing comment." \
             "$green")"
         wake_assignee \
             "cotel-health-recovery:${EXISTING_ID}:${CALL_ID}" \
-            "cotel prod /healthz recovered${RUN_SUFFIX} — close alert ${EXISTING_IDENT:-$EXISTING_ID} as done" \
+            "cotel ${SUBJECT} recovered${RUN_SUFFIX} — close alert ${EXISTING_IDENT:-$EXISTING_ID} as done" \
             "$payload"
         ;;
     *)

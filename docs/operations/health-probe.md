@@ -1,35 +1,38 @@
-# Production /healthz probe
+# Production health probes
 
-A **systemd timer on the Pi** asks the **dashboard** `/healthz` on the
-production instance every 10 minutes and pages a Paperclip agent once two
-consecutive ticks fail. It exists because a dead or silent cotel otherwise has
-no one looking: `Deploy` only runs on a push to `main`, the Cloudflare tunnel
-stays green while the process is 503 or not listening, and a red Actions run in
-this company does not wake anyone on its own.
+A **systemd timer on the Pi** asks production two questions every 10 minutes and
+pages a Paperclip agent once two consecutive ticks fail either of them:
+
+- **the LAN half** — the **dashboard** `/healthz` on robmini, over the LAN;
+- **the edge half** — the **public OTLP ingest URL**, over the internet.
+
+They exist because a dead or silent cotel otherwise has no one looking: `Deploy`
+only runs on a push to `main`, the Cloudflare tunnel stays green while the
+process is 503 or not listening, and a red Actions run in this company does not
+wake anyone on its own.
 
 The scheduler used to be GitHub Actions `cron`, and that is the part that did
 not work: see [Why the schedule is not in this repo](#why-the-schedule-is-not-in-this-repo)
 and [ADR-0022](../decisions/0022-health-probe-scheduler-outside-github.md). The
-workflow still exists, dispatch-only, for drills and for the one vantage point
-outside the LAN.
+workflow still exists, dispatch-only, for drills.
 
-## The three vantage points
+## The vantage points
 
-The same endpoint is asked from three places, because each is blind to
-something the others see.
+Production is asked from several places, because each is blind to something the
+others see. The first two columns are the scheduled halves of one tick.
 
-| | `cotel-healthz.timer` (the Pi) | `probe-loopback` (dispatch) | `probe-edge` (dispatch) |
-|---|---|---|---|
-| Scheduled | **yes, every 10 min** | no | no |
-| Runner | the Pi, `~/ops/cotel-healthz.sh` | `[self-hosted, flopsstuff, docker]` — the deploy host | `ubuntu-latest` |
-| Target | `http://robmini.local:8080/healthz` (LAN) | `http://127.0.0.1:8080/healthz` | `https://cotel.aignite.pl/healthz` |
-| Cloudflare in the path | no | no | yes (tunnel + Access) |
-| Catches | process dead, crash loop, 503 DuckDB, stale/empty ingest, **and the host being off** | all of that except host-off | all of that **plus** tunnel down, DNS, Access misconfigured |
-| Blind to | the tunnel, DNS and Access — a LAN-healthy cotel unreachable from the internet reads green | **its own host being down** — with the runner off the job queues, producing no colour at all | nothing in the path, but see the Access caveat below |
-| Access service token | not needed | not needed | required |
-| Alert dedup marker | `[cotel-health-probe]` | `[cotel-health-probe-drill]` | `[cotel-health-probe-drill-edge]` |
+| | `cotel-healthz.timer` LAN half | `cotel-healthz.timer` edge half | `probe-loopback` (dispatch) | `probe-edge` (dispatch) |
+|---|---|---|---|---|
+| Scheduled | **yes, every 10 min** | **yes, every 10 min** | no | no |
+| Runner | the Pi, `~/ops/cotel-healthz.sh` | the Pi, same tick | `[self-hosted, flopsstuff, docker]` — the deploy host | `ubuntu-latest` |
+| Target | `http://robmini.local:8080/healthz` (LAN) | `https://otlp.aignite.pl/v1/traces` (internet) | `http://127.0.0.1:8080/healthz` | `https://cotel.aignite.pl/healthz` |
+| Cloudflare in the path | no | yes (DNS + tunnel) | no | yes (tunnel + Access) |
+| Catches | process dead, crash loop, 503 DuckDB, stale/empty ingest, **and the host being off** | DNS, a blanked tunnel token, the ingest route not served, Access appearing in front of ingest | all of the LAN half except host-off | the dashboard host through Cloudflare |
+| Blind to | the tunnel, DNS — a LAN-healthy cotel unreachable from the internet reads green | the database and ingest freshness: this check stops at the auth boundary | **its own host being down** — with the runner off the job queues, producing no colour at all | nothing in the path, but see the Access caveat below |
+| Access service token | not needed | **not needed** | not needed | required |
+| Alert dedup marker | `[cotel-health-probe]` | `[cotel-ingest-edge]` | `[cotel-health-probe-drill]` | `[cotel-health-probe-drill-edge]` |
 
-The Pi timer is the authoritative path, and it is the only one that pages the
+The Pi timer is the authoritative path, and it is the only one that pages a
 production marker. Probing over the LAN rather than from the deploy host closes
 the gap that the self-hosted job cannot: a job on that host cannot report the
 host being off, because GitHub queues the run rather than failing it, and
@@ -39,23 +42,16 @@ trace is a run sitting in `queued`, which is also what a busy runner looks like.
 From the Pi, an absent host is a refused connection or a timeout, which is a
 verdict.
 
-What the Pi cannot see is everything Cloudflare adds: tunnel, DNS and Access.
-That half is unscheduled today, and it is also **not observing anything** — the
-Access service token is not allowed on the application, so the edge probe
-reports exit 4 (see the Access caveat below). Allowing that token is what would
-make an edge schedule worth having; until then an hourly edge run would watch a
-login redirect.
-
-The three use **different dedup markers** on purpose. On a single marker they
-would fight: a green tick on one would ask for the close of the alert another
-had just raised. Dispatched runs are separated from the Pi timer for the
+Every prober uses a **different dedup marker** on purpose. On a single marker
+they would fight: a green tick on one would ask for the close of the alert
+another had just raised. Dispatched runs are separated from the Pi timer for the
 stronger version of the same reason — a drill must not touch a real alert; see
 [Running a drill](#running-a-drill).
 
-## What the probe checks
+## What the LAN half checks
 
-The probe classifies failure modes with distinct text, because they send the
-on-call looking in different places:
+`scripts/probe-healthz.sh` classifies failure modes with distinct text, because
+they send the on-call looking in different places:
 
 | Probe verdict | Exit | Typical cause |
 |---|---|---|
@@ -75,13 +71,76 @@ If `last_ingest_at` / `newest_span_age_seconds` are absent, the probe degrades
 to liveness (HTTP 200) so it keeps working before that contract is on
 production.
 
-### The Access caveat (why the edge half warns instead of failing)
+## What the edge half checks, and why it needs no Access token
 
-Cloudflare Access sits in front of the dashboard. The workflow sends the same
-Access service-token headers as `paperclip-issue-sync.yml`, but that token is
-**not currently allowed on the `cotel.aignite.pl` application**: the request
-comes back as a 302 to the Access login, exactly as it does with no token at
-all.
+`scripts/probe-edge-ingest.sh` asks `https://otlp.aignite.pl/v1/traces` — the
+endpoint every agent exports to — and expects **exactly HTTP 401**.
+
+The 401 is the whole point. The ingest host is **not** behind Cloudflare
+Access, so an unauthenticated request reaches cotel's own auth middleware, and
+only a working chain can produce that answer: DNS resolving, the tunnel
+forwarding, the process listening, and `/v1/traces` routed to the auth-wrapped
+ingest handler. No Access service token is involved, and none is needed.
+
+| Probe verdict | Exit | Typical cause |
+|---|---|---|
+| `HTTP 401 from the ingest handler` | 0 | the public ingest path is up |
+| `public ingest unreachable` | 1 | DNS gone, connection refused, timeout — a blanked tunnel token looks like this |
+| `cloudflare reached, the origin did not answer` | 2 | 502/530 and friends: the tunnel is up, the origin is not |
+| `/v1/traces is not routed` | 2 | 404 — wrong tunnel target, or the ingest port is not served |
+| `accepting unauthenticated spans` | 2 | 200 to an invalid token: reachable, but the auth policy is open |
+| `401 but not from the ingest handler` | 2 | a 401 whose body is not the application's JSON — an interstitial, not cotel |
+| `cloudflare access now fronts the ingest host` | 4 | Access was enabled on this host, which rejects every agent's spans too |
+
+Two deliberate narrownesses:
+
+- **The expected status is a single code, not "any answer".** Accepting any
+  response would let a Cloudflare interstitial or a parked-domain page pass as
+  health, which is the failure this half exists to catch.
+- **The request carries a deliberately invalid `cotel_` bearer**, not no bearer
+  at all. The auth middleware rejects an unknown token before the handler sees
+  the request, so the expected 401 holds whichever way `allow_anonymous` is set
+  on the instance; with anonymous ingest allowed, a tokenless request would
+  reach the handler and answer 405. It is a `GET`, so even a bypassed auth
+  check could not write anything.
+
+This half is blind to what the LAN half sees: it stops at the auth boundary and
+says nothing about the database or ingest freshness. That is why both run.
+
+### The two halves are classified apart, and page apart
+
+"The process is dead" and "the process is fine, the public path is down" need
+different people doing different things, so they never share an alert:
+
+- **separate dedup markers** — `[cotel-health-probe]` and `[cotel-ingest-edge]`.
+  On one marker the halves would fight, a green tick of one asking for the close
+  of the alert the other just raised;
+- **separate failure streaks** — `reports/cotel-healthz/state` and
+  `state-edge`, so this host's uplink blinking cannot page for a healthy
+  application and vice versa;
+- **different words** — the edge alert's title, first line and wake reason say
+  that the application is alive and its public ingest path is not, and tell the
+  reader to look at the tunnel and DNS rather than restart the container. The
+  pager takes those from `PC_ALERT_SUBJECT` and `PC_ALERT_LEAD`.
+
+One asymmetry on purpose: **while the LAN half is red, the edge half does not
+page.** A dead process makes the public path unreachable as a consequence, and a
+second alert would send its reader hunting Cloudflare for a dead container. The
+edge streak keeps counting through the suppression, so the moment the process
+comes back and the public path does not, that half pages on the next tick. The
+tick log names the suppression explicitly:
+
+```
+[…] edge RED (streak 3), not paging: the LAN /healthz half is red too, and its alert covers this — probe-edge-ingest: FAILED — …
+```
+
+### The Access caveat (the dispatched dashboard-edge job)
+
+Cloudflare Access sits in front of the **dashboard** host, `cotel.aignite.pl`.
+The dispatch-only `probe-edge` job sends the same Access service-token headers
+as `paperclip-issue-sync.yml`, but that token is **not allowed on that
+application**: the request comes back as a 302 to the Access login, exactly as
+it does with no token at all.
 
 So `probe-edge` reports exit 4 as a **warning, and the job stays green**. That
 is deliberate. Failing on exit 4 would paint the workflow red on every run until
@@ -89,35 +148,55 @@ the token is allowed, and a probe that is always red is one nobody reads —
 worse than no probe, because it also buries a genuine red. Exit 4 never pages
 either: it says nothing about whether cotel is up.
 
-The price of that choice: while the token is unauthorized, **the edge half is
-not watching anything**, and the only thing saying so is a warning annotation
-on an otherwise-green run. To switch it on, allow the service token on the
-`cotel.aignite.pl` Access application (or bypass `/healthz` only). No code
-change is needed — the half starts observing on the next scheduled hour.
+**This caveat is not a gap in the scheduled coverage, and a service token is not
+what would close one.** That was the earlier reading of it — that a meaningful
+check from outside the LAN had to wait for the token to be allowed on
+`cotel.aignite.pl`. It does not: the ingest host answers 401 to anyone, and that
+401 proves DNS, tunnel, process and route, which is exactly what the LAN half
+cannot see. The scheduled edge half above uses it and asks for no credential.
+What an Access-allowed token would add is narrower: the *dashboard* host's view
+through Cloudflare, and the database and freshness fields that only `/healthz`
+carries. Worth having, not worth blocking on.
 
 ## Schedule
 
 Every **10 minutes**, from `cotel-healthz.timer` on the Pi
-(`OnCalendar=*:0/10`, `Persistent=true`). It pages on the **second consecutive**
-failure, so the worst-case detection delay is about 20 minutes and a single
-blinked tick wakes nobody. The 6h ingest-age threshold is independent of the
-poll interval: a quiet night is not an alert.
+(`OnCalendar=*:0/10`, `Persistent=true`). Both halves run in one tick, each
+paging on its own **second consecutive** failure, so the worst-case detection
+delay is about 20 minutes and a single blinked tick wakes nobody. The 6h
+ingest-age threshold is independent of the poll interval: a quiet night is not
+an alert.
 
 The timer, its unit files and its runbook live in `~/ops` on the Pi
 (`~/ops/README.md`, section *cotel health probe*) — not in this repo, because a
 scheduler inside the repo is exactly what did not work. The scripts it runs
-**are** this repo's: each tick materializes `scripts/probe-healthz.sh` and
-`scripts/page-cotel-health.sh` from `origin/main` with `git show`, so a fix here
-reaches the timer with no sync step and the timer does not care which branch the
-shared checkout has yanked.
+**are** this repo's: each tick materializes `scripts/probe-healthz.sh`,
+`scripts/probe-edge-ingest.sh` and `scripts/page-cotel-health.sh` from
+`origin/main` with `git show`, so a fix here reaches the timer with no sync step
+and the timer does not care which branch the shared checkout has yanked.
+
+One consequence of materializing by ref: a probe script that is **not at that
+ref** is reported as a half that is not deployed, on every tick and in
+`--status`, and does not fail the unit. The LAN half must not go dark because
+the other half has not landed — and the half starts running by itself on the
+tick after the script reaches `origin/main`, with no action on the host.
 
 ```sh
 # on the Pi
-~/ops/cotel-healthz.sh --status        # streak, credential, next elapse, last 20 ticks
-~/ops/cotel-healthz.sh --probe-only    # probe now, page nothing, touch no state
+~/ops/cotel-healthz.sh --status                 # both streaks, credential, next elapse, last 20 ticks
+~/ops/cotel-healthz.sh --probe-only             # probe both halves now, page nothing, touch no state
+~/ops/cotel-healthz.sh --half edge --probe-only # the public ingest half alone
+~/ops/cotel-healthz.sh --half edge              # one real tick of that half alone
 systemctl --user list-timers cotel-healthz.timer
 journalctl --user -u cotel-healthz.service -n 50
 ```
+
+`--probe-only` exits with the LAN probe's own code when that half is red
+(1 unreachable, 2 HTTP, 3 stale/empty), **5** when the LAN half is green and the
+public ingest half is not, and 0 when both are green. The sentinel is not the
+edge probe's own code on purpose: 1 and 2 would read as the LAN half's
+"unreachable" and "HTTP", which send the reader to the host instead of to
+Cloudflare.
 
 A tick exits non-zero **only when the watcher itself is broken** (no
 credential, the scripts cannot be materialized, the pager cannot reach
@@ -157,8 +236,8 @@ the classification and pager tests remain a merge gate.
 
 ## Running a drill
 
-Every rehearsal pages a **drill** marker, never the production one. Only the Pi
-timer uses `cotel-health-probe`; the workflow's jobs pin
+Every rehearsal pages a **drill** marker, never a production one. Only the Pi
+timer uses `cotel-health-probe` and `cotel-ingest-edge`; the workflow's jobs pin
 `cotel-health-probe-drill` and `cotel-health-probe-drill-edge` unconditionally,
 and a drill from the Pi has to pass the drill marker itself:
 
@@ -171,10 +250,22 @@ PC_ORIGIN_ID=cotel-health-probe-drill COTEL_HEALTHZ_URL=http://127.0.0.1:9/healt
 PC_ORIGIN_ID=cotel-health-probe-drill ~/ops/cotel-healthz.sh   # green: routes the close
 ```
 
+The edge half drills the same way, with its own marker variable and `--half
+edge` so the rehearsal does not also run a real LAN tick:
+
+```sh
+# on the Pi — a red pair against a closed port, on the ingest drill marker
+PC_EDGE_ORIGIN_ID=cotel-ingest-edge-drill COTEL_INGEST_URL=http://127.0.0.1:9/v1/traces \
+  ~/ops/cotel-healthz.sh --half edge      # first tick: streak 1, pages nobody
+PC_EDGE_ORIGIN_ID=cotel-ingest-edge-drill COTEL_INGEST_URL=http://127.0.0.1:9/v1/traces \
+  ~/ops/cotel-healthz.sh --half edge      # second tick: raises the drill alert
+PC_EDGE_ORIGIN_ID=cotel-ingest-edge-drill ~/ops/cotel-healthz.sh --half edge   # green: routes the close
+```
+
 Two things to put back afterwards: the failure streak in
-`~/ops/reports/cotel-healthz/state` is shared with production (a green tick
-resets it to 0, which the third command above does), and the drill alert is a
-real issue someone has to close.
+`~/ops/reports/cotel-healthz/state` (or `state-edge`) is shared with production
+(a green tick resets it to 0, which the third command above does), and the drill
+alert is a real issue someone has to close.
 
 Dedup is per marker, so the sets never see each other: a red drill cannot
 attach itself to a standing real alert, and — the half that actually bites — a
@@ -248,8 +339,9 @@ users), this company has already watched red Actions sit unnoticed, and
 `~/ops/ALERT` plus a desktop `notify-send` reach whoever is at the Pi — which
 is the owner, not an agent.
 
-On red, the prober opens a Paperclip issue titled
-`cotel prod /healthz is red [<marker>]`, assigned to Daedalus. That assignment
+On red, the prober opens a Paperclip issue titled `cotel <subject> is red
+[<marker>]` — `prod /healthz` by default, `public ingest at <url>` for the edge
+half — assigned to Daedalus. That assignment
 is the wake, and it is the only tracker issue the pager ever creates. A later
 tick searches `q=<marker>` and acts on the open issue whose **title** contains
 it. Search also matches comments and descriptions, so the first hit is not the
@@ -342,6 +434,13 @@ rather than reporting an alert nobody was assigned.
 | `PC_CALL_ID` | `GITHUB_RUN_ID`, then `manual` | Unique half of the recovery idempotency key. A caller with no run id should pass a coarse time bucket; the Pi timer sends `pi-<epoch/21600>` |
 | `PC_SOURCE_LINE` | names Actions | First paragraph of a new alert: who opened it. Override it if you are not the workflow |
 | `PC_REPROBE_HINT` | names an Actions dispatch | How the woken agent re-probes. The Pi timer replaces it with `~/ops/cotel-healthz.sh --probe-only` |
+| `PC_ALERT_SUBJECT` | `prod /healthz` | What is red, in the title and in every wake reason. The edge half sets `public ingest at <url>` |
+| `PC_ALERT_LEAD` | names the `/healthz` probe | First line of a new alert's description. The edge half says the application is alive and the public path is not |
+
+The last two exist because the dedup marker is machine-facing. Without its own
+subject, a second watcher mints an alert whose title and wake reason claim
+production `/healthz` is red — pointing the reader at the wrong half of the
+system.
 
 ### The woken agent re-probes, and the alert tells it to
 
@@ -494,7 +593,7 @@ needs no other change.
 ## Local use
 
 ```sh
-# on the Pi — the authoritative prober, over the LAN
+# on the Pi — the authoritative prober, both halves
 ~/ops/cotel-healthz.sh --probe-only
 ~/ops/cotel-healthz.sh --status
 
@@ -504,16 +603,28 @@ HEALTHZ_URL=http://127.0.0.1:8080/healthz scripts/probe-healthz.sh
 # through Cloudflare (needs an Access service token allowed on the app)
 scripts/probe-healthz.sh
 
-# a closed local port — the failure demo
+# the public ingest path, from anywhere, no credential at all
+scripts/probe-edge-ingest.sh
+
+# a closed local port — the failure demo, either probe
 scripts/probe-healthz.sh http://127.0.0.1:1/healthz
+scripts/probe-edge-ingest.sh http://127.0.0.1:1/v1/traces
 
 # the classification tests, including 503 vs stale vs empty vs refused
 bash scripts/probe-healthz_test.sh
+
+# the ingest classification tests: the app's JSON 401 vs an interstitial 401,
+# an Access redirect, a tunnel 5xx, an unrouted 404, anonymous ingest
+bash scripts/probe-edge-ingest_test.sh
 
 # the pager against a fake curl — dedup, the staleness window, per-call failure
 # labels, and the non-GitHub caller's overrides
 bash scripts/page-cotel-health_test.sh
 ```
 
-Exit codes: `0` healthy, `1` unreachable, `2` HTTP non-200, `3` stale/empty,
-`4` Access blocked.
+`probe-healthz.sh` exit codes: `0` healthy, `1` unreachable, `2` HTTP non-200,
+`3` stale/empty, `4` Access blocked.
+
+`probe-edge-ingest.sh` exit codes: `0` the ingest handler answered 401,
+`1` unreachable, `2` answered but not with the handler's 401, `4` Access now
+fronts the ingest host.
