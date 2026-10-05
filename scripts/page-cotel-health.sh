@@ -204,8 +204,10 @@ wake_assignee() {
     fi
     # skipped is success: a run is already live for that agent, and a live run
     # reads current state rather than the state at wake time.
+    # A started wake answers with the run itself; a skipped one with a status
+    # envelope. Only the latter carries status=skipped.
     status="$(printf '%s' "$resp" | jq -r '.status // empty')"
-    run_id="$(printf '%s' "$resp" | jq -r '.runId // .run.id // empty')"
+    run_id="$(printf '%s' "$resp" | jq -r '.id // empty')"
     if [ "$status" = "skipped" ]; then
         echo "page-cotel-health: woke ${EXISTING_ASSIGNEE} for ${EXISTING_IDENT:-$EXISTING_ID} ${EXISTING_ID} — a run was already live"
     else
@@ -214,20 +216,23 @@ wake_assignee() {
     return 0
 }
 
-# The alert's assignee needs no second lookup to know what happened.
+# `issueId` is what scopes the wake to the alert — without it the woken run
+# starts with no ticket in hand and has to rediscover why it is awake. The
+# remaining fields are recorded on the wake request; the one line the woken run
+# is guaranteed to read is the `reason`, so put the verdict there too.
 wake_payload() {
     local kind="$1" instruction="$2" probe="$3"
     jq -cn \
+        --arg issueId "$EXISTING_ID" \
         --arg kind "$kind" \
         --arg alertIdentifier "${EXISTING_IDENT:-}" \
-        --arg alertIssueId "$EXISTING_ID" \
         --arg probeOutput "$probe" \
         --arg githubRunUrl "${GITHUB_RUN_URL:-}" \
         --arg instruction "$instruction" \
         '{
+            issueId: $issueId,
             kind: $kind,
             alertIdentifier: $alertIdentifier,
-            alertIssueId: $alertIssueId,
             probeOutput: $probeOutput,
             githubRunUrl: $githubRunUrl,
             instruction: $instruction
@@ -235,8 +240,10 @@ wake_payload() {
 }
 
 RUN_LINE=""
+RUN_SUFFIX=""
 if [ -n "${GITHUB_RUN_URL:-}" ]; then
     RUN_LINE="GitHub Actions run: ${GITHUB_RUN_URL}"
+    RUN_SUFFIX=" (${GITHUB_RUN_URL})"
 fi
 
 TITLE="cotel prod /healthz is red ${MARKER}"
@@ -260,7 +267,7 @@ case "$ACTION" in
                 "$reason")"
             wake_assignee \
                 "cotel-health-still-red:${EXISTING_ID}:${bucket}" \
-                "cotel prod /healthz is still red — update alert ${EXISTING_IDENT:-$EXISTING_ID}" \
+                "cotel prod /healthz is still red${RUN_SUFFIX} — alert ${EXISTING_IDENT:-$EXISTING_ID} is already open; add the probe output to it" \
                 "$payload"
             exit 0
         fi
@@ -311,7 +318,7 @@ case "$ACTION" in
             "$green")"
         wake_assignee \
             "cotel-health-recovery:${EXISTING_ID}:${GITHUB_RUN_ID:-manual}" \
-            "cotel prod /healthz recovered — close alert ${EXISTING_IDENT:-$EXISTING_ID}" \
+            "cotel prod /healthz recovered${RUN_SUFFIX} — close alert ${EXISTING_IDENT:-$EXISTING_ID} as done" \
             "$payload"
         ;;
     *)

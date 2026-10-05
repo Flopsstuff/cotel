@@ -69,7 +69,7 @@ case "$method" in
                     if [ "${PAGE_TEST_WAKE_SKIPPED:-}" = "1" ]; then
                         body='{"status":"skipped","reason":"run_already_active"}'
                     else
-                        body='{"status":"queued","runId":"run-7"}'
+                        body='{"id":"run-7","agentId":"agent-on-call","status":"queued"}'
                     fi
                     ;;
                 403) body='{"error":"Agent can only invoke itself"}' ;;
@@ -97,7 +97,10 @@ export PC_API_TOKEN="test-token"
 export PC_COMPANY_ID="company-1"
 export PC_ORIGIN_ID="cotel-health-probe"
 export PC_RUN_ID=""
-unset CF_ACCESS_CLIENT_ID CF_ACCESS_CLIENT_SECRET GITHUB_RUN_URL PC_ASSIGNEE_AGENT_ID || true
+unset CF_ACCESS_CLIENT_ID CF_ACCESS_CLIENT_SECRET PC_ASSIGNEE_AGENT_ID || true
+# Set, because the wake's reason line is the one field the woken run is
+# guaranteed to read, and it has to carry this URL.
+export GITHUB_RUN_URL="https://github.com/Flopsstuff/cotel/actions/runs/999"
 
 write_fixture() {
     cat >"$TMP/fixture.json"
@@ -254,8 +257,12 @@ if key != want:
 p = body.get("payload") or {}
 if p.get("kind") != "cotel_health_still_red":
     bad.append("kind=" + str(p.get("kind")))
-if p.get("alertIdentifier") != "ALT-1" or p.get("alertIssueId") != "alert-id":
-    bad.append("alert fields=%r/%r" % (p.get("alertIdentifier"), p.get("alertIssueId")))
+if p.get("alertIdentifier") != "ALT-1":
+    bad.append("alertIdentifier=" + str(p.get("alertIdentifier")))
+if p.get("issueId") != "alert-id":
+    bad.append("payload.issueId=" + str(p.get("issueId")) + " — the wake would not be scoped to the alert")
+if "http" not in (body.get("reason") or ""):
+    bad.append("reason carries no run url: " + str(body.get("reason")))
 if "connection refused" not in (p.get("probeOutput") or ""):
     bad.append("probeOutput=" + str(p.get("probeOutput")))
 if bad:
@@ -350,8 +357,12 @@ if "recovered" not in (body.get("reason") or ""):
 p = body.get("payload") or {}
 if p.get("kind") != "cotel_health_recovery":
     bad.append("kind=" + str(p.get("kind")))
-if p.get("alertIdentifier") != "ALT-1" or p.get("alertIssueId") != "alert-id":
-    bad.append("alert fields=%r/%r" % (p.get("alertIdentifier"), p.get("alertIssueId")))
+if p.get("alertIdentifier") != "ALT-1":
+    bad.append("alertIdentifier=" + str(p.get("alertIdentifier")))
+if p.get("issueId") != "alert-id":
+    bad.append("payload.issueId=" + str(p.get("issueId")) + " — the wake would not be scoped to the alert")
+if "http" not in (body.get("reason") or ""):
+    bad.append("reason carries no run url: " + str(body.get("reason")))
 if "HTTP 200" not in (p.get("probeOutput") or ""):
     bad.append("probeOutput=" + str(p.get("probeOutput")))
 if "Close this alert as done" not in (p.get("instruction") or ""):
