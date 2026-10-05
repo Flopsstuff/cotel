@@ -125,6 +125,24 @@ the runtime holds still: it may re-wake the assignee as a continuation of their
 own finished run, putting a live run back in front of the green half. So read
 the diagnostics after the drill instead of trusting the gap you waited out.
 
+**Match the rows by `requestedAt`, not by run id.** A coalesced wake answers
+with — and is listed against — the run it was folded into, so the recovery
+wake and the run that absorbed it show the *same* run id. Reading the verdict
+off that id finds a row with `coalesced: 0` that belongs to the earlier wake.
+The recovery wake is the row whose `requestedAt` matches the `woke …` line in
+the green run's log, to the second. If that row says `status: coalesced`, the
+drill did not exercise the recovery path, whatever the other rows say and
+however the alert ended.
+
+No drill has yet caught the recovery wake *starting* a run. Three pairs have
+closed the alert unattended, and the third proved the raise path did not do it
+— its assignment run had finished two minutes earlier — but in every pair the
+recovery wake was folded into a run that already held the alert. That branch is
+the ordinary production shape (an alert standing for an hour has no live run),
+and it is the same `wakeup` call the assignment path makes, so the risk is low
+and the gap is in the evidence, not in the mechanism. Say which of the two you
+have when you cite a drill.
+
 The schedule runs only from the default branch. On a public repository GitHub
 disables scheduled workflows after 60 days with no repository activity. The
 notice for that goes to GitHub notifications, which do not wake anyone here —
@@ -237,6 +255,13 @@ Three more details matter in operation:
   `GET /api/issues/<id>/diagnostics/wakes` shows a coalesced wake sharing the
   live run's id. Correct in production, where red and green are an hour apart;
   **in a drill it is a trap** — see the drill note under *Schedule*.
+
+  The "and ticket" is what makes this safe, and it is a property of the
+  tracker, not an assumption: admission is decided against **that issue's**
+  execution lock, so a wake is only absorbed by a run that already holds the
+  alert. A run live for the same agent on some *other* ticket does not swallow
+  the recovery — the alert has no lock holder, and the wake proceeds as a run
+  of its own. Daedalus being busy elsewhere therefore cannot lose a recovery.
 - **Idempotency keys differ by path.** Recovery uses
   `cotel-health-recovery:<alert id>:<GITHUB_RUN_ID>`, so a re-dispatched or
   retried job cannot mint a second heartbeat. The still-red wake buckets on a
