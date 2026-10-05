@@ -7,20 +7,50 @@ only runs on a push to `main`, the Cloudflare tunnel stays green while the
 process is 503 or not listening, and a red Actions run in this company does not
 wake anyone on its own.
 
-## What it checks
+## Two halves, neither sufficient alone
 
-Target: `https://cotel.aignite.pl/healthz` (dashboard port, behind the tunnel).
-Not the ingest hostname, not `/`, not Cloudflare's tunnel "healthy" flag.
+The workflow probes the same endpoint from two places, because the two vantage
+points are blind to different things.
 
-The probe classifies four failure modes with distinct text, because they send
-the on-call looking in different places:
+| | `probe-loopback` | `probe-edge` |
+|---|---|---|
+| Runner | `[self-hosted, flopsstuff, docker]` — the deploy host | `ubuntu-latest` |
+| Target | `http://127.0.0.1:8080/healthz` | `https://cotel.aignite.pl/healthz` |
+| Cloudflare in the path | no | yes (tunnel + Access) |
+| Catches | process dead, crash loop, 503 DuckDB, stale/empty ingest | all of that, **plus** host down, tunnel down, DNS, Access misconfigured |
+| Blind to | **its own host being down** — with the runner off, the job queues instead of failing | nothing in the path, but see the Access caveat below |
+| Access service token | not needed | required |
+| Alert dedup marker | `[cotel-health-probe]` | `[cotel-health-probe-edge]` |
 
-| Probe verdict | Typical cause |
-|---|---|
-| `unreachable` | Process not listening, host down, or the tunnel is not forwarding |
-| `HTTP 503 database unreadable` | Process is up; DuckDB is not |
-| `HTTP <other>` | Crash loop, Access/proxy error, unexpected handler |
-| `ingest stale` / `empty database` | Process is up and the DB reads; spans are not being accepted |
+The loopback half is the one that would have caught the 2026-09-28 incident:
+the container was crash-looping and `/healthz` refused the connection on
+localhost. It needs no secret and no Cloudflare, which is why it is the half
+that works today.
+
+The edge half is not a luxury. A self-hosted job cannot report that its own
+host is down — if the runner is off or offline, GitHub queues the run rather
+than failing it. `timeout-minutes: 5` bounds that into a red run inside the
+hour, but note what that red *is*: "could not probe", which from the host's own
+point of view is indistinguishable from "host down". It also does not page,
+because the probe step never runs. Only a probe from outside the host can tell
+the difference, and only the edge half sees the tunnel, DNS and Access at all.
+
+The two halves use **different dedup markers** on purpose. On a single marker
+they would fight: a green loopback hour would mark the alert the edge half had
+just raised as done.
+
+## What the probe checks
+
+The probe classifies failure modes with distinct text, because they send the
+on-call looking in different places:
+
+| Probe verdict | Exit | Typical cause |
+|---|---|---|
+| `unreachable` | 1 | Process not listening, host down, or the tunnel is not forwarding |
+| `HTTP 503 database unreadable` | 2 | Process is up; DuckDB is not |
+| `HTTP <other>` | 2 | Crash loop, proxy error, unexpected handler |
+| `ingest stale` / `empty database` | 3 | Process is up and the DB reads; spans are not being accepted |
+| `cloudflare access blocked` | 4 | Probe config, **not** an outage — see below |
 
 A 200 with `ok: true` is not enough. Staleness is a body field
 (`newest_span_age_seconds`); the endpoint keeps 200 on a quiet instance so the
@@ -32,12 +62,25 @@ If `last_ingest_at` / `newest_span_age_seconds` are absent, the probe degrades
 to liveness (HTTP 200) so it keeps working before that contract is on
 production.
 
+### The Access caveat (why the edge half warns instead of failing)
+
 Cloudflare Access sits in front of the dashboard. The workflow sends the same
-Access service-token headers as `paperclip-issue-sync.yml`. A login redirect is
-reported as `cloudflare access blocked` — that is a probe-config failure, not
-"cotel is down". The token must be allowed on the `cotel.aignite.pl` Access
-application; if a run comes back `access blocked`, add it there (or bypass
-`/healthz` only).
+Access service-token headers as `paperclip-issue-sync.yml`, but that token is
+**not currently allowed on the `cotel.aignite.pl` application**: the request
+comes back as a 302 to the Access login, exactly as it does with no token at
+all.
+
+So `probe-edge` reports exit 4 as a **warning, and the job stays green**. That
+is deliberate. Failing on exit 4 would paint the workflow red every hour until
+the token is allowed, and a probe that is always red is one nobody reads —
+worse than no probe, because it also buries a genuine red. Exit 4 never pages
+either: it says nothing about whether cotel is up.
+
+The price of that choice: while the token is unauthorized, **the edge half is
+not watching anything**, and the only thing saying so is a warning annotation
+on an otherwise-green run. To switch it on, allow the service token on the
+`cotel.aignite.pl` Access application (or bypass `/healthz` only). No code
+change is needed — the half starts observing on the next scheduled hour.
 
 ## Schedule
 
@@ -45,9 +88,10 @@ application; if a run comes back `access blocked`, add it there (or bypass
 same day is the bar. The 6h ingest-age threshold is independent of the poll
 interval: a quiet night is not an alert.
 
-Manual run: Actions → **Health probe** → **Run workflow**. Optional URL
-override is for demonstrating a red run against a dead endpoint; leave **page**
-unchecked unless you intend to open a Paperclip alert.
+Manual run: Actions → **Health probe** → **Run workflow**. Each half has its
+own optional URL override (`url` for the edge, `loopback_url` for the host) for
+demonstrating a red run against a dead endpoint; leave **page** unchecked
+unless you intend to open a Paperclip alert.
 
 The schedule runs only from the default branch. On a public repository GitHub
 disables scheduled workflows after 60 days with no repository activity. The
@@ -64,20 +108,27 @@ identities are not GitHub users), and this company has already watched red
 Actions sit unnoticed.
 
 On red, the workflow opens a Paperclip issue titled
-`cotel prod /healthz is red [cotel-health-probe]`, assigned to Daedalus.
-That assignment is the wake. A later red hour searches `q=cotel-health-probe`
-and comments on the open issue whose **title** contains `[cotel-health-probe]`.
-Search also matches comments and descriptions, so the first hit is not the
-alert, and a longer marker such as `[cotel-health-probe-selftest]` is not this
-one. The create request does not send `originId`: the issues API drops unknown
-fields, and list search does not query that column.
+`cotel prod /healthz is red [<marker>]`, assigned to Daedalus. That assignment
+is the wake. A later red hour searches `q=<marker>` and comments on the open
+issue whose **title** contains it. Search also matches comments and
+descriptions, so the first hit is not the alert, and a longer marker such as
+`[cotel-health-probe-selftest]` is not this one. The create request does not
+send `originId`: the issues API drops unknown fields, and list search does not
+query that column.
 
 A green hour marks that same issue done. If the assignee still has the alert
 checked out, the status change comes back as a run-ownership conflict. The
 probe leaves the issue open and does not fail the job, because that assignee
 is already awake. The next green hour closes it once the checkout is released.
 
-Paperclip budget is spent only when the probe is red (create or comment) or
+**A paging failure is a warning, never the job's verdict.** Each job's red or
+green means "production is red or green" and nothing else; if the pager itself
+cannot reach Paperclip, the run carries a `Pager failed` annotation saying
+nobody was woken. The loopback job also checks for `jq` and `python3` on every
+run — that runner is a developer machine, not a managed image, so a missing
+interpreter should surface on a green hour rather than during an incident.
+
+Paperclip budget is spent only when a probe is red (create or comment) or
 when it recovers. A green hour with no open alert does not write. A scheduled
 Paperclip routine that fires every hour regardless of health is the more
 expensive alternative (24 heartbeats a day). It is not enabled.
@@ -85,7 +136,10 @@ expensive alternative (24 heartbeats a day). It is not enabled.
 ## Local use
 
 ```sh
-# production (needs Access service token env if the dashboard policy requires it)
+# the deploy host, from the deploy host — no Access token involved
+HEALTHZ_URL=http://127.0.0.1:8080/healthz scripts/probe-healthz.sh
+
+# through Cloudflare (needs an Access service token allowed on the app)
 scripts/probe-healthz.sh
 
 # a closed local port — the failure demo
