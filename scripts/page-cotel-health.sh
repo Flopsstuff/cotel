@@ -247,7 +247,7 @@ case "$ACTION" in
             # job has none. Retrying later cannot help.
             case "${PC_HTTP:-}" in
                 401 | 403)
-                    echo "page-cotel-health: PC_API_TOKEN must be a board API key to close an alert — an agent key has no run to attribute the write to. See docs/operations/health-probe.md." >&2
+                    echo "page-cotel-health: this credential cannot close an alert from CI, and widening it was declined — the close belongs to the assignee's heartbeat. See docs/operations/health-probe.md." >&2
                     ;;
             esac
             exit 1

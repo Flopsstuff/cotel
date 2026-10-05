@@ -360,7 +360,7 @@ for status in 401 403; do
         pass "$status resolve exits non-zero"
     fi
     assert_err_has "$status resolve names the resolve call" "alert resolve: HTTP $status"
-    assert_err_has "$status resolve names the token class" "must be a board API key"
+    assert_err_has "$status resolve names the token class" "cannot close an alert from CI"
 done
 
 # 10. Usage and missing probe file.
