@@ -41,8 +41,8 @@ tell "host down" from "no signal", and only the edge half sees the tunnel, DNS
 and Access at all.
 
 The two halves use **different dedup markers** on purpose. On a single marker
-they would fight: a green loopback hour would mark the alert the edge half had
-just raised as done.
+they would fight: a green loopback hour would ask for the close of the alert
+the edge half had just raised.
 
 ## What the probe checks
 
