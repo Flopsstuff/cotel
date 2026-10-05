@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 #
 # page-cotel-health_test.sh — drive page-cotel-health.sh against a fake curl.
-# The live API is not contacted. Covers title-marker dedup: a comment-only
-# search hit is not the alert, a done issue with the marker is not open,
-# and a longer marker does not satisfy a shorter one.
+# The live API is not contacted. Covers title-marker dedup (a comment-only
+# search hit is not the alert, a done issue with the marker is not open, a
+# longer marker does not satisfy a shorter one) and the wake that replaced
+# every write to an existing issue: its target, key, payload, the 202 skipped
+# success, and the self-wake-only 403.
 
 set -euo pipefail
 
@@ -60,22 +62,26 @@ case "$method" in
         fi
         ;;
     POST)
-        if [[ "$url" == *"/comments" ]]; then
+        if [[ "$url" == *"/wakeup" ]]; then
+            code="${PAGE_TEST_WAKE_STATUS:-202}"
+            case "$code" in
+                202)
+                    if [ "${PAGE_TEST_WAKE_SKIPPED:-}" = "1" ]; then
+                        body='{"status":"skipped","reason":"run_already_active"}'
+                    else
+                        body='{"status":"queued","runId":"run-7"}'
+                    fi
+                    ;;
+                403) body='{"error":"Agent can only invoke itself"}' ;;
+                *) body='{"error":"wake failed"}' ;;
+            esac
+        elif [[ "$url" == *"/comments" ]]; then
             code=201
             body='{"id":"comment-1"}'
         else
             code=201
             body="$(cat "${PAGE_TEST_CREATE_BODY:?}")"
         fi
-        ;;
-    PATCH)
-        code="${PAGE_TEST_PATCH_STATUS:-200}"
-        case "$code" in
-            409) body='{"error":"Issue run ownership conflict"}' ;;
-            401) body='{"error":"Agent run id required"}' ;;
-            403) body='{"error":"Cross-issue writes need a run to attribute them to","code":"cross_issue_influence_run_context_required"}' ;;
-            *) body='{"id":"alert-id","identifier":"ALT-1","status":"done","title":"cotel prod /healthz is red [cotel-health-probe]"}' ;;
-        esac
         ;;
 esac
 printf '%s\n%s' "$body" "$code"
@@ -102,8 +108,22 @@ run_page() {
     PAGE_TEST_FIXTURE="$TMP/fixture.json" \
     PAGE_TEST_CREATE_BODY="$TMP/create.json" \
     PAGE_TEST_SEARCH_STATUS="${1:-200}" \
-    PAGE_TEST_PATCH_STATUS="${PAGE_TEST_PATCH_STATUS:-200}" \
         bash "$PAGE" "${@:2}"
+}
+
+# wake_payload prints the JSON body of the last POST to a /wakeup URL.
+wake_body() {
+    python3 - "$TMP/log" <<'PY'
+import sys
+log = open(sys.argv[1]).read().splitlines()
+body = None
+for i, line in enumerate(log):
+    if line.startswith("POST ") and line.rstrip().endswith("/wakeup") and i + 1 < len(log):
+        body = log[i + 1]
+if body is None:
+    raise SystemExit("no wake body in log")
+print(body)
+PY
 }
 
 reset_log() {
@@ -185,7 +205,9 @@ if bad:
 PY
 pass "create payload is title marker, default assignee, no origin fields"
 
-# 2. Open title match is commented; a comment-hit listed first is ignored.
+# 2. A red hour with the alert already open wakes its assignee. The comment it
+# replaces was refused by the same gate as the resolve, so it never worked.
+# A comment-hit listed first is still ignored.
 write_fixture <<'JSON'
 [
   {
@@ -200,18 +222,46 @@ write_fixture <<'JSON'
     "identifier": "ALT-1",
     "title": "cotel prod /healthz is red [cotel-health-probe]",
     "status": "todo",
-    "originId": null
+    "originId": null,
+    "assigneeAgentId": "agent-on-call"
   }
 ]
 JSON
 reset_log
-out="$(run_page 200 raise "$PROBE_FILE")"
+out="$(run_page 200 raise "$PROBE_FILE" 2>"$TMP/err")" || { fail "still-red wake — exit $?"; cat "$TMP/err"; }
 case "$out" in
-    "page-cotel-health: commented on existing ALT-1 alert-id") pass "second raise comments on title match" ;;
-    *) fail "second raise comments on title match — output: $out" ;;
+    "page-cotel-health: woke agent-on-call for ALT-1 alert-id (run run-7)")
+        pass "second raise wakes the alert's assignee"
+        ;;
+    *) fail "second raise wakes the alert's assignee — output: $out" ;;
 esac
-assert_log_has "comment posts to the alert" "POST http://paperclip.test/api/issues/alert-id/comments"
+assert_log_has "wake posts to the assignee" "POST http://paperclip.test/api/agents/agent-on-call/wakeup"
 assert_log_lacks "second raise does not create" "POST http://paperclip.test/api/companies/company-1/issues"
+assert_log_lacks "second raise does not comment" "/comments"
+assert_log_lacks "second raise never patches" "PATCH "
+python3 - "$(wake_body)" <<'PY'
+import json, sys, time
+body = json.loads(sys.argv[1])
+bad = []
+if body.get("source") != "automation":
+    bad.append("source=" + str(body.get("source")))
+if "forceFreshSession" not in body:
+    bad.append("forceFreshSession missing (the API requires it)")
+key = body.get("idempotencyKey") or ""
+want = "cotel-health-still-red:alert-id:%d" % (int(time.time()) // 21600)
+if key != want:
+    bad.append("idempotencyKey=%s wanted %s" % (key, want))
+p = body.get("payload") or {}
+if p.get("kind") != "cotel_health_still_red":
+    bad.append("kind=" + str(p.get("kind")))
+if p.get("alertIdentifier") != "ALT-1" or p.get("alertIssueId") != "alert-id":
+    bad.append("alert fields=%r/%r" % (p.get("alertIdentifier"), p.get("alertIssueId")))
+if "connection refused" not in (p.get("probeOutput") or ""):
+    bad.append("probeOutput=" + str(p.get("probeOutput")))
+if bad:
+    raise SystemExit("; ".join(bad))
+PY
+pass "still-red wake carries source, a bucketed key, and the alert plus probe output"
 
 # 3. A done issue with the marker is not an open alert.
 write_fixture <<'JSON'
@@ -250,7 +300,8 @@ case "$out" in
 esac
 assert_log_lacks "does not comment on the longer marker" "POST http://paperclip.test/api/issues/selftest-id/comments"
 
-# 5. Resolve patches the title match, not the comment hit.
+# 5. A green hour with an alert open wakes that alert's assignee, and nothing
+# else: no PATCH, no comment, no second issue.
 write_fixture <<'JSON'
 [
   {
@@ -263,22 +314,116 @@ write_fixture <<'JSON'
     "id": "alert-id",
     "identifier": "ALT-1",
     "title": "cotel prod /healthz is red [cotel-health-probe]",
-    "status": "in_progress"
+    "status": "in_progress",
+    "assigneeAgentId": "agent-on-call"
   }
 ]
 JSON
 reset_log
-out="$(run_page 200 resolve)"
+GREEN_FILE="$TMP/green.out"
+printf '%s\n' "probe-healthz: OK — HTTP 200 ingest age 4s" >"$GREEN_FILE"
+export GITHUB_RUN_ID="4242"
+out="$(run_page 200 resolve "$GREEN_FILE" 2>"$TMP/err")" || { fail "recovery wake — exit $?"; cat "$TMP/err"; }
 case "$out" in
-    "page-cotel-health: resolved ALT-1 alert-id") pass "resolve closes the title match" ;;
-    *) fail "resolve closes the title match — output: $out" ;;
+    "page-cotel-health: woke agent-on-call for ALT-1 alert-id (run run-7)")
+        pass "green hour wakes the alert's assignee"
+        ;;
+    *) fail "green hour wakes the alert's assignee — output: $out" ;;
 esac
-assert_log_has "resolve patches the alert" "PATCH http://paperclip.test/api/issues/alert-id"
-assert_log_lacks "resolve does not patch the comment hit" "PATCH http://paperclip.test/api/issues/thread-id"
+assert_log_has "wake posts to the alert's assignee" "POST http://paperclip.test/api/agents/agent-on-call/wakeup"
+assert_log_lacks "recovery never patches" "PATCH "
+assert_log_lacks "recovery never comments" "/comments"
+assert_log_lacks "recovery creates no issue" "POST http://paperclip.test/api/companies/company-1/issues"
+assert_log_lacks "recovery does not wake the comment hit's owner" "/api/agents/thread-id/"
+python3 - "$(wake_body)" <<'PY2'
+import json, sys
+body = json.loads(sys.argv[1])
+bad = []
+if body.get("source") != "automation":
+    bad.append("source=" + str(body.get("source")))
+if "forceFreshSession" not in body:
+    bad.append("forceFreshSession missing (the API requires it)")
+if body.get("idempotencyKey") != "cotel-health-recovery:alert-id:4242":
+    bad.append("idempotencyKey=" + str(body.get("idempotencyKey")))
+if "recovered" not in (body.get("reason") or ""):
+    bad.append("reason=" + str(body.get("reason")))
+p = body.get("payload") or {}
+if p.get("kind") != "cotel_health_recovery":
+    bad.append("kind=" + str(p.get("kind")))
+if p.get("alertIdentifier") != "ALT-1" or p.get("alertIssueId") != "alert-id":
+    bad.append("alert fields=%r/%r" % (p.get("alertIdentifier"), p.get("alertIssueId")))
+if "HTTP 200" not in (p.get("probeOutput") or ""):
+    bad.append("probeOutput=" + str(p.get("probeOutput")))
+if "Close this alert as done" not in (p.get("instruction") or ""):
+    bad.append("instruction=" + str(p.get("instruction")))
+if bad:
+    raise SystemExit("; ".join(bad))
+PY2
+pass "recovery wake carries the run-scoped key, the alert, the green probe output and the ask"
 
-# 6. Resolve with only a comment hit reports no open alert.
+# The key is derived from the alert and the green run, so a re-dispatch of the
+# same run cannot mint a second heartbeat.
+reset_log
+out="$(run_page 200 resolve "$GREEN_FILE" 2>"$TMP/err")" || { fail "repeat recovery wake — exit $?"; cat "$TMP/err"; }
+python3 - "$(wake_body)" <<'PY2'
+import json, sys
+body = json.loads(sys.argv[1])
+if body.get("idempotencyKey") != "cotel-health-recovery:alert-id:4242":
+    raise SystemExit("idempotencyKey=" + str(body.get("idempotencyKey")))
+PY2
+pass "a retried job sends the same idempotencyKey"
+unset GITHUB_RUN_ID
+
+# 6. 202 skipped is success: a run is already live, and a live run reads
+# current state, which is green.
+reset_log
+out="$(export PAGE_TEST_WAKE_SKIPPED=1; run_page 200 resolve "$GREEN_FILE" 2>"$TMP/err")" || { fail "skipped wake — exit $?"; cat "$TMP/err"; }
+case "$out" in
+    "page-cotel-health: woke agent-on-call for ALT-1 alert-id — a run was already live")
+        pass "202 skipped is success and says so"
+        ;;
+    *) fail "202 skipped is success — output: $out" ;;
+esac
+
+# 7. An alert assigned to an agent this credential cannot wake is reported by
+# name, not stepped over: the API allows self-wake only.
+reset_log
+set +e
+out="$(export PAGE_TEST_WAKE_STATUS=403; run_page 200 resolve "$GREEN_FILE" 2>"$TMP/err")"
+rc=$?
+set -e
+if [ "$rc" -eq 0 ]; then
+    fail "403 wake exited 0: $out"
+else
+    pass "403 wake exits non-zero"
+fi
+assert_err_has "403 wake names the call and the status" "alert wake: HTTP 403"
+assert_err_has "403 wake names the alert" "alert ALT-1 is assigned to an agent this credential cannot wake"
+
+# A wake failure for any other reason names the call and the status, and is not
+# confusable with a failed search.
+reset_log
+set +e
+out="$(export PAGE_TEST_WAKE_STATUS=500; run_page 200 resolve "$GREEN_FILE" 2>"$TMP/err")"
+rc=$?
+set -e
+if [ "$rc" -eq 0 ]; then
+    fail "500 wake exited 0: $out"
+else
+    pass "500 wake exits non-zero"
+fi
+assert_err_has "500 wake names the call" "alert wake: HTTP 500"
+assert_log_lacks "a failed wake writes nothing else" "PATCH "
+
+# 8. A green hour with no open alert writes nothing and wakes nobody.
 write_fixture <<'JSON'
 [
+  {
+    "id": "old-id",
+    "identifier": "ALT-OLD",
+    "title": "cotel prod /healthz is red [cotel-health-probe]",
+    "status": "done"
+  },
   {
     "id": "thread-id",
     "identifier": "ALT-THREAD",
@@ -289,14 +434,15 @@ write_fixture <<'JSON'
 ]
 JSON
 reset_log
-out="$(run_page 200 resolve)"
+out="$(run_page 200 resolve 2>"$TMP/err")" || { fail "green with no alert — exit $?"; cat "$TMP/err"; }
 case "$out" in
-    "page-cotel-health: no open alert") pass "resolve ignores comment-only hits" ;;
-    *) fail "resolve ignores comment-only hits — output: $out" ;;
+    "page-cotel-health: no open alert") pass "green hour with no open alert does nothing" ;;
+    *) fail "green hour with no open alert — output: $out" ;;
 esac
-assert_log_lacks "no patch when nothing is open" "PATCH "
+assert_log_lacks "no alert means no write" "POST "
+assert_log_lacks "no alert means no patch" "PATCH "
 
-# 7. A failed search must not create an issue.
+# 9. A failed search must not create an issue or wake anyone.
 write_fixture <<'JSON'
 []
 JSON
@@ -313,55 +459,17 @@ fi
 assert_log_lacks "search failure does not create" "POST "
 assert_err_has "search failure names the search" "issue search: HTTP 500"
 
-# 8. Resolve while the alert is checked out leaves it open and exits 0.
-write_fixture <<'JSON'
-[
-  {
-    "id": "alert-id",
-    "identifier": "ALT-1",
-    "title": "cotel prod /healthz is red [cotel-health-probe]",
-    "status": "in_progress"
-  }
-]
-JSON
 reset_log
-PAGE_TEST_PATCH_STATUS=409
 set +e
-out="$(run_page 200 resolve 2>"$TMP/err")"
+out="$(run_page 500 resolve 2>"$TMP/err")"
 rc=$?
 set -e
-PAGE_TEST_PATCH_STATUS=200
-if [ "$rc" -ne 0 ]; then
-    fail "checked-out resolve exited $rc: $out"
-    cat "$TMP/err"
+if [ "$rc" -eq 0 ]; then
+    fail "resolve search failure exited 0: $out"
 else
-    case "$out" in
-        "page-cotel-health: alert ALT-1 alert-id is checked out; leaving it open")
-            pass "checked-out resolve leaves the alert open"
-            ;;
-        *) fail "checked-out resolve — output: $out" ;;
-    esac
+    pass "resolve search failure exits non-zero"
 fi
-
-# 9. A resolve the credential cannot perform names the resolve call and says
-# the token class is the problem, so the log is not ambiguous with a failed
-# search and nobody retries it.
-for status in 401 403; do
-    reset_log
-    PAGE_TEST_PATCH_STATUS="$status"
-    set +e
-    out="$(run_page 200 resolve 2>"$TMP/err")"
-    rc=$?
-    set -e
-    PAGE_TEST_PATCH_STATUS=200
-    if [ "$rc" -eq 0 ]; then
-        fail "$status resolve exited 0: $out"
-    else
-        pass "$status resolve exits non-zero"
-    fi
-    assert_err_has "$status resolve names the resolve call" "alert resolve: HTTP $status"
-    assert_err_has "$status resolve names the token class" "cannot close an alert from CI"
-done
+assert_log_lacks "resolve search failure wakes nobody" "POST "
 
 # 10. Usage and missing probe file.
 set +e

@@ -1,8 +1,17 @@
 #!/usr/bin/env bash
 #
-# page-cotel-health.sh — raise or resolve the standing Paperclip alert for a
-# failed /healthz probe. Spends Paperclip budget only on a state change (new
-# alert, a comment on the open alert, or recovery), not on every green tick.
+# page-cotel-health.sh — raise the standing Paperclip alert for a failed
+# /healthz probe, or route its close to the assignee once the probe is green.
+# Spends Paperclip budget only on a state change (new alert, or a wake on a
+# further red or a recovery), not on every green tick.
+#
+# This credential may only *create* issues: an agent identity mutating an
+# existing issue has to attribute the write to a heartbeat run, and a CI job
+# has none. So anything beyond the first create — the close, and the
+# still-red update — is routed through a wake of the alert's assignee, who
+# performs it in-ticket from a run of their own. The wake endpoint accepts
+# this key for its own agent and is not an issue write. See
+# docs/decisions/0019-ci-never-mutates-an-issue.md.
 #
 # Dedup key is the bracketed marker in the title. The create API strips
 # originId, and ?q= also matches comments, so neither originId nor the first
@@ -10,7 +19,7 @@
 #
 # Usage:
 #   scripts/page-cotel-health.sh raise  <probe-output-file>
-#   scripts/page-cotel-health.sh resolve
+#   scripts/page-cotel-health.sh resolve [<probe-output-file>]
 #
 # Env: PC_API_URL, PC_API_TOKEN, PC_COMPANY_ID, and optionally
 # CF_ACCESS_CLIENT_ID / CF_ACCESS_CLIENT_SECRET (same pair as issue-sync).
@@ -133,23 +142,96 @@ for issue in items:
         continue
     print(issue_id)
     print(issue.get("identifier") or "")
+    print(issue.get("assigneeAgentId") or "")
     break
 '
 }
 
 read_open() {
     local found_raw
-    found_raw="$(find_open)"
     EXISTING_ID=""
     EXISTING_IDENT=""
+    EXISTING_ASSIGNEE=""
+    found_raw="$(find_open)"
     if [ -n "$found_raw" ]; then
-        EXISTING_ID="${found_raw%%$'\n'*}"
-        if [ "$found_raw" = "$EXISTING_ID" ]; then
-            EXISTING_IDENT=""
-        else
-            EXISTING_IDENT="${found_raw#*$'\n'}"
-        fi
+        # No mapfile/readarray: the loopback half runs on macOS, whose
+        # /usr/bin/env bash is 3.2.
+        {
+            IFS= read -r EXISTING_ID || true
+            IFS= read -r EXISTING_IDENT || true
+            IFS= read -r EXISTING_ASSIGNEE || true
+        } <<EOF
+$found_raw
+EOF
     fi
+}
+
+# wake_assignee <idempotency-key> <reason> <payload-json> — routes a write the
+# CI credential cannot make into a heartbeat run that can. Not an issue write,
+# so it needs no run id; but the API only lets a key wake its own agent, which
+# is why an alert assigned elsewhere is reported rather than stepped over.
+wake_assignee() {
+    local key="$1" reason="$2" payload="$3" body resp resp_file rc status run_id
+    body="$(jq -cn \
+        --arg reason "$reason" \
+        --arg key "$key" \
+        --argjson payload "$payload" \
+        '{
+            source: "automation",
+            reason: $reason,
+            payload: $payload,
+            idempotencyKey: $key,
+            forceFreshSession: false
+        }')"
+    PC_CALL="alert wake"
+    PC_QUIET_HTTP=1
+    resp_file="$(mktemp)"
+    set +e
+    pc_into "$resp_file" -X POST "${PC_API_URL}/api/agents/${EXISTING_ASSIGNEE}/wakeup" -d "$body"
+    rc=$?
+    set -e
+    PC_QUIET_HTTP=0
+    resp="$(cat "$resp_file")"
+    rm -f "$resp_file"
+    if [ "$rc" -ne 0 ]; then
+        if [ "${PC_HTTP:-}" = "403" ]; then
+            echo "page-cotel-health: FAILED — alert wake: HTTP 403, alert ${EXISTING_IDENT:-$EXISTING_ID} is assigned to an agent this credential cannot wake" >&2
+        else
+            echo "page-cotel-health: FAILED — alert wake: HTTP ${PC_HTTP:-unknown}" >&2
+        fi
+        printf '%s\n' "${PC_BODY:-}" >&2
+        return 1
+    fi
+    # skipped is success: a run is already live for that agent, and a live run
+    # reads current state rather than the state at wake time.
+    status="$(printf '%s' "$resp" | jq -r '.status // empty')"
+    run_id="$(printf '%s' "$resp" | jq -r '.runId // .run.id // empty')"
+    if [ "$status" = "skipped" ]; then
+        echo "page-cotel-health: woke ${EXISTING_ASSIGNEE} for ${EXISTING_IDENT:-$EXISTING_ID} ${EXISTING_ID} — a run was already live"
+    else
+        echo "page-cotel-health: woke ${EXISTING_ASSIGNEE} for ${EXISTING_IDENT:-$EXISTING_ID} ${EXISTING_ID}${run_id:+ (run ${run_id})}"
+    fi
+    return 0
+}
+
+# The alert's assignee needs no second lookup to know what happened.
+wake_payload() {
+    local kind="$1" instruction="$2" probe="$3"
+    jq -cn \
+        --arg kind "$kind" \
+        --arg alertIdentifier "${EXISTING_IDENT:-}" \
+        --arg alertIssueId "$EXISTING_ID" \
+        --arg probeOutput "$probe" \
+        --arg githubRunUrl "${GITHUB_RUN_URL:-}" \
+        --arg instruction "$instruction" \
+        '{
+            kind: $kind,
+            alertIdentifier: $alertIdentifier,
+            alertIssueId: $alertIssueId,
+            probeOutput: $probeOutput,
+            githubRunUrl: $githubRunUrl,
+            instruction: $instruction
+        }'
 }
 
 RUN_LINE=""
@@ -168,17 +250,18 @@ case "$ACTION" in
         reason="$(cat "$PROBE_OUT")"
         read_open
         if [ -n "$EXISTING_ID" ]; then
-            body="$(printf 'Still red.\n\n```\n%s\n```\n\n%s\n' "$reason" "$RUN_LINE")"
-            payload="$(jq -cn --arg body "$body" '{body: $body}')"
-            PC_CALL="alert comment"
-            resp="$(pc -X POST "${PC_API_URL}/api/issues/${EXISTING_ID}/comments" -d "$payload")"
-            comment_id="$(printf '%s' "$resp" | jq -r '.id // empty')"
-            if [ -z "$comment_id" ]; then
-                echo "page-cotel-health: FAILED — alert comment: no id in response"
-                printf '%s\n' "$resp"
-                exit 1
-            fi
-            echo "page-cotel-health: commented on existing ${EXISTING_IDENT:-$EXISTING_ID} ${EXISTING_ID}"
+            # Bucketed on a coarse window rather than on this run, so a
+            # multi-day outage spends about four heartbeats a day instead of
+            # twenty-four. The comment this replaces was refused by the same
+            # gate as the resolve, so a second red hour used to wake nobody.
+            bucket=$(( $(date +%s) / 21600 ))
+            payload="$(wake_payload "cotel_health_still_red" \
+                "Production /healthz is still red and this alert is already open. Add the probe output below to the alert; do not open another." \
+                "$reason")"
+            wake_assignee \
+                "cotel-health-still-red:${EXISTING_ID}:${bucket}" \
+                "cotel prod /healthz is still red — update alert ${EXISTING_IDENT:-$EXISTING_ID}" \
+                "$payload"
             exit 0
         fi
         description="$(printf 'Production cotel /healthz probe is red.\n\n```\n%s\n```\n\n%s\n\nThe hourly probe in Flopsstuff/cotel opened this issue so an agent is woken. Do not treat a red GitHub Actions run as the page — that channel does not wake anyone here.\n' "$reason" "$RUN_LINE")"
@@ -219,49 +302,20 @@ case "$ACTION" in
             echo "page-cotel-health: no open alert"
             exit 0
         fi
-        comment="$(printf 'Probe is green again.\n\n%s\n' "$RUN_LINE")"
-        payload="$(jq -cn --arg comment "$comment" '{status: "done", comment: $comment}')"
-        # A red alert is assigned to someone, which checks it out. The assignee
-        # is already awake, so a lost race for that checkout must not fail the
-        # job or open another alert.
-        PC_CALL="alert resolve"
-        PC_QUIET_HTTP=1
-        resp_file="$(mktemp)"
-        set +e
-        pc_into "$resp_file" -X PATCH "${PC_API_URL}/api/issues/${EXISTING_ID}" -d "$payload"
-        resolve_rc=$?
-        set -e
-        PC_QUIET_HTTP=0
-        resp="$(cat "$resp_file")"
-        rm -f "$resp_file"
-        if [ "$resolve_rc" -ne 0 ]; then
-            if [ "${PC_HTTP:-}" = "409" ]; then
-                echo "page-cotel-health: alert ${EXISTING_IDENT:-$EXISTING_ID} ${EXISTING_ID} is checked out; leaving it open"
-                exit 0
-            fi
-            echo "page-cotel-health: FAILED — alert resolve: HTTP ${PC_HTTP:-unknown}" >&2
-            printf '%s\n' "${PC_BODY:-}" >&2
-            # Both of these mean "this credential cannot write to an issue at
-            # all", not "this alert is unavailable right now": an issue write
-            # by an agent needs a heartbeat run to attribute it to, and a CI
-            # job has none. Retrying later cannot help.
-            case "${PC_HTTP:-}" in
-                401 | 403)
-                    echo "page-cotel-health: this credential cannot close an alert from CI, and widening it was declined — the close belongs to the assignee's heartbeat. See docs/operations/health-probe.md." >&2
-                    ;;
-            esac
-            exit 1
+        green=""
+        if [ -n "$PROBE_OUT" ] && [ -f "$PROBE_OUT" ]; then
+            green="$(cat "$PROBE_OUT")"
         fi
-        got_status="$(printf '%s' "$resp" | jq -r '.status // empty')"
-        if [ "$got_status" != "done" ]; then
-            echo "page-cotel-health: FAILED — alert resolve: issue is not done"
-            printf '%s\n' "$resp"
-            exit 1
-        fi
-        echo "page-cotel-health: resolved ${EXISTING_IDENT:-$EXISTING_ID} ${EXISTING_ID}"
+        payload="$(wake_payload "cotel_health_recovery" \
+            "Production /healthz is green again. Close this alert as done, with the green run URL in the closing comment." \
+            "$green")"
+        wake_assignee \
+            "cotel-health-recovery:${EXISTING_ID}:${GITHUB_RUN_ID:-manual}" \
+            "cotel prod /healthz recovered — close alert ${EXISTING_IDENT:-$EXISTING_ID}" \
+            "$payload"
         ;;
     *)
-        echo "page-cotel-health: usage: $0 raise <probe-out> | resolve"
+        echo "page-cotel-health: usage: $0 raise <probe-out> | resolve [<probe-out>]"
         exit 1
         ;;
 esac

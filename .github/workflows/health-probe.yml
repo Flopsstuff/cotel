@@ -115,14 +115,14 @@ jobs:
           scripts/page-cotel-health.sh raise "$PROBE_OUT" \
             || echo "::warning title=Pager failed::could not raise the Paperclip alert; nobody was woken for this red hour"
 
-      - name: Resolve Paperclip alert on green
+      - name: Wake the alert's assignee on green
         if: env.PROBE_RC == '0' && (github.event_name == 'schedule' || inputs.page)
         env:
           CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
           CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
         run: |
-          scripts/page-cotel-health.sh resolve \
-            || echo "::warning title=Pager failed::could not resolve the standing Paperclip alert"
+          scripts/page-cotel-health.sh resolve "$PROBE_OUT" \
+            || echo "::warning title=Pager failed::could not wake the alert's assignee; the standing Paperclip alert will keep deduping later red hours"
 
       - name: Fail the job when the probe is red
         if: env.PROBE_RC != '0'
@@ -170,11 +170,11 @@ jobs:
           scripts/page-cotel-health.sh raise "$PROBE_OUT" \
             || echo "::warning title=Pager failed::could not raise the Paperclip alert; nobody was woken for this red hour"
 
-      - name: Resolve Paperclip alert on green
+      - name: Wake the alert's assignee on green
         if: env.PROBE_RC == '0' && (github.event_name == 'schedule' || inputs.page)
         run: |
-          scripts/page-cotel-health.sh resolve \
-            || echo "::warning title=Pager failed::could not resolve the standing Paperclip alert"
+          scripts/page-cotel-health.sh resolve "$PROBE_OUT" \
+            || echo "::warning title=Pager failed::could not wake the alert's assignee; the standing Paperclip alert will keep deduping later red hours"
 
       # Exit 4 is "cannot see /healthz", not "cotel is down". Failing on it
       # would paint this job red every hour until the Access service token is
