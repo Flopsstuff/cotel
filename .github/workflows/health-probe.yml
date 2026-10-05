@@ -73,6 +73,7 @@ jobs:
       PC_API_URL: ${{ secrets.PAPERCLIP_API_URL }}
       PC_API_TOKEN: ${{ secrets.PAPERCLIP_API_TOKEN }}
       PC_COMPANY_ID: ${{ secrets.PAPERCLIP_COMPANY_ID }}
+      PC_RECOVERY_ORIGIN_ID: cotel-health-recovery
       GITHUB_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
       - uses: actions/checkout@v5
@@ -115,14 +116,14 @@ jobs:
           scripts/page-cotel-health.sh raise "$PROBE_OUT" \
             || echo "::warning title=Pager failed::could not raise the Paperclip alert; nobody was woken for this red hour"
 
-      - name: Resolve Paperclip alert on green
+      - name: Open a Paperclip recovery notice on green
         if: env.PROBE_RC == '0' && (github.event_name == 'schedule' || inputs.page)
         env:
           CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
           CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
         run: |
           scripts/page-cotel-health.sh resolve \
-            || echo "::warning title=Pager failed::could not resolve the standing Paperclip alert"
+            || echo "::warning title=Pager failed::could not open a recovery notice; the standing Paperclip alert will keep deduping later red hours"
 
       - name: Fail the job when the probe is red
         if: env.PROBE_RC != '0'
@@ -144,10 +145,11 @@ jobs:
       PC_API_URL: ${{ secrets.PAPERCLIP_API_URL }}
       PC_API_TOKEN: ${{ secrets.PAPERCLIP_API_TOKEN }}
       PC_COMPANY_ID: ${{ secrets.PAPERCLIP_COMPANY_ID }}
-      # A separate dedup marker from the loopback half. On one marker the two
-      # halves would fight: a green loopback hour would resolve the alert the
-      # edge half had just raised.
+      # Separate dedup markers from the loopback half. On one marker the two
+      # halves would fight: a green loopback hour would report the alert the
+      # edge half had just raised as recovered.
       PC_ORIGIN_ID: cotel-health-probe-edge
+      PC_RECOVERY_ORIGIN_ID: cotel-health-recovery-edge
       GITHUB_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
       - uses: actions/checkout@v5
@@ -170,11 +172,11 @@ jobs:
           scripts/page-cotel-health.sh raise "$PROBE_OUT" \
             || echo "::warning title=Pager failed::could not raise the Paperclip alert; nobody was woken for this red hour"
 
-      - name: Resolve Paperclip alert on green
+      - name: Open a Paperclip recovery notice on green
         if: env.PROBE_RC == '0' && (github.event_name == 'schedule' || inputs.page)
         run: |
           scripts/page-cotel-health.sh resolve \
-            || echo "::warning title=Pager failed::could not resolve the standing Paperclip alert"
+            || echo "::warning title=Pager failed::could not open a recovery notice; the standing Paperclip alert will keep deduping later red hours"
 
       # Exit 4 is "cannot see /healthz", not "cotel is down". Failing on it
       # would paint this job red every hour until the Access service token is
