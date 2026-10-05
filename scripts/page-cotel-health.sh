@@ -163,12 +163,16 @@ read_open() {
     FOUND_TITLE=""
     found_raw="$(find_open "$1" "$2")"
     if [ -n "$found_raw" ]; then
-        local lines=()
-        mapfile -t lines <<<"$found_raw"
-        FOUND_ID="${lines[0]:-}"
-        FOUND_IDENT="${lines[1]:-}"
-        FOUND_ASSIGNEE="${lines[2]:-}"
-        FOUND_TITLE="${lines[3]:-}"
+        # No mapfile/readarray: the loopback half runs on macOS, whose
+        # /usr/bin/env bash is 3.2.
+        {
+            IFS= read -r FOUND_ID || true
+            IFS= read -r FOUND_IDENT || true
+            IFS= read -r FOUND_ASSIGNEE || true
+            IFS= read -r FOUND_TITLE || true
+        } <<EOF
+$found_raw
+EOF
     fi
 }
 
