@@ -26,5 +26,6 @@ New ADRs go in this directory as `NNNN-short-title.md`, numbered sequentially.
 | [ADR-0016](./0016-overview-activity-grid) | Overview — an activity grid, one cell per bucket | Accepted |
 | [ADR-0017](./0017-chart-palette-ruler-is-pinned) | The chart-palette ruler is pinned, and a Go test holds it | Accepted |
 | [ADR-0018](./0018-duckdb-go-v2-driver) | DuckDB driver — `duckdb/duckdb-go/v2`, with the storage format pinned | Accepted |
-| [ADR-0019](./0019-ci-never-mutates-an-issue) | CI never mutates an issue: recovery wakes the alert's assignee | Superseded by ADR-0020 |
-| [ADR-0020](./0020-recovery-arrives-as-a-new-issue) | Recovery arrives as a new issue, and dedup is time-bounded | Accepted |
+| [ADR-0019](./0019-ci-never-mutates-an-issue) | CI never mutates an issue: recovery wakes the alert's assignee | Superseded by ADR-0021 |
+| [ADR-0020](./0020-recovery-arrives-as-a-new-issue) | Recovery arrives as a new issue, and dedup is time-bounded | Superseded by ADR-0021 |
+| [ADR-0021](./0021-recovery-wakes-the-alerts-assignee) | Recovery wakes the alert's assignee, and dedup is time-bounded | Accepted |
