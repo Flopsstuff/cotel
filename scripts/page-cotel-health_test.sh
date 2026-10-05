@@ -3,9 +3,9 @@
 # page-cotel-health_test.sh — drive page-cotel-health.sh against a fake curl.
 # The live API is not contacted. Covers title-marker dedup (a comment-only
 # search hit is not the alert, a done issue with the marker is not open, a
-# longer marker does not satisfy a shorter one) and the wake that replaced
-# every write to an existing issue: its target, key, payload, the 202 skipped
-# success, and the self-wake-only 403.
+# longer marker does not satisfy a shorter one), the staleness window on
+# raise, and the wake that replaced every write to an existing issue: its
+# target, key, payload, the 202 skipped success, and the self-wake-only 403.
 
 set -euo pipefail
 
@@ -148,6 +148,15 @@ PY
 reset_log() {
     : >"$TMP/log"
     printf '%s\n' '{"id":"new-id","identifier":"ALT-9","title":"cotel prod /healthz is red [cotel-health-probe]"}' >"$TMP/create.json"
+}
+
+# ISO-8601 with milliseconds, the shape the issues API returns for createdAt.
+iso_hours_ago() {
+    python3 -c 'import sys
+from datetime import datetime, timedelta, timezone
+h = float(sys.argv[1])
+stamp = datetime.now(timezone.utc) - timedelta(hours=h)
+print(stamp.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z")' "$1"
 }
 
 assert_log_lacks() {
@@ -505,6 +514,193 @@ fi
 assert_log_lacks "search failure does not create" "POST "
 assert_err_has "search failure names the search" "issue search: HTTP 500"
 
+# 10. An open alert inside the window still dedups. The timestamp carries
+# the fractional seconds the API sends; those must not look malformed.
+fresh="$(iso_hours_ago 1)"
+write_fixture <<JSON
+[
+  {
+    "id": "alert-id",
+    "identifier": "ALT-1",
+    "title": "cotel prod /healthz is red [cotel-health-probe]",
+    "status": "todo",
+    "assigneeAgentId": "agent-on-call",
+    "createdAt": "$fresh"
+  }
+]
+JSON
+reset_log
+out="$(run_page 200 raise "$PROBE_FILE" 2>"$TMP/err")" || { fail "inside window — exit $?"; cat "$TMP/err"; }
+case "$out" in
+    "page-cotel-health: woke agent-on-call for ALT-1 alert-id (run run-7)")
+        pass "open alert inside the window dedups"
+        ;;
+    *) fail "open alert inside the window dedups — output: $out" ;;
+esac
+assert_log_lacks "inside window does not create" "POST http://paperclip.test/api/companies/company-1/issues"
+assert_log_has "inside window wakes the assignee" "POST http://paperclip.test/api/agents/agent-on-call/wakeup"
+
+# 11. An open alert older than the window is not a dedup target. Raise opens
+# a fresh alert and does not comment, patch, or wake the stale one.
+old="$(iso_hours_ago 7)"
+write_fixture <<JSON
+[
+  {
+    "id": "old-id",
+    "identifier": "ALT-OLD",
+    "title": "cotel prod /healthz is red [cotel-health-probe]",
+    "status": "in_progress",
+    "assigneeAgentId": "agent-on-call",
+    "createdAt": "$old"
+  }
+]
+JSON
+reset_log
+out="$(run_page 200 raise "$PROBE_FILE" 2>"$TMP/err")" || { fail "stale alert — exit $?"; cat "$TMP/err"; }
+case "$out" in
+    "page-cotel-health: ALT-OLD old-id is older than 6h, so it is not the dedup target; opened ALT-9 new-id")
+        pass "stale alert is replaced by a fresh one"
+        ;;
+    *) fail "stale alert is replaced by a fresh one — output: $out" ;;
+esac
+assert_log_has "stale alert still creates" "POST http://paperclip.test/api/companies/company-1/issues"
+assert_log_lacks "stale alert is not woken" "/wakeup"
+assert_log_lacks "stale alert is not commented" "/comments"
+assert_log_lacks "stale alert is not patched" "PATCH "
+assert_log_lacks "stale alert id is not sent" "old-id"
+assert_log_lacks "stale alert identifier is not sent" "ALT-OLD"
+python3 - "$(create_payload)" <<'PY'
+import json, sys
+payload = json.loads(sys.argv[1])
+bad = []
+if payload.get("allowDuplicate") is not True:
+    bad.append("allowDuplicate=" + str(payload.get("allowDuplicate")))
+if payload.get("title") != "cotel prod /healthz is red [cotel-health-probe]":
+    bad.append("title=" + str(payload.get("title")))
+if payload.get("assigneeAgentId") != "386b876d-eeba-4bf9-bc10-0dec7b09ee8a":
+    bad.append("assignee=" + str(payload.get("assigneeAgentId")))
+if bad:
+    raise SystemExit("; ".join(bad))
+PY
+pass "fresh alert asks not to collapse into the stale one"
+
+# If the tracker returns the stale alert anyway, that is a failed create,
+# not a new page.
+# reset_log overwrites the create body, so write the deduped response after it.
+reset_log
+printf '%s\n' '{"id":"old-id","identifier":"ALT-OLD","title":"cotel prod /healthz is red [cotel-health-probe]","deduplicated":true}' >"$TMP/create.json"
+set +e
+out="$(run_page 200 raise "$PROBE_FILE" 2>"$TMP/err")"
+rc=$?
+set -e
+if [ "$rc" -eq 0 ]; then
+    fail "deduped stale create exited 0: $out"
+else
+    pass "deduped stale create exits non-zero"
+fi
+assert_err_has "deduped stale create names the call" "issue create: tracker returned the open alert ALT-OLD instead of a new one"
+case "$out" in
+    *"opened"*) fail "deduped stale create claimed it opened an alert: $out" ;;
+    *) pass "deduped stale create does not claim a new alert" ;;
+esac
+
+# 12. Zero hours disables the window: an ancient alert still dedups.
+ancient="$(iso_hours_ago 100)"
+write_fixture <<JSON
+[
+  {
+    "id": "alert-id",
+    "identifier": "ALT-1",
+    "title": "cotel prod /healthz is red [cotel-health-probe]",
+    "status": "todo",
+    "assigneeAgentId": "agent-on-call",
+    "createdAt": "$ancient"
+  }
+]
+JSON
+reset_log
+out="$(PC_ALERT_MAX_AGE_H=0 run_page 200 raise "$PROBE_FILE" 2>"$TMP/err")" || { fail "window disabled — exit $?"; cat "$TMP/err"; }
+case "$out" in
+    "page-cotel-health: woke agent-on-call for ALT-1 alert-id (run run-7)")
+        pass "PC_ALERT_MAX_AGE_H=0 always dedups"
+        ;;
+    *) fail "PC_ALERT_MAX_AGE_H=0 always dedups — output: $out" ;;
+esac
+assert_log_lacks "disabled window does not create" "POST http://paperclip.test/api/companies/company-1/issues"
+
+# 13. A malformed timestamp is not stale. A parse failure must not mint a
+# second alert.
+write_fixture <<'JSON'
+[
+  {
+    "id": "alert-id",
+    "identifier": "ALT-1",
+    "title": "cotel prod /healthz is red [cotel-health-probe]",
+    "status": "todo",
+    "assigneeAgentId": "agent-on-call",
+    "createdAt": "not-a-timestamp"
+  }
+]
+JSON
+reset_log
+out="$(run_page 200 raise "$PROBE_FILE" 2>"$TMP/err")" || { fail "malformed timestamp — exit $?"; cat "$TMP/err"; }
+case "$out" in
+    "page-cotel-health: woke agent-on-call for ALT-1 alert-id (run run-7)")
+        pass "malformed timestamp is not stale"
+        ;;
+    *) fail "malformed timestamp is not stale — output: $out" ;;
+esac
+assert_log_lacks "malformed timestamp does not create" "POST http://paperclip.test/api/companies/company-1/issues"
+
+# Absent timestamp, same rule. null and a missing field both count.
+write_fixture <<'JSON'
+[
+  {
+    "id": "alert-id",
+    "identifier": "ALT-1",
+    "title": "cotel prod /healthz is red [cotel-health-probe]",
+    "status": "todo",
+    "assigneeAgentId": "agent-on-call",
+    "createdAt": null
+  }
+]
+JSON
+reset_log
+out="$(run_page 200 raise "$PROBE_FILE" 2>"$TMP/err")" || { fail "null timestamp — exit $?"; cat "$TMP/err"; }
+case "$out" in
+    "page-cotel-health: woke agent-on-call for ALT-1 alert-id (run run-7)")
+        pass "absent timestamp is not stale"
+        ;;
+    *) fail "absent timestamp is not stale — output: $out" ;;
+esac
+assert_log_lacks "absent timestamp does not create" "POST http://paperclip.test/api/companies/company-1/issues"
+
+# 14. The window is the raise path only. A green hour still wakes the
+# assignee of an old alert; it does not skip it and it does not create.
+write_fixture <<JSON
+[
+  {
+    "id": "alert-id",
+    "identifier": "ALT-1",
+    "title": "cotel prod /healthz is red [cotel-health-probe]",
+    "status": "in_progress",
+    "assigneeAgentId": "agent-on-call",
+    "createdAt": "$ancient"
+  }
+]
+JSON
+reset_log
+export GITHUB_RUN_ID="4242"
+out="$(run_page 200 resolve "$GREEN_FILE" 2>"$TMP/err")" || { fail "resolve ignores age — exit $?"; cat "$TMP/err"; }
+unset GITHUB_RUN_ID
+case "$out" in
+    "page-cotel-health: woke agent-on-call for ALT-1 alert-id (run run-7)")
+        pass "a green hour still wakes an old alert"
+        ;;
+    *) fail "a green hour still wakes an old alert — output: $out" ;;
+esac
+assert_log_lacks "resolve of an old alert creates nothing" "POST http://paperclip.test/api/companies/company-1/issues"
+
 reset_log
 set +e
 out="$(run_page 500 resolve 2>"$TMP/err")"
@@ -517,7 +713,7 @@ else
 fi
 assert_log_lacks "resolve search failure wakes nobody" "POST "
 
-# 10. A new alert quotes the trigger, the actor and the effective probe URL,
+# 15. A new alert quotes the trigger, the actor and the effective probe URL,
 # so a drill is distinguishable from an outage without opening Actions.
 write_fixture <<'JSON'
 []
@@ -540,7 +736,7 @@ do
     assert_log_has "create body names '${needle%%:*}'" "$needle"
 done
 
-# 11. The drill marker and the production marker are different alerts in both
+# 16. The drill marker and the production marker are different alerts in both
 # directions. The dangerous half is a drill acting on a standing real alert.
 write_fixture <<'JSON'
 [
@@ -591,7 +787,7 @@ case "$out" in
 esac
 assert_log_lacks "production resolve does not wake the drill alert's assignee" "/wakeup"
 
-# 12. Usage and missing probe file.
+# 17. Usage and missing probe file.
 set +e
 out="$(bash "$PAGE" 2>"$TMP/err")"
 rc=$?

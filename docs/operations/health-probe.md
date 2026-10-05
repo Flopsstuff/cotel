@@ -236,9 +236,49 @@ options and the rule it sets.
 | Probe hour | Alert state | What the pager does |
 |---|---|---|
 | red | none open | **creates** the alert, assigned to `PC_ASSIGNEE_AGENT_ID` |
-| red | one open | **wakes** its assignee — "still red, add this probe output" |
-| green | one open | **wakes** its assignee — "green again, close this alert" |
+| red | one open, created within `PC_ALERT_MAX_AGE_H` (default 6 hours) | **wakes** its assignee — "still red, add this probe output" |
+| red | one open, older than that window | **creates** a fresh alert and does not touch the stale one |
+| green | one open, of any age | **wakes** its assignee — "green again, close this alert" |
 | green | none open | nothing at all: no call, no wake |
+
+### Dedup is time-bounded
+
+An open alert older than `PC_ALERT_MAX_AGE_H` hours is not a dedup target.
+Everything that closes an alert is a write that can fail, and a failed close
+leaves the alert open forever; the next red hour would fold into it and wake
+nobody. The window is the backstop that cannot be refused, because it performs
+no write: the stale alert is not closed, not commented on, and not patched.
+`raise` opens a new issue, assigned as usual, which is the wake, and logs one
+line naming both alerts so the Actions run shows why a second one exists.
+
+A creation timestamp that is missing or not a timestamp is treated as inside
+the window. A parse failure must not mint a duplicate alert.
+`PC_ALERT_MAX_AGE_H=0` disables the window, so a drill always dedups. The
+window applies only to that raise decision. A green hour still wakes the
+assignee of whatever alert is open, however old it is.
+
+The tracker returns a recent open issue with the same title instead of
+creating another, unless the create asks not to. The fresh alert sets that
+opt-out. If the response is still the stale issue, the pager fails the call
+rather than reporting an alert nobody was assigned.
+
+### Pager environment
+
+| Variable | Default | Role |
+|---|---|---|
+| `PC_API_URL` | required | Paperclip API base |
+| `PC_API_TOKEN` | required | Agent API key. Create-only on issues |
+| `PC_COMPANY_ID` | required | Company the alert is opened in |
+| `PC_ASSIGNEE_AGENT_ID` | Daedalus | Assignee of a new alert. The assignment is the wake |
+| `PC_ORIGIN_ID` | trigger-derived | Dedup marker: `cotel-health-probe{,-edge}` on schedule, `cotel-health-probe-drill{,-edge}` on dispatch |
+| `PC_ALERT_MAX_AGE_H` | `6` | Hours an open alert stays a dedup target on a red hour. `0` always dedups |
+| `PC_RUN_ID` | unset | Sent as `X-Paperclip-Run-Id` when set |
+| `CF_ACCESS_CLIENT_ID`, `CF_ACCESS_CLIENT_SECRET` | unset | Same pair as issue-sync, when the API is behind Access |
+| `GITHUB_RUN_URL` | unset | Attached to the alert and the wake reason when set |
+| `GITHUB_EVENT_NAME` | unset | Quoted into a new alert's body when set |
+| `GITHUB_ACTOR` | unset | Quoted into a new alert's body when set |
+| `HEALTHZ_URL` | unset | Named in the alert so the assignee re-probes the same URL |
+| `GITHUB_RUN_ID` | unset | Recovery idempotency key. `manual` when unset |
 
 ### The woken agent re-probes, and the alert tells it to
 
@@ -349,8 +389,9 @@ run — that runner is a developer machine, not a managed image, so a missing
 interpreter should surface on a green hour rather than during an incident.
 
 Paperclip budget is spent only on a state change: the create on the first red
-hour, and a wake on a further red or on a recovery. A green hour with no open
-alert spends nothing. A scheduled Paperclip routine that fires every hour
+hour, a create when the open alert has aged out of the dedup window, and a
+wake on a further red inside the window or on a recovery. A green hour with no
+open alert spends nothing. A scheduled Paperclip routine that fires every hour
 regardless of health is the more expensive alternative (24 heartbeats a day).
 It is not enabled.
 
@@ -369,7 +410,7 @@ scripts/probe-healthz.sh http://127.0.0.1:1/healthz
 # the classification tests, including 503 vs stale vs empty vs refused
 bash scripts/probe-healthz_test.sh
 
-# the pager against a fake curl — dedup and per-call failure labels
+# the pager against a fake curl — dedup, the staleness window, per-call failure labels
 bash scripts/page-cotel-health_test.sh
 ```
 

@@ -28,6 +28,8 @@
 # CF_ACCESS_CLIENT_ID / CF_ACCESS_CLIENT_SECRET (same pair as issue-sync).
 # PC_ASSIGNEE_AGENT_ID defaults to Daedalus. PC_ORIGIN_ID defaults to
 # cotel-health-probe. PC_RUN_ID, when set, is sent as X-Paperclip-Run-Id.
+# PC_ALERT_MAX_AGE_H (default 6) is how long an open alert stays a dedup
+# target on the raise path; 0 disables that window.
 # GITHUB_RUN_URL, GITHUB_EVENT_NAME, GITHUB_ACTOR and HEALTHZ_URL are quoted
 # into a new alert when set, so the reader can place the run without Actions.
 
@@ -147,6 +149,10 @@ for issue in items:
     print(issue_id)
     print(issue.get("identifier") or "")
     print(issue.get("assigneeAgentId") or "")
+    created = issue.get("createdAt") or ""
+    if not isinstance(created, str):
+        created = ""
+    print(created)
     break
 '
 }
@@ -156,6 +162,7 @@ read_open() {
     EXISTING_ID=""
     EXISTING_IDENT=""
     EXISTING_ASSIGNEE=""
+    EXISTING_CREATED=""
     found_raw="$(find_open)"
     if [ -n "$found_raw" ]; then
         # No mapfile/readarray: the loopback half runs on macOS, whose
@@ -164,10 +171,45 @@ read_open() {
             IFS= read -r EXISTING_ID || true
             IFS= read -r EXISTING_IDENT || true
             IFS= read -r EXISTING_ASSIGNEE || true
+            IFS= read -r EXISTING_CREATED || true
         } <<EOF
 $found_raw
 EOF
     fi
+}
+
+# True when the open alert is older than PC_ALERT_MAX_AGE_H hours. A missing
+# or unparseable timestamp is not stale: a parse failure must not open a
+# second alert. Zero hours disables the window, so a drill always dedups.
+alert_is_stale() {
+    local created="$1" hours verdict
+    hours="${PC_ALERT_MAX_AGE_H:-6}"
+    case "$hours" in
+        *[!0-9]*)
+            echo "page-cotel-health: FAILED — PC_ALERT_MAX_AGE_H must be a whole number of hours" >&2
+            exit 1
+            ;;
+    esac
+    # "06" is six and "00" is off. The log line prints this, so one form.
+    while [ "$hours" != "0" ] && [ "${hours#0}" != "$hours" ]; do
+        hours="${hours#0}"
+    done
+    MAX_AGE_H="$hours"
+    if [ "$hours" = "0" ]; then
+        return 1
+    fi
+    # jq, not date: the loopback runner is BSD date, and fromdateiso8601
+    # rejects the fractional seconds the API sends.
+    verdict="$(jq -nr --arg ts "$created" --arg hours "$hours" '
+        def epoch:
+            gsub("\\.[0-9]+"; "") | fromdateiso8601;
+        ($ts | try epoch catch null) as $created
+        | if $created == null then "fresh"
+          elif (now - $created) > (($hours | tonumber) * 3600) then "stale"
+          else "fresh"
+          end
+    ')" || verdict="fresh"
+    [ "$verdict" = "stale" ]
 }
 
 # wake_assignee <idempotency-key> <reason> <payload-json> — routes a write the
@@ -279,38 +321,56 @@ case "$ACTION" in
         fi
         reason="$(cat "$PROBE_OUT")"
         read_open
+        STALE_ID=""
+        STALE_IDENT=""
         if [ -n "$EXISTING_ID" ]; then
-            # Bucketed on a coarse window rather than on this run, so a
-            # multi-day outage spends about four heartbeats a day instead of
-            # twenty-four. The comment this replaces was refused by the same
-            # gate as the resolve, so a second red hour used to wake nobody.
-            bucket=$(( $(date +%s) / 21600 ))
-            payload="$(wake_payload "cotel_health_still_red" \
-                "Production /healthz is still red and this alert is already open. Add the probe output below to the alert; do not open another." \
-                "$reason")"
-            wake_assignee \
-                "cotel-health-still-red:${EXISTING_ID}:${bucket}" \
-                "cotel prod /healthz is still red${RUN_SUFFIX} — alert ${EXISTING_IDENT:-$EXISTING_ID} is already open; add the probe output to it" \
-                "$payload"
-            exit 0
+            if alert_is_stale "$EXISTING_CREATED"; then
+                # Not a dedup target, and not a write. The open alert stays
+                # as it is; the fresh create below is the wake.
+                STALE_ID="$EXISTING_ID"
+                STALE_IDENT="$EXISTING_IDENT"
+            else
+                # Bucketed on a coarse window rather than on this run, so a
+                # multi-day outage spends about four heartbeats a day instead of
+                # twenty-four. The comment this replaces was refused by the same
+                # gate as the resolve, so a second red hour used to wake nobody.
+                bucket=$(( $(date +%s) / 21600 ))
+                payload="$(wake_payload "cotel_health_still_red" \
+                    "Production /healthz is still red and this alert is already open. Add the probe output below to the alert; do not open another." \
+                    "$reason")"
+                wake_assignee \
+                    "cotel-health-still-red:${EXISTING_ID}:${bucket}" \
+                    "cotel prod /healthz is still red${RUN_SUFFIX} — alert ${EXISTING_IDENT:-$EXISTING_ID} is already open; add the probe output to it" \
+                    "$payload"
+                exit 0
+            fi
         fi
         description="$(printf 'Production cotel /healthz probe is red.\n\n```\n%s\n```\n\n%s\n\n%s\n\nThe hourly probe in Flopsstuff/cotel opened this issue so an agent is woken. Do not treat a red GitHub Actions run as the page — that channel does not wake anyone here.\n\n## If you are woken on this issue again, re-probe before acting\n\n**This description always reads red.** The probe wrote it once, when the outage was detected, and cannot edit it afterwards; the wake that brought you here carries no probe output either. So nothing above tells you the state of production right now — check it yourself before you act.\n\nRe-probe by dispatching **Health probe** in Flopsstuff/cotel with **page unchecked** (Actions → Health probe → Run workflow), and read its verdict. Do not just `curl` the URL: the probe also classifies 503, stale ingest and an empty database, and `%s` may be the deploy host'"'"'s own loopback, which only that runner can reach. Never pass a `loopback_url` override while checking a real alert — that probes something else.\n\n- **Green** — the outage is over. Close this issue as done, citing the run you probed with.\n- **Still red** — the outage continues. Add that run'"'"'s output here as the current evidence.\n' "$reason" "$CONTEXT_BLOCK" "$RUN_LINE" "$PROBED_URL")"
+        # Same-title creates collapse into a recent open issue unless this
+        # asks not to. The stale alert is that issue, so without the opt-out
+        # the response is the alert we just refused to dedup into.
+        allow_duplicate=false
+        if [ -n "$STALE_ID" ]; then
+            allow_duplicate=true
+        fi
         payload="$(jq -cn \
             --arg title "$TITLE" \
             --arg description "$description" \
             --arg assigneeAgentId "$ASSIGNEE" \
+            --argjson allowDuplicate "$allow_duplicate" \
             '{
                 title: $title,
                 description: $description,
                 status: "todo",
                 priority: "high",
                 assigneeAgentId: $assigneeAgentId
-            }')"
+            } + (if $allowDuplicate then {allowDuplicate: true} else {} end)')"
         PC_CALL="issue create"
         resp="$(pc -X POST "${PC_API_URL}/api/companies/${PC_COMPANY_ID}/issues" -d "$payload")"
         ident="$(printf '%s' "$resp" | jq -r '.identifier // empty')"
         issue_id="$(printf '%s' "$resp" | jq -r '.id // empty')"
         got_title="$(printf '%s' "$resp" | jq -r '.title // empty')"
+        deduped="$(printf '%s' "$resp" | jq -r '.deduplicated // false')"
         if [ -z "$ident" ] || [ -z "$issue_id" ]; then
             echo "page-cotel-health: FAILED — issue create: no issue in response"
             printf '%s\n' "$resp"
@@ -324,7 +384,16 @@ case "$ACTION" in
                 exit 1
                 ;;
         esac
-        echo "page-cotel-health: opened ${ident} ${issue_id}"
+        if [ -n "$STALE_ID" ] && { [ "$issue_id" = "$STALE_ID" ] || [ "$deduped" = "true" ]; }; then
+            echo "page-cotel-health: FAILED — issue create: tracker returned the open alert ${STALE_IDENT:-$STALE_ID} instead of a new one" >&2
+            printf '%s\n' "$resp" >&2
+            exit 1
+        fi
+        if [ -n "$STALE_ID" ]; then
+            echo "page-cotel-health: ${STALE_IDENT:-$STALE_ID} ${STALE_ID} is older than ${MAX_AGE_H}h, so it is not the dedup target; opened ${ident} ${issue_id}"
+        else
+            echo "page-cotel-health: opened ${ident} ${issue_id}"
+        fi
         ;;
     resolve)
         read_open
