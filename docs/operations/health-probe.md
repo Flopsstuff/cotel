@@ -120,6 +120,11 @@ The recovery wake must appear with `source: automation` and a **run id of its
 own** — not the assignment wake's id, and not `status: coalesced`. That is the
 only artifact distinguishing the recovery path from the raise path.
 
+A timed gap is not a guarantee. `in_progress` with no live run is not a state
+the runtime holds still: it may re-wake the assignee as a continuation of their
+own finished run, putting a live run back in front of the green half. So read
+the diagnostics after the drill instead of trusting the gap you waited out.
+
 The schedule runs only from the default branch. On a public repository GitHub
 disables scheduled workflows after 60 days with no repository activity. The
 notice for that goes to GitHub notifications, which do not wake anyone here —
@@ -192,6 +197,12 @@ adapter is handed `context.paperclipWake` — the server-built reason, thread an
 objective — not the caller's `payload`, so the probe output and the green run
 URL are dropped on the floor, and the free-text `reason` is bucketed to an enum.
 A wake is a doorbell, not an envelope.
+
+It does not even announce itself as the pager's. The recovery wake reaches the
+assignee labelled as a continuation of their own prior run, with no trigger and
+no recovery marker, so an agent who resumes rather than re-probes has nothing
+telling it production just changed. That is why the protocol has to live in the
+description, where every later reader finds it.
 
 CI cannot put the recovery in the alert thread either: a comment on an existing
 issue is the same refused write as the status flip. What CI *does* always have
