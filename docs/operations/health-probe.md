@@ -242,17 +242,41 @@ options and the rule it sets.
 
 ### The woken agent re-probes, and the alert tells it to
 
-Nothing in the wake except `payload.issueId` reaches the woken agent. The
-adapter is handed `context.paperclipWake` — the server-built reason, thread and
-objective — not the caller's `payload`, so the probe output and the green run
-URL are dropped on the floor, and the free-text `reason` is bucketed to an enum.
+The caller's `payload` does not reach the woken agent. The server reads the
+issue-scoping keys off it - `issueId`, `taskKey`, a `commentId` - and delivers
+none of the rest, so the probe output and the green run URL are dropped on the
+floor. They are persisted on the wake row and stay readable through
+`diagnostics/wakes`, which is a forensic record, not a channel to the agent.
 A wake is a doorbell, not an envelope.
 
-It does not even announce itself as the pager's. The recovery wake reaches the
-assignee labelled as a continuation of their own prior run, with no trigger and
-no recovery marker, so an agent who resumes rather than re-probes has nothing
-telling it production just changed. That is why the protocol has to live in the
-description, where every later reader finds it.
+The free-text `reason` is the one exception, and it is worth knowing. It is
+carried verbatim into the woken run's context and arrives three ways: the
+`PAPERCLIP_WAKE_REASON` environment variable, the `reason` field of
+`PAPERCLIP_WAKE_PAYLOAD_JSON`, and a `- reason: ...` line in the wake summary
+the adapter renders into the prompt. The bucketing to an enum that a drill sees
+is done by the `diagnostics/wakes` response projection, which collapses an
+unrecognised reason to `other`; it is not on the path to the agent. So the
+doorbell does carry one line of caller-written text, which is why the pager's
+`reason` names the recovery and the alert it belongs to rather than just asking
+for attention.
+
+Two things that line cannot do. It cannot say *who rang*: the wake's `source` is
+not among the fields copied into the agent's wake payload, so `automation` shows
+up in the diagnostics and nowhere the woken agent can read it. No delivered
+field distinguishes a pager wake from a human one. And it does not survive
+coalescing. The payload a run is handed is built once, when that run is
+dispatched; a wake arriving afterwards is absorbed into that run without
+reaching it, and the caller's sentence then surfaces only on the run's stored
+context, after the fact. That is what the 2026-10-05 pair showed: the green
+half's wake landed six seconds after a continuation-recovery run for the same
+alert had started, so the assignee read a continuation label while the absorbed
+wake row carried the pager's sentence naming the recovery. An agent who resumes
+rather than re-probes has nothing telling it production just changed.
+
+So `reason` is a second channel, not a substitute. It is delivered on the
+ordinary production shape, where an alert standing for an hour has no live run,
+and it is swallowed in exactly the case these drills keep landing in. The
+protocol has to live in the description, which survives both.
 
 CI cannot put the recovery in the alert thread either: a comment on an existing
 issue is the same refused write as the status flip. What CI *does* always have
