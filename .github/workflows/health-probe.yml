@@ -56,10 +56,17 @@ jobs:
     name: Probe /healthz on the deploy host
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: [self-hosted, flopsstuff, docker]
-    # This job cannot report its own host being down: with the runner off, the
-    # run sits in the queue instead of failing. Cap it so that reads as a
-    # bounded red inside the hour rather than a job hanging for the 6h default.
+    # This job cannot report its own host being down: with the runner offline
+    # the run sits in the queue, and timeout-minutes does not bound queue time
+    # — it starts counting once a runner picks the job up. So an absent host
+    # produces no colour at all, which is what the edge half is for. The cap
+    # only bounds a job that is running and stuck (6h by default), and the
+    # concurrency group keeps each hour superseding the last queued attempt
+    # instead of piling up a day's worth of them.
     timeout-minutes: 5
+    concurrency:
+      group: health-probe-loopback
+      cancel-in-progress: true
     env:
       STALE_AFTER_SECONDS: "21600"
       CONNECT_TIMEOUT: "15"

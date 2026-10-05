@@ -18,7 +18,7 @@ points are blind to different things.
 | Target | `http://127.0.0.1:8080/healthz` | `https://cotel.aignite.pl/healthz` |
 | Cloudflare in the path | no | yes (tunnel + Access) |
 | Catches | process dead, crash loop, 503 DuckDB, stale/empty ingest | all of that, **plus** host down, tunnel down, DNS, Access misconfigured |
-| Blind to | **its own host being down** — with the runner off, the job queues instead of failing | nothing in the path, but see the Access caveat below |
+| Blind to | **its own host being down** — with the runner off the job queues, producing no colour at all | nothing in the path, but see the Access caveat below |
 | Access service token | not needed | required |
 | Alert dedup marker | `[cotel-health-probe]` | `[cotel-health-probe-edge]` |
 
@@ -29,11 +29,16 @@ that works today.
 
 The edge half is not a luxury. A self-hosted job cannot report that its own
 host is down — if the runner is off or offline, GitHub queues the run rather
-than failing it. `timeout-minutes: 5` bounds that into a red run inside the
-hour, but note what that red *is*: "could not probe", which from the host's own
-point of view is indistinguishable from "host down". It also does not page,
-because the probe step never runs. Only a probe from outside the host can tell
-the difference, and only the edge half sees the tunnel, DNS and Access at all.
+than failing it, and `timeout-minutes` does **not** bound queue time: it starts
+counting once a runner picks the job up. So an absent host yields no colour at
+all. Nothing goes red, nobody is paged, and the only trace is a run sitting in
+`queued`, which is also what a busy runner looks like. `timeout-minutes: 5`
+bounds a different case — a job that is running but stuck, instead of hanging
+for the 6h default — and the job-level `concurrency` group with
+`cancel-in-progress` keeps each hour superseding the last queued attempt rather
+than stacking a day's worth of them. Only a probe from outside the host can
+tell "host down" from "no signal", and only the edge half sees the tunnel, DNS
+and Access at all.
 
 The two halves use **different dedup markers** on purpose. On a single marker
 they would fight: a green loopback hour would mark the alert the edge half had
