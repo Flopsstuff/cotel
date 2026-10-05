@@ -103,6 +103,9 @@ jobs:
           set -e
           echo "PROBE_OUT=$PROBE_OUT" >> "$GITHUB_ENV"
           echo "PROBE_RC=$rc" >> "$GITHUB_ENV"
+          # The pager puts this in the alert description, as the command the
+          # woken agent re-runs. This job scopes it to the step above.
+          echo "HEALTHZ_URL=$HEALTHZ_URL" >> "$GITHUB_ENV"
 
       # Paging failures are a warning, never the job's verdict: this job's
       # red/green must mean "production is red/green" and nothing else.

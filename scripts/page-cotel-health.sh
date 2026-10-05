@@ -8,10 +8,13 @@
 # This credential may only *create* issues: an agent identity mutating an
 # existing issue has to attribute the write to a heartbeat run, and a CI job
 # has none. So anything beyond the first create — the close, and the
-# still-red update — is routed through a wake of the alert's assignee, who
-# performs it in-ticket from a run of their own. The wake endpoint accepts
-# this key for its own agent and is not an issue write. See
-# docs/decisions/0019-ci-never-mutates-an-issue.md.
+# still-red update — is routed through a wake carrying payload.issueId, which
+# binds the woken run to the alert and lets it write in-ticket. See
+# docs/decisions/0021-recovery-wakes-the-alerts-assignee.md.
+#
+# Nothing else in the wake reaches the woken agent, so the alert's description
+# carries the protocol instead — that description always reads red, because
+# this credential cannot edit it after the create.
 #
 # Dedup key is the bracketed marker in the title. The create API strips
 # originId, and ?q= also matches comments, so neither originId nor the first
@@ -25,7 +28,7 @@
 # CF_ACCESS_CLIENT_ID / CF_ACCESS_CLIENT_SECRET (same pair as issue-sync).
 # PC_ASSIGNEE_AGENT_ID defaults to Daedalus. PC_ORIGIN_ID defaults to
 # cotel-health-probe. PC_RUN_ID, when set, is sent as X-Paperclip-Run-Id.
-# GITHUB_RUN_URL is attached when the caller is GitHub Actions.
+# GITHUB_RUN_URL and HEALTHZ_URL are attached when the caller sets them.
 
 set -euo pipefail
 
@@ -241,6 +244,10 @@ wake_payload() {
 
 RUN_LINE=""
 RUN_SUFFIX=""
+REPROBE_CMD="the probe this issue names"
+if [ -n "${HEALTHZ_URL:-}" ]; then
+    REPROBE_CMD="curl -fsS ${HEALTHZ_URL}"
+fi
 if [ -n "${GITHUB_RUN_URL:-}" ]; then
     RUN_LINE="GitHub Actions run: ${GITHUB_RUN_URL}"
     RUN_SUFFIX=" (${GITHUB_RUN_URL})"
@@ -271,7 +278,7 @@ case "$ACTION" in
                 "$payload"
             exit 0
         fi
-        description="$(printf 'Production cotel /healthz probe is red.\n\n```\n%s\n```\n\n%s\n\nThe hourly probe in Flopsstuff/cotel opened this issue so an agent is woken. Do not treat a red GitHub Actions run as the page — that channel does not wake anyone here.\n' "$reason" "$RUN_LINE")"
+        description="$(printf 'Production cotel /healthz probe is red.\n\n```\n%s\n```\n\n%s\n\nThe hourly probe in Flopsstuff/cotel opened this issue so an agent is woken. Do not treat a red GitHub Actions run as the page — that channel does not wake anyone here.\n\n## If you are woken on this issue again, re-probe before acting\n\nRun `%s` yourself first. **This description always reads red**: the probe wrote it once, at the moment the outage was detected, and cannot edit it afterwards — the wake that brought you here carries no probe output either. So the text above tells you nothing about the state of production right now.\n\n- **Green** — the outage is over. Close this issue as done, citing your probe in the closing comment.\n- **Still red** — the outage continues. The probe output in your own run is the current evidence; add it here.\n' "$reason" "$RUN_LINE" "$REPROBE_CMD")"
         payload="$(jq -cn \
             --arg title "$TITLE" \
             --arg description "$description" \

@@ -101,6 +101,7 @@ unset CF_ACCESS_CLIENT_ID CF_ACCESS_CLIENT_SECRET PC_ASSIGNEE_AGENT_ID || true
 # Set, because the wake's reason line is the one field the woken run is
 # guaranteed to read, and it has to carry this URL.
 export GITHUB_RUN_URL="https://github.com/Flopsstuff/cotel/actions/runs/999"
+export HEALTHZ_URL="http://127.0.0.1:8080/healthz"
 
 write_fixture() {
     cat >"$TMP/fixture.json"
@@ -114,6 +115,20 @@ run_page() {
         bash "$PAGE" "${@:2}"
 }
 
+# create_payload prints the JSON body of the last issue-creating POST.
+create_payload() {
+    python3 - "$TMP/log" <<'PYC'
+import sys
+log = open(sys.argv[1]).read().splitlines()
+body = None
+for i, line in enumerate(log):
+    if line.startswith("POST ") and line.rstrip().endswith("/issues") and i + 1 < len(log):
+        body = log[i + 1]
+if body is None:
+    raise SystemExit("no create payload in log")
+print(body)
+PYC
+}
 # wake_payload prints the JSON body of the last POST to a /wakeup URL.
 wake_body() {
     python3 - "$TMP/log" <<'PY'
@@ -207,6 +222,23 @@ if bad:
     raise SystemExit("; ".join(bad))
 PY
 pass "create payload is title marker, default assignee, no origin fields"
+
+# The description is the only channel that reaches the woken agent, so the
+# re-probe protocol has to be in it, naming the URL this job probed.
+python3 - "$(create_payload)" <<'PY3'
+import json, sys
+payload = json.loads(sys.argv[1])
+description = payload.get("description") or ""
+missing = [n for n in (
+    "re-probe before acting",
+    "curl -fsS http://127.0.0.1:8080/healthz",
+    "always reads red",
+    "Close this issue as done",
+) if n not in description]
+if missing:
+    raise SystemExit("description lacks: " + "; ".join(missing))
+PY3
+pass "alert description carries the re-probe protocol and the probed URL"
 
 # 2. A red hour with the alert already open wakes its assignee. The comment it
 # replaces was refused by the same gate as the resolve, so it never worked.

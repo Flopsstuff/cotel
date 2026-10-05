@@ -105,6 +105,21 @@ assignee again, who closes the alert from their own run). Never break
 production to get a red run. A dispatched drill writes to the **production**
 alert marker, so do not run one while a genuine alert is standing.
 
+**Leave a gap between the two halves.** Wait for the alert's *assignment* run to
+finish before dispatching the green half. Back to back, the recovery wake is
+coalesced into the still-live assignment run, that run closes the alert, and the
+drill proves nothing about the recovery path — the alert ending `done` looks
+like success either way. Check it rather than assume it:
+
+```sh
+curl -s -H "Authorization: Bearer $PC_API_TOKEN" \
+  "$PC_API_URL/api/issues/<alert id>/diagnostics/wakes"
+```
+
+The recovery wake must appear with `source: automation` and a **run id of its
+own** — not the assignment wake's id, and not `status: coalesced`. That is the
+only artifact distinguishing the recovery path from the raise path.
+
 The schedule runs only from the default branch. On a public repository GitHub
 disables scheduled workflows after 60 days with no repository activity. The
 notice for that goes to GitHub notifications, which do not wake anyone here —
@@ -154,9 +169,14 @@ So the pager stops writing to the alert at all. On both paths it instead
 their own — the one write shape that works here unconditionally.
 `POST /api/agents/{id}/wakeup` takes this key for its own agent, needs no run
 id, and is not an issue write, so the credential keeps create-only authority
-over issues. See
-[ADR-0019](../decisions/0019-ci-never-mutates-an-issue.md) for the options and
-the rule it sets.
+over issues. The wake carries `payload.issueId`, which is what binds the woken
+run to the alert: `enrichWakeContextSnapshot` copies it into the run's
+`contextSnapshot.issueId`, and the cross-issue limiter resolves a run's source
+issue from that same field — so when the run writes to the alert, target equals
+source and the write is in-ticket, not cross-issue. A wake-born run and an
+assignment-born run are indistinguishable in the field that decides authority.
+See [ADR-0021](../decisions/0021-recovery-wakes-the-alerts-assignee.md) for the
+options and the rule it sets.
 
 | Probe hour | Alert state | What the pager does |
 |---|---|---|
@@ -165,27 +185,40 @@ the rule it sets.
 | green | one open | **wakes** its assignee — "green again, close this alert" |
 | green | none open | nothing at all: no call, no wake |
 
-Four details matter in operation:
+### The woken agent re-probes, and the alert tells it to
 
-- **`payload.issueId` is what scopes the wake to the alert**, and it is the
-  only part of the payload the woken run is known to receive. It is the field
-  the wake queue reads to decide which ticket a run is about; without it the
-  wake is accepted but attached to nothing, and the woken agent has no idea why
-  it is awake. The probe output, the alert's identifier and the green run URL
-  are sent alongside it and are recorded on the wake request, but the agent's
-  wake payload has no passthrough for caller-supplied fields and the free-text
-  `reason` is bucketed to an enum, so **do not rely on the woken run reading
-  any of them**. What it reliably gets is the alert, assigned to itself, in a
-  state it can re-check — which is what both dispatch drills show it doing.
-- **`202 {"status":"skipped"}` is success.** It means a run is already live for
-  that agent, and a live run reads current state — which is the state the wake
-  was going to tell it about. A started wake answers with the run object
-  instead, so `status: "skipped"` is what distinguishes the two. A wake that
-  arrives while a run for the same agent and issue is live is **coalesced**
-  into it rather than spending a second heartbeat; `GET
-  /api/issues/<id>/diagnostics/wakes` shows that, and it is the normal outcome
-  of a dispatch drill, where red and green are seconds apart rather than an
-  hour.
+Nothing in the wake except `payload.issueId` reaches the woken agent. The
+adapter is handed `context.paperclipWake` — the server-built reason, thread and
+objective — not the caller's `payload`, so the probe output and the green run
+URL are dropped on the floor, and the free-text `reason` is bucketed to an enum.
+A wake is a doorbell, not an envelope.
+
+CI cannot put the recovery in the alert thread either: a comment on an existing
+issue is the same refused write as the status flip. What CI *does* always have
+is the `create`, so **the alert's description carries the protocol** — it tells
+the agent that this description always reads red, that the wake carries no probe
+output, and to re-run the probe (`curl -fsS <healthz url>`, the URL this job
+probed) before acting: green means close the issue citing the probe, still red
+means add the fresh output.
+
+That costs the woken agent one extra probe, by design. A live re-probe is better
+evidence than a payload minted an hour earlier, and it needs no passthrough the
+tracker does not offer. Both dispatch drills show the assignee doing exactly
+this by hand before closing; the description is what stops it being folklore.
+
+Three more details matter in operation:
+
+- **`payload.issueId` must be present and correct.** Without it the wake is
+  accepted but bound to no ticket — it will not even appear in the alert's wake
+  diagnostics — and the woken agent has no idea why it is awake. Naming the
+  alert under any other key (`alertIssueId`, say) is the same as omitting it.
+- **`202 {"status":"skipped"}` is success**, and so is coalescing. A run already
+  live for that agent and ticket reads current state anyway — which is the state
+  the wake was going to report. A started wake answers with the run object, so
+  `status: "skipped"` is what distinguishes the two, and
+  `GET /api/issues/<id>/diagnostics/wakes` shows a coalesced wake sharing the
+  live run's id. Correct in production, where red and green are an hour apart;
+  **in a drill it is a trap** — see the drill note under *Schedule*.
 - **Idempotency keys differ by path.** Recovery uses
   `cotel-health-recovery:<alert id>:<GITHUB_RUN_ID>`, so a re-dispatched or
   retried job cannot mint a second heartbeat. The still-red wake buckets on a
