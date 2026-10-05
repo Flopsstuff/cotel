@@ -32,6 +32,17 @@
 # target on the raise path; 0 disables that window.
 # GITHUB_RUN_URL, GITHUB_EVENT_NAME, GITHUB_ACTOR and HEALTHZ_URL are quoted
 # into a new alert when set, so the reader can place the run without Actions.
+#
+# Callers outside GitHub Actions — the systemd timer on the Pi is the
+# authoritative one — override three things, because the defaults below name
+# Actions as both the origin of the alert and the way to re-check it:
+#   PC_SOURCE_LINE    who opened the alert, and that a red run is not the page
+#   PC_REPROBE_HINT   how the woken agent re-probes before acting
+#   PC_CALL_ID        the unique thing making this call, for the recovery
+#                     idempotency key (defaults to GITHUB_RUN_ID, then
+#                     "manual"); a caller with no run id should pass a coarse
+#                     time bucket so a dropped recovery wake is retried
+#                     instead of leaving a resolved alert standing forever.
 
 set -euo pipefail
 
@@ -289,13 +300,27 @@ RUN_LINE=""
 RUN_SUFFIX=""
 # Named in the alert so the woken agent re-checks the same endpoint. A bare
 # curl is not the check: the probe also classifies 503, stale and empty ingest.
-# And this URL may be the deploy host's own loopback, reachable only from the
-# runner — which is why the re-probe is a dispatch, not a local command.
+# And this URL may be a host's own loopback, reachable only from there — which
+# is why the default re-probe is a dispatch, not a local command.
 PROBED_URL="${HEALTHZ_URL:-the URL in the probe output above}"
 if [ -n "${GITHUB_RUN_URL:-}" ]; then
     RUN_LINE="GitHub Actions run: ${GITHUB_RUN_URL}"
     RUN_SUFFIX=" (${GITHUB_RUN_URL})"
 fi
+
+# The unique thing making this call. Only the recovery key uses it: a caller
+# that repeats the same id repeats one wake, which is correct for a CI job and
+# wrong for a timer that keeps ticking while the alert stands.
+CALL_ID="${PC_CALL_ID:-${GITHUB_RUN_ID:-manual}}"
+
+# Both of these name GitHub Actions, and both are wrong for a caller that is
+# not it — so both are overridable, and the defaults stay what the workflow
+# needs. The re-probe hint is the load-bearing half: an agent woken by the Pi
+# timer must not be told to dispatch a workflow whose runner is on the host
+# that may itself be down.
+SOURCE_LINE="${PC_SOURCE_LINE:-The health probe in Flopsstuff/cotel opened this issue so an agent is woken. Do not treat a red GitHub Actions run as the page — that channel does not wake anyone here.}"
+DEFAULT_REPROBE="Re-probe by dispatching **Health probe** in Flopsstuff/cotel with **page unchecked** (Actions → Health probe → Run workflow), and read its verdict. Do not just \`curl\` the URL: the probe also classifies 503, stale ingest and an empty database, and \`${PROBED_URL}\` may be the deploy host's own loopback, which only that runner can reach. Never pass a \`loopback_url\` override while checking a real alert — that probes something else."
+REPROBE_HINT="${PC_REPROBE_HINT:-$DEFAULT_REPROBE}"
 
 # The woken reader must be able to tell an exercise from an outage without
 # opening Actions: a dispatched run against an overridden URL is a drill, the
@@ -309,6 +334,13 @@ fi
 if [ -n "${HEALTHZ_URL:-}" ]; then
     CONTEXT_BLOCK="${CONTEXT_BLOCK}
 Probe URL: ${HEALTHZ_URL}"
+fi
+# Last line of the same block rather than a paragraph of its own: a caller
+# outside Actions has no run URL, and a lone empty paragraph is what that looked
+# like in the alert body.
+if [ -n "$RUN_LINE" ]; then
+    CONTEXT_BLOCK="${CONTEXT_BLOCK}
+${RUN_LINE}"
 fi
 
 TITLE="cotel prod /healthz is red ${MARKER}"
@@ -345,7 +377,7 @@ case "$ACTION" in
                 exit 0
             fi
         fi
-        description="$(printf 'Production cotel /healthz probe is red.\n\n```\n%s\n```\n\n%s\n\n%s\n\nThe hourly probe in Flopsstuff/cotel opened this issue so an agent is woken. Do not treat a red GitHub Actions run as the page — that channel does not wake anyone here.\n\n## If you are woken on this issue again, re-probe before acting\n\n**This description always reads red.** The probe wrote it once, when the outage was detected, and cannot edit it afterwards; the wake that brought you here carries no probe output either. So nothing above tells you the state of production right now — check it yourself before you act.\n\nRe-probe by dispatching **Health probe** in Flopsstuff/cotel with **page unchecked** (Actions → Health probe → Run workflow), and read its verdict. Do not just `curl` the URL: the probe also classifies 503, stale ingest and an empty database, and `%s` may be the deploy host'"'"'s own loopback, which only that runner can reach. Never pass a `loopback_url` override while checking a real alert — that probes something else.\n\n- **Green** — the outage is over. Close this issue as done, citing the run you probed with.\n- **Still red** — the outage continues. Add that run'"'"'s output here as the current evidence.\n' "$reason" "$CONTEXT_BLOCK" "$RUN_LINE" "$PROBED_URL")"
+        description="$(printf 'Production cotel /healthz probe is red.\n\n```\n%s\n```\n\n%s\n\n%s\n\n## If you are woken on this issue again, re-probe before acting\n\n**This description always reads red.** The probe wrote it once, when the outage was detected, and cannot edit it afterwards; the wake that brought you here carries no probe output either. So nothing above tells you the state of production right now — check it yourself before you act.\n\n%s\n\n- **Green** — the outage is over. Close this issue as done, citing the probe you checked with.\n- **Still red** — the outage continues. Add that output here as the current evidence.\n' "$reason" "$CONTEXT_BLOCK" "$SOURCE_LINE" "$REPROBE_HINT")"
         # Same-title creates collapse into a recent open issue unless this
         # asks not to. The stale alert is that issue, so without the opt-out
         # the response is the alert we just refused to dedup into.
@@ -409,7 +441,7 @@ case "$ACTION" in
             "Production /healthz is green again. Close this alert as done, with the green run URL in the closing comment." \
             "$green")"
         wake_assignee \
-            "cotel-health-recovery:${EXISTING_ID}:${GITHUB_RUN_ID:-manual}" \
+            "cotel-health-recovery:${EXISTING_ID}:${CALL_ID}" \
             "cotel prod /healthz recovered${RUN_SUFFIX} — close alert ${EXISTING_IDENT:-$EXISTING_ID} as done" \
             "$payload"
         ;;
