@@ -41,8 +41,8 @@ tell "host down" from "no signal", and only the edge half sees the tunnel, DNS
 and Access at all.
 
 The two halves use **different dedup markers** on purpose. On a single marker
-they would fight: a green loopback hour would mark the alert the edge half had
-just raised as done.
+they would fight: a green loopback hour would ask for the close of the alert
+the edge half had just raised.
 
 ## What the probe checks
 
@@ -99,12 +99,26 @@ demonstrating a red run against a dead endpoint; leave **page** unchecked
 unless you intend to open a Paperclip alert.
 
 To exercise the pager end to end, dispatch twice with **page** checked: once
-with `loopback_url=http://127.0.0.1:9` (a closed port — raises the alert, and
-the assignment wakes its assignee), then once with the default (green). The
-green half does **not** yet close the alert — that write is refused, see
-"Recovery does not close the alert yet" below — so the alert it opened is a real
-one on the real dedup marker, assigned to a real agent. Close the alert you
-minted when the drill is done, and never break production to get a red run.
+with `loopback_url=http://127.0.0.1:9` (a closed port — raises the alert, whose
+assignment wakes its assignee), then once with the default (green — wakes that
+assignee again, who closes the alert from their own run). Never break
+production to get a red run. A dispatched drill writes to the **production**
+alert marker, so do not run one while a genuine alert is standing.
+
+**Leave a gap between the two halves.** Wait for the alert's *assignment* run to
+finish before dispatching the green half. Back to back, the recovery wake is
+coalesced into the still-live assignment run, that run closes the alert, and the
+drill proves nothing about the recovery path — the alert ending `done` looks
+like success either way. Check it rather than assume it:
+
+```sh
+curl -s -H "Authorization: Bearer $PC_API_TOKEN" \
+  "$PC_API_URL/api/issues/<alert id>/diagnostics/wakes"
+```
+
+The recovery wake must appear with `source: automation` and a **run id of its
+own** — not the assignment wake's id, and not `status: coalesced`. That is the
+only artifact distinguishing the recovery path from the raise path.
 
 The schedule runs only from the default branch. On a public repository GitHub
 disables scheduled workflows after 60 days with no repository activity. The
@@ -122,67 +136,118 @@ Actions sit unnoticed.
 
 On red, the workflow opens a Paperclip issue titled
 `cotel prod /healthz is red [<marker>]`, assigned to Daedalus. That assignment
-is the wake. A later red hour searches `q=<marker>` and comments on the open
-issue whose **title** contains it. Search also matches comments and
-descriptions, so the first hit is not the alert, and a longer marker such as
-`[cotel-health-probe-selftest]` is not this one. The create request does not
-send `originId`: the issues API drops unknown fields, and list search does not
-query that column.
+is the wake, and it is the only tracker issue the pager ever creates. A later
+hour searches `q=<marker>` and acts on the open issue whose **title** contains
+it. Search also matches comments and descriptions, so the first hit is not the
+alert, and a longer marker such as `[cotel-health-probe-selftest]` is not this
+one. The create request does not send `originId`: the issues API drops unknown
+fields, and list search does not query that column.
 
-A green hour is meant to mark that same issue done, so that a recovered
-outage does not leave an alert standing — and, because dedup attaches the next
-red hour to whatever is already open, so that a stale alert cannot swallow the
-next real one.
-
-### Recovery does not close the alert yet (`PAPERCLIP_API_TOKEN` is an agent key)
+### Everything after the create is a wake, not a write
 
 `PAPERCLIP_API_TOKEN` is a long-lived **agent** API key (`github-actions`, on
-Daedalus). An agent identity writing to an issue must attribute the write to a
-heartbeat run; a CI job has no run. Two independent gates enforce that, and the
-pager hits them in sequence:
+Daedalus). An agent identity writing to an *existing* issue must attribute the
+write to a heartbeat run, and a CI job has no run. Two refusals of that one
+rule are reachable, both observed live on dispatch drills:
 
-1. Assigning the alert *is* the wake. The assignee's run starts within
-   milliseconds of the create and checks the issue out. Because the alert is
-   assigned to the key's **own** agent, the write then takes the self-assignee
-   branch and demands that run's id: `401 {"error":"Agent run id required"}` —
-   which reads like a rejected token and is really a checkout precondition.
-2. Assign it to a different agent and the first gate opens (manager-chain
-   checkout management needs no run id), but every agent field update is also
-   counted against a per-run cross-issue cap, and with no run there is nothing
-   to count against: `403 cross_issue_influence_run_context_required`.
+- the alert is assigned to the key's own agent, whose run checks it out within
+  milliseconds of the create, so the write demands that run's id —
+  `401 {"error":"Agent run id required"}`, which reads like a rejected token
+  and is really a checkout precondition;
+- assign it to a different agent and that opens, but every agent field update
+  is counted against a per-run cross-issue cap with no run to count against —
+  `403 cross_issue_influence_run_context_required`.
 
-Both were observed live, in that order, on the dispatch drills. There is no
-agent-key path past the second gate — the same applies to the `Still red.`
-dedup comment, so after the first red hour the only call the pager can still
-make is a fresh `create`.
+There is no agent-key path past the second. It applies to the status flip *and*
+to the `Still red.` comment, so the pager's only remaining issue write is
+another `create` — and a wider credential was declined: a board API key is
+instance-admin authority over the whole tracker, handed to a public
+repository's CI, to close one issue CI opened itself.
 
-**What closes this:** not a wider credential. A board API key would walk past
-both gates with no code change, and it was declined — it is instance-admin
-authority over the whole tracker, handed to a public repository's CI, to close
-one issue that CI opened itself.
+So the pager stops writing to the alert at all. On both paths it instead
+**wakes the alert's assignee**, who performs the write in-ticket from a run of
+their own — the one write shape that works here unconditionally.
+`POST /api/agents/{id}/wakeup` takes this key for its own agent, needs no run
+id, and is not an issue write, so the credential keeps create-only authority
+over issues. The wake carries `payload.issueId`, which is what binds the woken
+run to the alert: `enrichWakeContextSnapshot` copies it into the run's
+`contextSnapshot.issueId`, and the cross-issue limiter resolves a run's source
+issue from that same field — so when the run writes to the alert, target equals
+source and the write is in-ticket, not cross-issue. A wake-born run and an
+assignment-born run are indistinguishable in the field that decides authority.
+See [ADR-0021](../decisions/0021-recovery-wakes-the-alerts-assignee.md) for the
+options and the rule it sets.
 
-Nor a bare wake of the assignee. `POST /api/agents/{id}/wakeup` accepts this key
-for its own agent and is not an issue write, but the run it starts is bound to
-**no task** — no `PAPERCLIP_TASK_ID`, and no field in the request that could
-supply one — so that run's write to the alert is cross-issue with no run to
-attribute it to, and hits gate 2 above. The woken agent can read the alert and
-can `create`; it cannot close it.
+| Probe hour | Alert state | What the pager does |
+|---|---|---|
+| red | none open | **creates** the alert, assigned to `PC_ASSIGNEE_AGENT_ID` |
+| red | one open | **wakes** its assignee — "still red, add this probe output" |
+| green | one open | **wakes** its assignee — "green again, close this alert" |
+| green | none open | nothing at all: no call, no wake |
 
-So a green hour instead **creates a recovery notice** assigned to the alert's
-assignee, and `raise` stops deduping into an alert older than a bounded window,
-so a never-closed alert cannot swallow the next real outage. `create` is the one
-write this credential and that woken run can both make; the notice's assignment
-is what finally produces a run allowed to close the alert. See
-[ADR-0020](../decisions/0020-recovery-arrives-as-a-new-issue) for the options and
-the rule: the tracker credential in CI is create-only on issues, and anything
-that must mutate an existing issue is carried by an issue it creates.
+### The woken agent re-probes, and the alert tells it to
 
-Until that lands, a green hour leaves the alert open and reports
-`alert resolve: HTTP 403` as a warning, and the alert's **assignee** is who
-closes it — they hold a run, so they can. Every pager failure line names the
-call that produced it (`issue search`, `issue create`, `alert comment`,
-`alert resolve`), because these calls share status codes and a bare `HTTP 401`
-is not debuggable.
+Nothing in the wake except `payload.issueId` reaches the woken agent. The
+adapter is handed `context.paperclipWake` — the server-built reason, thread and
+objective — not the caller's `payload`, so the probe output and the green run
+URL are dropped on the floor, and the free-text `reason` is bucketed to an enum.
+A wake is a doorbell, not an envelope.
+
+CI cannot put the recovery in the alert thread either: a comment on an existing
+issue is the same refused write as the status flip. What CI *does* always have
+is the `create`, so **the alert's description carries the protocol** — it tells
+the agent that this description always reads red, that the wake carries no probe
+output, and how to check production before acting: dispatch **Health probe**
+with `page` unchecked and read its verdict. Green means close the issue citing
+that run; still red means add its output.
+
+The instruction is a dispatch rather than a `curl` for two reasons. A bare
+request only proves liveness, while the probe also classifies 503, stale ingest
+and an empty database; and for the loopback half the URL is the *deploy host's*
+`127.0.0.1`, which nothing but that runner can reach. The description names the
+probed URL so the agent re-checks the same endpoint, and warns against passing a
+`loopback_url` override while checking a real alert.
+
+That costs the woken agent one extra probe, by design. A live re-probe is better
+evidence than a payload minted an hour earlier, and it needs no passthrough the
+tracker does not offer. Both dispatch drills show the assignee doing exactly
+this by hand before closing; the description is what stops it being folklore.
+
+Three more details matter in operation:
+
+- **`payload.issueId` must be present and correct.** Without it the wake is
+  accepted but bound to no ticket — it will not even appear in the alert's wake
+  diagnostics — and the woken agent has no idea why it is awake. Naming the
+  alert under any other key (`alertIssueId`, say) is the same as omitting it.
+- **`202 {"status":"skipped"}` is success**, and so is coalescing. A run already
+  live for that agent and ticket reads current state anyway — which is the state
+  the wake was going to report. A started wake answers with the run object, so
+  `status: "skipped"` is what distinguishes the two, and
+  `GET /api/issues/<id>/diagnostics/wakes` shows a coalesced wake sharing the
+  live run's id. Correct in production, where red and green are an hour apart;
+  **in a drill it is a trap** — see the drill note under *Schedule*.
+- **Idempotency keys differ by path.** Recovery uses
+  `cotel-health-recovery:<alert id>:<GITHUB_RUN_ID>`, so a re-dispatched or
+  retried job cannot mint a second heartbeat. The still-red wake buckets on a
+  coarse window instead — `cotel-health-still-red:<alert id>:<epoch/21600>` —
+  so a multi-day outage spends about four heartbeats a day rather than
+  twenty-four.
+- **An alert assigned to anyone else is a pager failure, by name.** The API
+  allows self-wake only, so the pager reports
+  `alert wake: HTTP 403, alert <IDENT> is assigned to an agent this credential
+  cannot wake` rather than stepping over it. In normal operation this cannot
+  happen — the pager assigns the alert itself — but a reassigned alert must not
+  fail silently.
+
+Recovery latency is therefore one heartbeat rather than zero: the alert closes
+when its assignee next wakes, not the instant the probe turns green. That is
+deliberate — the alternative that closes it in seconds costs an instance-admin
+credential in CI. If the assignee is paused the wake is declined and the alert
+stands; that needs the roster, not the pager.
+
+Every pager failure line names the call that produced it (`issue search`,
+`issue create`, `alert wake`), because these calls share status codes and a
+bare `HTTP 403` is not debuggable.
 
 **A paging failure is a warning, never the job's verdict.** Each job's red or
 green means "production is red or green" and nothing else; if the pager itself
@@ -191,10 +256,11 @@ nobody was woken. The loopback job also checks for `jq` and `python3` on every
 run — that runner is a developer machine, not a managed image, so a missing
 interpreter should surface on a green hour rather than during an incident.
 
-Paperclip budget is spent only when a probe is red (create or comment) or
-when it recovers. A green hour with no open alert does not write. A scheduled
-Paperclip routine that fires every hour regardless of health is the more
-expensive alternative (24 heartbeats a day). It is not enabled.
+Paperclip budget is spent only on a state change: the create on the first red
+hour, and a wake on a further red or on a recovery. A green hour with no open
+alert spends nothing. A scheduled Paperclip routine that fires every hour
+regardless of health is the more expensive alternative (24 heartbeats a day).
+It is not enabled.
 
 ## Local use
 
