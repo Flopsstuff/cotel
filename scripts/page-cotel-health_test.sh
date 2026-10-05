@@ -231,8 +231,10 @@ payload = json.loads(sys.argv[1])
 description = payload.get("description") or ""
 missing = [n for n in (
     "re-probe before acting",
-    "curl -fsS http://127.0.0.1:8080/healthz",
     "always reads red",
+    "dispatching **Health probe**",
+    "page unchecked",
+    "http://127.0.0.1:8080/healthz",
     "Close this issue as done",
 ) if n not in description]
 if missing:

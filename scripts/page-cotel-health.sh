@@ -244,10 +244,11 @@ wake_payload() {
 
 RUN_LINE=""
 RUN_SUFFIX=""
-REPROBE_CMD="the probe this issue names"
-if [ -n "${HEALTHZ_URL:-}" ]; then
-    REPROBE_CMD="curl -fsS ${HEALTHZ_URL}"
-fi
+# Named in the alert so the woken agent re-checks the same endpoint. A bare
+# curl is not the check: the probe also classifies 503, stale and empty ingest.
+# And this URL may be the deploy host's own loopback, reachable only from the
+# runner — which is why the re-probe is a dispatch, not a local command.
+PROBED_URL="${HEALTHZ_URL:-the URL in the probe output above}"
 if [ -n "${GITHUB_RUN_URL:-}" ]; then
     RUN_LINE="GitHub Actions run: ${GITHUB_RUN_URL}"
     RUN_SUFFIX=" (${GITHUB_RUN_URL})"
@@ -278,7 +279,7 @@ case "$ACTION" in
                 "$payload"
             exit 0
         fi
-        description="$(printf 'Production cotel /healthz probe is red.\n\n```\n%s\n```\n\n%s\n\nThe hourly probe in Flopsstuff/cotel opened this issue so an agent is woken. Do not treat a red GitHub Actions run as the page — that channel does not wake anyone here.\n\n## If you are woken on this issue again, re-probe before acting\n\nRun `%s` yourself first. **This description always reads red**: the probe wrote it once, at the moment the outage was detected, and cannot edit it afterwards — the wake that brought you here carries no probe output either. So the text above tells you nothing about the state of production right now.\n\n- **Green** — the outage is over. Close this issue as done, citing your probe in the closing comment.\n- **Still red** — the outage continues. The probe output in your own run is the current evidence; add it here.\n' "$reason" "$RUN_LINE" "$REPROBE_CMD")"
+        description="$(printf 'Production cotel /healthz probe is red.\n\n```\n%s\n```\n\n%s\n\nThe hourly probe in Flopsstuff/cotel opened this issue so an agent is woken. Do not treat a red GitHub Actions run as the page — that channel does not wake anyone here.\n\n## If you are woken on this issue again, re-probe before acting\n\n**This description always reads red.** The probe wrote it once, when the outage was detected, and cannot edit it afterwards; the wake that brought you here carries no probe output either. So nothing above tells you the state of production right now — check it yourself before you act.\n\nRe-probe by dispatching **Health probe** in Flopsstuff/cotel with **page unchecked** (Actions → Health probe → Run workflow), and read its verdict. Do not just `curl` the URL: the probe also classifies 503, stale ingest and an empty database, and `%s` may be the deploy host'"'"'s own loopback, which only that runner can reach. Never pass a `loopback_url` override while checking a real alert — that probes something else.\n\n- **Green** — the outage is over. Close this issue as done, citing the run you probed with.\n- **Still red** — the outage continues. Add that run'"'"'s output here as the current evidence.\n' "$reason" "$RUN_LINE" "$PROBED_URL")"
         payload="$(jq -cn \
             --arg title "$TITLE" \
             --arg description "$description" \

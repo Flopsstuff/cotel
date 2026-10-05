@@ -197,9 +197,16 @@ CI cannot put the recovery in the alert thread either: a comment on an existing
 issue is the same refused write as the status flip. What CI *does* always have
 is the `create`, so **the alert's description carries the protocol** — it tells
 the agent that this description always reads red, that the wake carries no probe
-output, and to re-run the probe (`curl -fsS <healthz url>`, the URL this job
-probed) before acting: green means close the issue citing the probe, still red
-means add the fresh output.
+output, and how to check production before acting: dispatch **Health probe**
+with `page` unchecked and read its verdict. Green means close the issue citing
+that run; still red means add its output.
+
+The instruction is a dispatch rather than a `curl` for two reasons. A bare
+request only proves liveness, while the probe also classifies 503, stale ingest
+and an empty database; and for the loopback half the URL is the *deploy host's*
+`127.0.0.1`, which nothing but that runner can reach. The description names the
+probed URL so the agent re-checks the same endpoint, and warns against passing a
+`loopback_url` override while checking a real alert.
 
 That costs the woken agent one extra probe, by design. A live re-probe is better
 evidence than a payload minted an hour earlier, and it needs no passthrough the
