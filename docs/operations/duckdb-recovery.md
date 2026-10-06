@@ -108,7 +108,7 @@ docker run --rm -it -v cotel-data-probe:/data debian:bookworm-slim sh -c "
 The ARM asset was renamed between releases: DuckDB up to and including v1.2.x
 publishes `duckdb_cli-linux-aarch64.zip`, v1.3.0 and later publish
 `duckdb_cli-linux-arm64.zip`. Using the wrong one gets a 404 from the release,
-not a wrong binary, so it is a nuisance rather than a hazard — but check the
+not a wrong binary, so it is a nuisance rather than a hazard - but check the
 release's asset list rather than guessing.
 
 Confirm `duckdb --version` prints the same version as `SELECT version()` above before you run a single statement against the file.

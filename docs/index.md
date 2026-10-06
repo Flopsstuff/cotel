@@ -69,9 +69,9 @@ Restart Claude Code. Telemetry starts flowing immediately.
 | `COTEL_RETENTION_RAW_DAYS` | `30` | Raw span retention in days (roll-up consumes whole days, so spans survive up to a day longer) |
 | `COTEL_RETENTION_AGGREGATE_DAYS` | `90` | Daily aggregate retention in days |
 | `COTEL_RETENTION_INTERVAL` | `6h` | Retention worker tick interval |
-| `COTEL_SNAPSHOT_DIR` | _(unset — snapshots off)_ | Where the snapshot worker exports the whole database (compose sets `/snapshots`); empty disables snapshots. See [Database Snapshots and Restore](./operations/duckdb-snapshots) |
+| `COTEL_SNAPSHOT_DIR` | _(unset - snapshots off)_ | Where the snapshot worker exports the whole database (compose sets `/snapshots`); empty disables snapshots. See [Database Snapshots and Restore](./operations/duckdb-snapshots) |
 | `COTEL_SNAPSHOT_INTERVAL` | `6h` | How often a snapshot is taken (Go duration) |
-| `COTEL_SNAPSHOT_KEEP` | `56` | How many complete snapshots to keep — 14 days at the default interval |
+| `COTEL_SNAPSHOT_KEEP` | `56` | How many complete snapshots to keep - 14 days at the default interval |
 | `COTEL_SNAPSHOT_VOLUME` | `cotel-snapshots` | Read by `docker-compose.yml`, not the binary: the Docker volume mounted at `/snapshots` |
 
 ## Data & retention

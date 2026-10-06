@@ -256,7 +256,7 @@ Instance health. Takes no parameters and is never range-scoped.
 | `newest_span_age_seconds` | integer \| `null` | Seconds since `last_ingest_at`; `null` if nothing was ever ingested |
 | `db_size_bytes` | integer | Approximate database file size |
 | `retention` | object | `status` (`ok` \| `error` \| `unknown`), `last_run_at`, `last_error` |
-| `snapshot` | object | `status` (`ok` \| `error` \| `unknown`), `last_run_at`, `last_error`, `last_dir` — the last complete snapshot's directory. `unknown` covers both "has not run yet" and snapshots disabled ([Database Snapshots and Restore](./duckdb-snapshots)) |
+| `snapshot` | object | `status` (`ok` \| `error` \| `unknown`), `last_run_at`, `last_error`, `last_dir` - the last complete snapshot's directory. `unknown` covers both "has not run yet" and snapshots disabled ([Database Snapshots and Restore](./duckdb-snapshots)) |
 | `public_ingest_url` | string | Omitted unless `COTEL_PUBLIC_INGEST_URL` is set |
 
 The two freshness fields are measured from the span's `ingested_at`, not its

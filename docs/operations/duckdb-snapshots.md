@@ -28,14 +28,14 @@ Three properties are worth knowing before you rely on it:
 - **`snapshot.json` is written last, and nothing else writes it.** A directory
   without it is a failed or interrupted run: prunable, never restorable. It
   records the instant, the export duration, the schema version and the row count
-  per table, read back out of the Parquet files themselves — so a restore can be
+  per table, read back out of the Parquet files themselves - so a restore can be
   checked against what the snapshot claims to hold rather than trusted.
 - **A snapshot is only taken when the newest complete one is older than the
-  interval.** A restart — or a crash loop — therefore cannot spend the retained
+  interval.** A restart - or a crash loop - therefore cannot spend the retained
   window on snapshots minutes apart.
 - **The paths inside `load.sql` are absolute.** DuckDB bakes the export
   directory's path into it, so a snapshot cannot be moved or renamed and still
-  be imported. It must be visible at the path it was written to — `/snapshots`
+  be imported. It must be visible at the path it was written to - `/snapshots`
   in the shipped compose file.
 
 Pruning keeps the `COTEL_SNAPSHOT_KEEP` newest complete snapshots, deletes
@@ -61,7 +61,7 @@ curl -s localhost:8080/api/v1/health | jq '{status, snapshot}'
 ```
 
 `snapshot.status` is `error` after a failed cycle, which also flips the
-top-level `status` to `degraded` — the same treatment a failing retention
+top-level `status` to `degraded` - the same treatment a failing retention
 roll-up gets, and for the same reason: a backup that has been failing quietly
 for a month is worse than a known absent one. `unknown` means the worker has not
 run yet, or snapshots are disabled (`COTEL_SNAPSHOT_DIR` empty, which is the
@@ -89,7 +89,7 @@ be **empty or absent** (the snapshot's `schema.sql` issues plain `CREATE TABLE`,
 so importing over populated tables would fail halfway), and the snapshot must
 carry its `snapshot.json`.
 
-**Step 1 — make a probe volume and do the restore there, never into the live
+**Step 1 - make a probe volume and do the restore there, never into the live
 volume.** Creating a probe volume is
 [step 3 of the recovery page](./duckdb-recovery#step-3-do-every-experiment-on-a-probe-copy);
 for a restore it only has to be empty:
@@ -98,7 +98,7 @@ for a restore it only has to be empty:
 docker volume create cotel-data-restore-probe
 ```
 
-**Step 2 — import.** `--entrypoint` is not optional: the image's entrypoint
+**Step 2 - import.** `--entrypoint` is not optional: the image's entrypoint
 starts the server and would swallow the flag, leaving a *running cotel* writing
 to the volume. The snapshots volume must be mounted at `/snapshots`, the path in
 `load.sql`:
@@ -125,7 +125,7 @@ make a new one rather than trying to clean it up:
 docker volume rm cotel-data-restore-probe && docker volume create cotel-data-restore-probe
 ```
 
-**Step 3 — verify with the same binary that will serve it.**
+**Step 3 - verify with the same binary that will serve it.**
 
 ```bash
 docker run --rm --entrypoint /usr/local/bin/cotel -v cotel-data-restore-probe:/data \
@@ -142,7 +142,7 @@ restores to a healthy one. Expect the restored file to be considerably smaller
 than the live one, too: the import compacts away the free space retention churn
 leaves behind.
 
-**Step 4 — promote.** Point the deploy at the restored volume instead of
+**Step 4 - promote.** Point the deploy at the restored volume instead of
 overwriting the one you are restoring from; Docker has no `volume rename`, and
 the volume you would overwrite is also your evidence:
 
@@ -151,7 +151,7 @@ docker compose down
 COTEL_DATA_VOLUME=cotel-data-restore-probe docker compose up -d
 ```
 
-Make that variable permanent in the deploy's `.env` before you walk away — an
+Make that variable permanent in the deploy's `.env` before you walk away - an
 untracked `COTEL_DATA_VOLUME` on the command line is forgotten by the next
 `docker compose up -d`, which then silently brings the old volume back.
 
@@ -166,8 +166,8 @@ of the credentials.
 ## What snapshots do not cover
 
 - **Host loss.** Snapshots land on the same disk as production. They insure
-  against file-level corruption, a bad migration and accidental deletion — the
-  failures cotel has actually had — and not against the disk or the machine
+  against file-level corruption, a bad migration and accidental deletion - the
+  failures cotel has actually had - and not against the disk or the machine
   going away. An off-host copy is a separate decision.
 - **`docker volume prune`.** The snapshots volume is only "in use" while the
   container exists, so a prune on a stopped deploy takes the backups with it.

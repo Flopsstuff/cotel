@@ -49,7 +49,7 @@ volumes:
     name: ${COTEL_DATA_VOLUME:-cotel-data-repaired-20261004}
   # Named for the same reason as cotel-data: a restore brings the deploy up
   # against a different data volume while this one stays put. Note that
-  # `docker volume prune` on a stopped deploy takes the backups with it — this
+  # `docker volume prune` on a stopped deploy takes the backups with it - this
   # volume is only "in use" while the container exists.
   cotel-snapshots:
     name: ${COTEL_SNAPSHOT_VOLUME:-cotel-snapshots}
