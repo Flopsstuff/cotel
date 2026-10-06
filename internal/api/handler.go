@@ -360,6 +360,7 @@ type healthResponse struct {
 	NewestSpanAgeSeconds *int64          `json:"newest_span_age_seconds"`
 	DBSizeBytes          int64           `json:"db_size_bytes"`
 	Retention            retentionHealth `json:"retention"`
+	Snapshot             snapshotHealth  `json:"snapshot"`
 	PublicIngestURL      string          `json:"public_ingest_url,omitempty"`
 }
 
@@ -369,6 +370,18 @@ type retentionHealth struct {
 	Status    string `json:"status"`               // "ok" | "error" | "unknown"
 	LastRunAt string `json:"last_run_at,omitempty"`
 	LastError string `json:"last_error,omitempty"`
+}
+
+// snapshotHealth surfaces the outcome of the last snapshot cycle. A backup that
+// has been failing quietly for a month is worse than a known absent one, so
+// "error" degrades the whole endpoint the way a failing roll-up does. Status
+// "unknown" covers both a worker that has not run yet and snapshots left
+// disabled, which is the shipped default outside production.
+type snapshotHealth struct {
+	Status    string `json:"status"` // "ok" | "error" | "unknown"
+	LastRunAt string `json:"last_run_at,omitempty"`
+	LastError string `json:"last_error,omitempty"`
+	LastDir   string `json:"last_dir,omitempty"`
 }
 
 func (h *Handler) handleHealth(w http.ResponseWriter, _ *http.Request) {
@@ -390,8 +403,13 @@ func (h *Handler) handleHealth(w http.ResponseWriter, _ *http.Request) {
 		queryFailed(w)
 		return
 	}
+	snap, err := h.snapshotHealth()
+	if err != nil {
+		queryFailed(w)
+		return
+	}
 	status := "ok"
-	if ret.Status == "error" {
+	if ret.Status == "error" || snap.Status == "error" {
 		status = "degraded"
 	}
 
@@ -402,6 +420,7 @@ func (h *Handler) handleHealth(w http.ResponseWriter, _ *http.Request) {
 		NewestSpanAgeSeconds: fresh.AgeSeconds(time.Now()),
 		DBSizeBytes:          dbSize,
 		Retention:            ret,
+		Snapshot:             snap,
 		PublicIngestURL:      h.publicIngestURL,
 	})
 }
@@ -409,14 +428,7 @@ func (h *Handler) handleHealth(w http.ResponseWriter, _ *http.Request) {
 // retentionHealth reads the retention-worker status the worker persisted to the
 // settings table. A fresh DB (worker not yet run) reports status "unknown".
 func (h *Handler) retentionHealth() (retentionHealth, error) {
-	get := func(key string) (string, error) {
-		var v string
-		err := h.db.QueryRow("SELECT value FROM settings WHERE key = ?", key).Scan(&v)
-		if !scanOK(err) {
-			return "", err
-		}
-		return v, nil
-	}
+	get := h.setting
 	status, err := get("retention_last_status")
 	if err != nil {
 		return retentionHealth{}, err
@@ -437,6 +449,47 @@ func (h *Handler) retentionHealth() (retentionHealth, error) {
 		LastRunAt: lastRun,
 		LastError: lastErr,
 	}, nil
+}
+
+// snapshotHealth reads the snapshot-worker status the worker persisted to the
+// settings table. A fresh DB, or one with snapshots disabled, reports "unknown".
+func (h *Handler) snapshotHealth() (snapshotHealth, error) {
+	get := h.setting
+	status, err := get("snapshot_last_status")
+	if err != nil {
+		return snapshotHealth{}, err
+	}
+	if status == "" {
+		status = "unknown"
+	}
+	lastRun, err := get("snapshot_last_run_at")
+	if err != nil {
+		return snapshotHealth{}, err
+	}
+	lastErr, err := get("snapshot_last_error")
+	if err != nil {
+		return snapshotHealth{}, err
+	}
+	lastDir, err := get("snapshot_last_dir")
+	if err != nil {
+		return snapshotHealth{}, err
+	}
+	return snapshotHealth{
+		Status:    status,
+		LastRunAt: lastRun,
+		LastError: lastErr,
+		LastDir:   lastDir,
+	}, nil
+}
+
+// setting reads one settings row, treating an absent key as the empty string.
+func (h *Handler) setting(key string) (string, error) {
+	var v string
+	err := h.db.QueryRow("SELECT value FROM settings WHERE key = ?", key).Scan(&v)
+	if !scanOK(err) {
+		return "", err
+	}
+	return v, nil
 }
 
 // ---- /api/v1/overview ----
