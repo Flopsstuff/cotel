@@ -300,6 +300,12 @@ func TestSnapshotWaitDefersUntilDue(t *testing.T) {
 	if wait := snapshotWait(dir, 6*time.Hour, now); wait != 5*time.Hour {
 		t.Errorf("wait must follow the newest snapshot, got %s, want 5h", wait)
 	}
+
+	// A directory dated in the future must not defer snapshots by the skew.
+	mkComplete(now.Add(72 * time.Hour))
+	if wait := snapshotWait(dir, 6*time.Hour, now); wait != 6*time.Hour {
+		t.Errorf("wait with a future-dated snapshot = %s, want it capped at 6h", wait)
+	}
 }
 
 func TestRunSnapshotWorkerReturnsWhenDisabled(t *testing.T) {

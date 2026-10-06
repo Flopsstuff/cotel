@@ -128,7 +128,10 @@ func snapshotWait(dir string, interval time.Duration, now time.Time) time.Durati
 	if !ok {
 		return 0
 	}
-	return interval - now.Sub(newest)
+	// Capped at one interval so a future-dated directory - a volume carried over
+	// from a host with a fast clock - delays the next snapshot by at most the
+	// interval instead of by the skew.
+	return min(interval-now.Sub(newest), interval)
 }
 
 func newestSnapshotInstant(dir string) (time.Time, bool) {
