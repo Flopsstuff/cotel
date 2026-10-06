@@ -27,7 +27,7 @@ others see. The first two columns are the scheduled halves of one tick.
 | Runner | the Pi, `~/ops/cotel-healthz.sh` | the Pi, same tick | `[self-hosted, flopsstuff, docker]` — the deploy host | `ubuntu-latest` |
 | Target | `http://robmini.local:8080/healthz` (LAN) | `https://otlp.aignite.pl/v1/traces` (internet) | `http://127.0.0.1:8080/healthz` | `https://cotel.aignite.pl/healthz` |
 | Cloudflare in the path | no | yes (DNS + tunnel) | no | yes (tunnel + Access) |
-| Catches | process dead, crash loop, 503 DuckDB, stale/empty ingest, **and the host being off** | DNS, a blanked tunnel token, the ingest route not served, Access appearing in front of ingest | all of the LAN half except host-off | the dashboard host through Cloudflare |
+| Catches | process dead, crash loop, 503 DuckDB, stale/empty ingest, a snapshot worker that has stopped producing restore points, **and the host being off** | DNS, a blanked tunnel token, the ingest route not served, Access appearing in front of ingest | all of the LAN half except host-off | the dashboard host through Cloudflare |
 | Blind to | the tunnel, DNS — a LAN-healthy cotel unreachable from the internet reads green | the database and ingest freshness: this check stops at the auth boundary | **its own host being down** — with the runner off the job queues, producing no colour at all | nothing in the path, but see the Access caveat below |
 | Access service token | not needed | **not needed** | not needed | required |
 | Alert dedup marker | `[cotel-health-probe]` | `[cotel-ingest-edge]` | `[cotel-health-probe-drill]` | `[cotel-health-probe-drill-edge]` |
@@ -60,6 +60,7 @@ they send the on-call looking in different places:
 | `HTTP <other>` | 2 | Crash loop, proxy error, unexpected handler |
 | `ingest stale` / `empty database` | 3 | Process is up and the DB reads; spans are not being accepted |
 | `cloudflare access blocked` | 4 | Probe config, **not** an outage — see below |
+| `no current database snapshot` | 6 | Everything above is fine; the backup is not happening — see below |
 
 A 200 with `ok: true` is not enough. Staleness is a body field
 (`newest_span_age_seconds`); the endpoint keeps 200 on a quiet instance so the
@@ -70,6 +71,54 @@ is not the same as `0` (ingested just now) and not the same as a missing key.
 If `last_ingest_at` / `newest_span_age_seconds` are absent, the probe degrades
 to liveness (HTTP 200) so it keeps working before that contract is on
 production.
+
+### The snapshot claim, asked of a second endpoint
+
+A green `/healthz` is followed by a second question, to `/api/v1/health` on the
+same host — the only place the snapshot worker's own report exists. Without it
+the backup could die and nothing would say so until somebody opened the
+endpoint by hand, which is the failure class that already cost six days of
+blind outage once.
+
+The address is **derived** from the `/healthz` URL (same entry point, other
+path), so the host wrapper configures one URL and a change here needs no edit
+on the Pi. `API_HEALTH_URL` overrides the derivation.
+
+| `snapshot` object | Verdict |
+|---|---|
+| `status: "error"` | red, exit 6, with `last_error` quoted |
+| `status: "ok"` and `last_run_at` older than `SNAPSHOT_STALE_AFTER_SECONDS` (default 12 h) | red, exit 6 |
+| `status: "ok"` and `last_run_at` absent or unparseable | red, exit 6 |
+| `status: "unknown"` | not asserted; said on the green line |
+| no `snapshot` field, or `/api/v1/health` not readable | not asserted; said on the green line |
+
+The split is the point. `error` and an overdue timestamp are *affirmative*
+evidence that the restore point is gone, and can be trusted anywhere.
+`unknown` is not: it means both "the worker has not run yet" and "snapshots are
+disabled", and disabled is the shipped default everywhere but production — a
+probe that reddened on it would lie on every developer's instance.
+`SNAPSHOT_CHECK=require` is the caller asserting that this instance is one
+where snapshots are expected, and turns every "cannot assert" into red.
+`SNAPSHOT_CHECK=off` skips the question entirely.
+
+Exit **6** and not 5 because `~/ops/cotel-healthz.sh` already spends 5 on "the
+LAN half is green and the public ingest half is not".
+
+Two vantage points this must not be turned on for: anything reaching cotel
+through `cotel.aignite.pl`, where Cloudflare Access answers instead of the
+application (the default `auto` degrades quietly there, `require` would page on
+a probe-configuration problem), and the edge half, which never reads
+`/healthz` at all.
+
+| Variable | Default | Role |
+|---|---|---|
+| `SNAPSHOT_CHECK` | `auto` | `auto` pages on affirmative failure only; `require` also pages when the instance makes no snapshot claim; `off` never asks |
+| `SNAPSHOT_STALE_AFTER_SECONDS` | `43200` | How old the newest snapshot may be. Two `COTEL_SNAPSHOT_INTERVAL` periods at the shipped `6h`; move it with the interval |
+| `API_HEALTH_URL` | derived from the `/healthz` URL | Override when the snapshot report is not at the same entry point |
+
+What counts as red, why the threshold is two intervals, and how to check it by
+hand are in
+[Database Snapshots and Restore](./duckdb-snapshots#who-is-watching-it).
 
 ## What the edge half checks, and why it needs no Access token
 
@@ -600,6 +649,9 @@ needs no other change.
 # the deploy host, from the deploy host — no Access token involved
 HEALTHZ_URL=http://127.0.0.1:8080/healthz scripts/probe-healthz.sh
 
+# the same, demanding that this instance report a current snapshot
+SNAPSHOT_CHECK=require HEALTHZ_URL=http://127.0.0.1:8080/healthz scripts/probe-healthz.sh
+
 # through Cloudflare (needs an Access service token allowed on the app)
 scripts/probe-healthz.sh
 
@@ -623,7 +675,7 @@ bash scripts/page-cotel-health_test.sh
 ```
 
 `probe-healthz.sh` exit codes: `0` healthy, `1` unreachable, `2` HTTP non-200,
-`3` stale/empty, `4` Access blocked.
+`3` stale/empty, `4` Access blocked, `6` no current database snapshot.
 
 `probe-edge-ingest.sh` exit codes: `0` the ingest handler answered 401,
 `1` unreachable, `2` answered but not with the handler's 401, `4` Access now

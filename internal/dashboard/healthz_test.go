@@ -121,6 +121,47 @@ func TestHealthzImportedSpanStaysStale(t *testing.T) {
 	}
 }
 
+// The snapshot worker's report is deliberately absent from this contract, and
+// a failing backup is deliberately not a /healthz failure: the container
+// HEALTHCHECK and the deploy's wait-for-healthy read this endpoint, so a dead
+// backup here would mark a working container unhealthy and fail deploys. The
+// claim about backups is made on the alert path instead, by the probe reading
+// /api/v1/health.
+func TestHealthzIgnoresTheSnapshotWorker(t *testing.T) {
+	db, ro := openTestDBRW(t)
+	for k, v := range map[string]string{
+		"snapshot_last_status": "error",
+		"snapshot_last_error":  "export failed: No space left on device",
+		"snapshot_last_run_at": "2026-01-01T00:00:00Z",
+	} {
+		if err := db.SetSetting(k, v); err != nil {
+			t.Fatalf("SetSetting(%s): %v", k, err)
+		}
+	}
+
+	code, body := getHealthz(t, dashboard.New(ro))
+	if code != http.StatusOK {
+		t.Errorf("a failing snapshot worker must not change the status code: want 200, got %d", code)
+	}
+	if body["ok"] != true {
+		t.Errorf("a failing snapshot worker must not change ok, got %v", body["ok"])
+	}
+
+	want := map[string]bool{
+		"ok": true, "spans": true, "last_ingest_at": true, "newest_span_age_seconds": true,
+	}
+	for key := range body {
+		if !want[key] {
+			t.Errorf("unexpected field %q on /healthz: this contract only ever gains fields by decision", key)
+		}
+	}
+	for key := range want {
+		if _, present := body[key]; !present {
+			t.Errorf("field %q is missing from /healthz", key)
+		}
+	}
+}
+
 // brokenDB fails every single-row read, standing in for an unreadable database.
 type brokenDB struct {
 	inner dashboard.DB
