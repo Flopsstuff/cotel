@@ -191,6 +191,11 @@ first of which is fatal on its own:
   only "in use" while the container exists; a prune on a stopped deploy takes the
   backups with it. This is a note for `docs/operations/`, not something the code can
   prevent.
+- **Every snapshot carries the ingest tokens.** `users.token` is plaintext by
+  design, and a snapshot that omitted it would not be restorable to a working
+  instance. So the snapshots volume holds the same secrets as the data volume and
+  has to be treated the same way, which is a second reason an off-host copy is
+  its own decision rather than an obvious next step.
 - **Host loss is still uncovered.** Snapshots land on the same disk as production, so
   they insure against file-level corruption, a bad migration and accidental
   deletion - the failures cotel has actually had - and not against the disk or the

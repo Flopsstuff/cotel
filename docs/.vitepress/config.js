@@ -32,6 +32,7 @@ export default defineConfig({
             { text: 'Production /healthz probe', link: '/operations/health-probe' },
             { text: 'Export / Import', link: '/operations/export-import' },
             { text: 'DuckDB Recovery', link: '/operations/duckdb-recovery' },
+            { text: 'Database Snapshots and Restore', link: '/operations/duckdb-snapshots' },
             { text: 'README Screenshots', link: '/operations/screenshots' },
           ],
         },

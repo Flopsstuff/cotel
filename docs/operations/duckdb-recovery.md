@@ -97,7 +97,7 @@ Then install exactly that CLI version:
 
 ```bash
 DUCKDB_VER=v1.1.3
-ARCH=aarch64                      # x86_64 hosts: amd64
+ARCH=aarch64                      # see the note below; x86_64 hosts: amd64
 docker run --rm -it -v cotel-data-probe:/data debian:bookworm-slim sh -c "
   apt-get -qq update && apt-get -qq install -y --no-install-recommends curl unzip ca-certificates &&
   curl -fsSL https://github.com/duckdb/duckdb/releases/download/\$DUCKDB_VER/duckdb_cli-linux-\$ARCH.zip -o /tmp/d.zip &&
@@ -105,7 +105,17 @@ docker run --rm -it -v cotel-data-probe:/data debian:bookworm-slim sh -c "
   duckdb --version && exec bash"
 ```
 
+The ARM asset was renamed between releases: DuckDB up to and including v1.2.x
+publishes `duckdb_cli-linux-aarch64.zip`, v1.3.0 and later publish
+`duckdb_cli-linux-arm64.zip`. Using the wrong one gets a 404 from the release,
+not a wrong binary, so it is a nuisance rather than a hazard — but check the
+release's asset list rather than guessing.
+
 Confirm `duckdb --version` prints the same version as `SELECT version()` above before you run a single statement against the file.
+
+Restoring from a snapshot needs none of this step: `cotel --db-import` uses the
+engine already linked into the image. See
+[Database Snapshots and Restore](./duckdb-snapshots#restoring-from-a-snapshot).
 
 ## Step 5 — Rebuild the secondary indexes
 
@@ -276,9 +286,10 @@ re-examine at both of these moments rather than on a calendar:
 - the DuckDB version linked into cotel moves, which is also when the repro becomes
   the natural acceptance test for the bump.
 
-### There is no backup of the live database
+### The leftovers are not the backup
 
 Three volumes look like redundancy and are not. Two of them are the same damaged
-file and the third is production itself; once the leftovers are gone, the live
-database has no snapshot anywhere. That gap predates this incident and is tracked
-separately. Do not read the table above as a backup policy.
+file and the third is production itself. Do not read the table above as a backup
+policy: the recovery point comes from the timed Parquet snapshots in a separate
+volume ([Database Snapshots and Restore](./duckdb-snapshots)), and deleting
+these leftovers does not touch it.

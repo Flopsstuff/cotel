@@ -385,6 +385,31 @@ docker run --rm -v cotel-data:/data ubuntu \
   duckdb /data/cotel.duckdb "SELECT model, COUNT(*) FROM spans GROUP BY model"
 ```
 
+## Snapshots
+
+cotel exports its whole database to Parquet on a timer and keeps the newest
+`COTEL_SNAPSHOT_KEEP` exports in a second volume (`/snapshots`), so there is a
+recovery point that does not depend on the live DuckDB file being readable. The
+export runs inside cotel, on the same connection as everything else, and costs
+0.15-0.3 s per run on a 152 MB database; the format is portable Parquet plus a
+plain-text `schema.sql`, which any DuckDB build can read
+([ADR-0023](docs/decisions/0023-production-database-snapshots.md)).
+
+```bash
+# what is on disk
+docker run --rm -v cotel-snapshots:/snapshots debian:bookworm-slim ls -1 /snapshots
+
+# restore one into an empty volume, verified against the snapshot's manifest
+docker run --rm --entrypoint /usr/local/bin/cotel \
+  -v cotel-snapshots:/snapshots -v cotel-data-restore:/data \
+  ghcr.io/flopsstuff/cotel:latest --db-import /snapshots/2026-10-06T12-00-00Z
+```
+
+The worker's last outcome is reported on `GET /api/v1/health` under a `snapshot`
+object, and a failed export degrades the top-level `status`. Full procedure,
+including promoting a restored volume:
+[Database Snapshots and Restore](docs/operations/duckdb-snapshots.md).
+
 ## Retention defaults
 
 | Tier | Period | Storage |
@@ -495,6 +520,10 @@ from the network at startup instead of bundling it).
 | `COTEL_RETENTION_RAW_DAYS` | `30` | Raw span retention in days (roll-up consumes whole days, so spans survive up to a day longer) |
 | `COTEL_RETENTION_AGGREGATE_DAYS` | `90` | Daily aggregate retention in days |
 | `COTEL_RETENTION_INTERVAL` | `6h` | Retention worker tick interval (Go duration) |
+| `COTEL_SNAPSHOT_DIR` | _(unset — snapshots off)_ | Directory the snapshot worker exports the whole database into, one dated subdirectory per snapshot. Empty disables snapshots; `docker-compose.yml` sets `/snapshots`, backed by its own volume. See [Database Snapshots and Restore](docs/operations/duckdb-snapshots.md). |
+| `COTEL_SNAPSHOT_INTERVAL` | `6h` | How often a snapshot is taken (Go duration). A snapshot is only taken when the newest complete one is older than this, so a restart cannot churn through the retained window. |
+| `COTEL_SNAPSHOT_KEEP` | `56` | How many complete snapshots to keep; older ones and incomplete ones are pruned after each successful export. At the default interval, 56 is 14 days of reach for about 235 MB. The last snapshot standing is never pruned. |
+| `COTEL_SNAPSHOT_VOLUME` | `cotel-snapshots` | Read by `docker-compose.yml`, not by the binary: the Docker volume mounted at `/snapshots`. Note that `docker volume prune` on a stopped deploy deletes it — the volume counts as in use only while the container exists. |
 | `COTEL_WAL_AUTOCHECKPOINT` | `4MB` | DuckDB `checkpoint_threshold`: the write-ahead log is folded into the main file once it grows past this size. Lower values bound how much WAL an ungraceful kill leaves to replay on the next open; higher values checkpoint less often during ingest. DuckDB's own default is `16MB`. |
 | `CLOUDFLARE_TUNNEL_TOKEN` | _(unset)_ | When set, starts `cloudflared tunnel run` before cotel; enables public HTTPS access via Cloudflare Tunnel |
 | `TUNNEL_EDGE_IP_VERSION` | `4` in token mode | Read by `cloudflared`, not by cotel: the address family used to reach the Cloudflare edge (`4`, `6` or `auto`). cloudflared's own default became `auto` in 2026.4.0, which tries whichever family the resolver answers with first and falls back only after a connection has failed; token mode pins `4` unless you set this. Not set in local-config mode, where `config.yml` owns the setting. See [token mode](docs/operations/cloudflare-tunnel-remote.md#the-bundled-cloudflared) |
