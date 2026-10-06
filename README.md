@@ -321,6 +321,13 @@ report a dead database as healthy. The same two fields are on
 `GET /api/v1/health` — see
 [docs/operations/api-reference.md](docs/operations/api-reference.md).
 
+The retention and snapshot workers' health is deliberately **not** here. This
+endpoint is what `cotel --healthcheck`, the Docker `HEALTHCHECK` and the deploy's
+`wait-for-healthy.sh` read, so a failing backup reported through `ok` would mark
+a working container unhealthy and fail the next deploy. Those claims live on
+`GET /api/v1/health`, which the health probe reads separately — see
+[Production health probes](docs/operations/health-probe.md#the-snapshot-claim-asked-of-a-second-endpoint).
+
 ### The deploy waits for healthy
 
 `docker compose up -d` returns as soon as the container has *started*, which is
@@ -406,8 +413,10 @@ docker run --rm --entrypoint /usr/local/bin/cotel \
 ```
 
 The worker's last outcome is reported on `GET /api/v1/health` under a `snapshot`
-object, and a failed export degrades the top-level `status`. Full procedure,
-including promoting a restored volume:
+object, and a failed export degrades the top-level `status`. The scheduled
+health probe reads that object on every tick and pages when the backup stops
+producing restore points, so nobody has to open the endpoint by hand. Full
+procedure, including promoting a restored volume and what the probe calls red:
 [Database Snapshots and Restore](docs/operations/duckdb-snapshots.md).
 
 ## Retention defaults
@@ -528,6 +537,9 @@ from the network at startup instead of bundling it).
 | `CLOUDFLARE_TUNNEL_TOKEN` | _(unset)_ | When set, starts `cloudflared tunnel run` before cotel; enables public HTTPS access via Cloudflare Tunnel |
 | `TUNNEL_EDGE_IP_VERSION` | `4` in token mode | Read by `cloudflared`, not by cotel: the address family used to reach the Cloudflare edge (`4`, `6` or `auto`). cloudflared's own default became `auto` in 2026.4.0, which tries whichever family the resolver answers with first and falls back only after a connection has failed; token mode pins `4` unless you set this. Not set in local-config mode, where `config.yml` owns the setting. See [token mode](docs/operations/cloudflare-tunnel-remote.md#the-bundled-cloudflared) |
 | `COTEL_PUBLIC_INGEST_URL` | _(unset)_ | Absolute `http`/`https` URL of the public OTLP ingest endpoint (e.g. `https://cotel-ingest.yourdomain.com`). When set, the Setup page substitutes this URL into the copy-paste Claude Code snippets. |
+| `SNAPSHOT_CHECK` | `auto` | Read by `scripts/probe-healthz.sh`, not by the binary: whether a green `/healthz` is followed by a snapshot check against `/api/v1/health`. `auto` pages only on affirmative failure (`status: error`, or a snapshot older than the window); `require` also pages when the instance makes no snapshot claim at all, which is what you want wherever snapshots are expected; `off` never asks. See [Production health probes](docs/operations/health-probe.md#the-snapshot-claim-asked-of-a-second-endpoint). |
+| `SNAPSHOT_STALE_AFTER_SECONDS` | `43200` | Read by `scripts/probe-healthz.sh`, not by the binary: how old `snapshot.last_run_at` may get before the probe goes red. Two `COTEL_SNAPSHOT_INTERVAL` periods at the shipped `6h`; the probe reads the server's answer, not its configuration, so move this when you move the interval. |
+| `API_HEALTH_URL` | _(derived from the `/healthz` URL)_ | Read by `scripts/probe-healthz.sh`, not by the binary: overrides the `/api/v1/health` address the probe derives from the `/healthz` URL it was given. |
 | `COTEL_DATA_VOLUME` | `cotel-data-repaired-20261004` | Read by `docker-compose.yml`, not by the binary: the Docker volume mounted at `/data`. Point it at a restored copy to bring an instance up *without* writing to the volume being restored from — Docker has no `volume rename`, so the only other way to serve repaired data under the expected name is to overwrite the damaged original, which is also the forensic evidence. The default is a restored copy, not the `cotel_cotel-data` name compose derives by itself: that volume holds a database the binary can no longer open and is kept untouched as evidence. A fresh install that has neither volume gets the default created empty, which is correct. |
 
 ## Architecture

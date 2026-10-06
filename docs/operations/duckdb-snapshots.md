@@ -76,6 +76,72 @@ docker run --rm -v cotel-snapshots:/snapshots debian:bookworm-slim \
   cat /snapshots/2026-10-06T12-00-00Z/snapshot.json
 ```
 
+## Who is watching it
+
+Nobody has to remember to run the command above: the scheduled health probe
+asks the same endpoint. The LAN half of
+[the 10-minute tick](./health-probe) reads `/healthz` first and, when that is
+green, asks `/api/v1/health` and classifies the `snapshot` object. A red verdict
+pages the same way a dead process does — two consecutive failures, the
+`[cotel-health-probe]` marker, an issue whose assignment wakes an agent.
+
+The claim is deliberately **not** on `/healthz`. That endpoint is the container
+liveness contract: `cotel --healthcheck`, the Docker `HEALTHCHECK` and
+`scripts/wait-for-healthy.sh` all read it, so folding a failed backup into
+`ok: false` would mark a working container unhealthy and fail the next deploy.
+A missing restore point is an alerting fact, not a liveness fact, so it lives on
+the alert path.
+
+### What is red
+
+| `snapshot` in `/api/v1/health` | Verdict | Why |
+|---|---|---|
+| `status: "error"` | **red** (probe exit 6) | The worker ran and failed. `last_error` is quoted into the alert |
+| `status: "ok"`, `last_run_at` older than `SNAPSHOT_STALE_AFTER_SECONDS` | **red** | The worker is not completing cycles any more; the newest restore point is aging out |
+| `status: "ok"`, `last_run_at` absent or unparseable | **red** | The claim contradicts itself |
+| `status: "unknown"` | silent by default | Means *both* "has not run yet" and "snapshots are disabled", which is the shipped default outside compose — red here would cry wolf on every local instance |
+| no `snapshot` field, or `/api/v1/health` not readable | silent by default | An older binary, or a vantage point that cannot see the endpoint |
+
+The last two rows flip to red under `SNAPSHOT_CHECK=require`, which is the
+caller asserting "snapshots are expected on this instance". Default is `auto`:
+page only on affirmative evidence that the backup is broken. `SNAPSHOT_CHECK=off`
+stops the probe asking at all.
+
+### The threshold
+
+`SNAPSHOT_STALE_AFTER_SECONDS` defaults to **43200 s (12 h)** — two
+`COTEL_SNAPSHOT_INTERVAL` periods at the shipped `6h`. Two and not one because
+a cycle is scheduled *from* the last one, so a single interval leaves no room
+for the export itself and a tick landing just before the next run would be red
+every time. If you change `COTEL_SNAPSHOT_INTERVAL`, change this with it: the
+probe reads the server's answer, not the server's configuration, and cannot
+know the interval on its own.
+
+### Checking it by hand
+
+```bash
+# the question the probe asks, on the LAN (the dashboard host is behind Access)
+curl -s http://robmini.local:8080/api/v1/health | jq '{status, snapshot}'
+
+# the probe's own verdict, classification and all
+HEALTHZ_URL=http://robmini.local:8080/healthz scripts/probe-healthz.sh
+
+# the same, demanding that snapshots be configured here
+SNAPSHOT_CHECK=require HEALTHZ_URL=http://robmini.local:8080/healthz \
+  scripts/probe-healthz.sh
+
+# on the Pi: both halves of the scheduled tick, paging nothing
+~/ops/cotel-healthz.sh --probe-only
+```
+
+The probe takes one URL — `/healthz` — and derives the `/api/v1/health` address
+from it, so there is no second address to keep in step on the host. A green line
+names the snapshot it found:
+
+```
+probe-healthz: OK — HTTP 200 ingest age 2s (threshold 21600s) url=http://robmini.local:8080/healthz | snapshot last run 2026-10-06T17:39:54Z (age 909s, threshold 43200s) dir=/snapshots/2026-10-06T17-39-54Z
+```
+
 ## Restoring from a snapshot
 
 `cotel --db-import <dir>` creates the database at `COTEL_DB_PATH` from a
