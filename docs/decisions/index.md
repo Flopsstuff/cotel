@@ -30,3 +30,4 @@ New ADRs go in this directory as `NNNN-short-title.md`, numbered sequentially.
 | [ADR-0020](./0020-recovery-arrives-as-a-new-issue) | Recovery arrives as a new issue, and dedup is time-bounded | Superseded by ADR-0021 |
 | [ADR-0021](./0021-recovery-wakes-the-alerts-assignee) | Recovery wakes the alert's assignee, and dedup is time-bounded | Accepted |
 | [ADR-0022](./0022-health-probe-scheduler-outside-github) | The health probe's scheduler lives outside this repo | Accepted |
+| [ADR-0023](./0023-production-database-snapshots) | Snapshots: `EXPORT DATABASE` to Parquet, on a timer, from inside cotel | Accepted |

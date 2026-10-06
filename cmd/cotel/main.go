@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"sort"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -28,6 +29,7 @@ import (
 
 func main() {
 	dbQuery := flag.String("db-query", "", "run SQL query against DuckDB, print first column of first row, and exit")
+	dbImport := flag.String("db-import", "", "restore COTEL_DB_PATH from the snapshot directory given, verify it against the snapshot manifest, and exit; the target database file must be empty or absent")
 	healthcheck := flag.Bool("healthcheck", false, "probe the local dashboard /healthz and exit 0 (ready) or 1; used by the container HEALTHCHECK")
 	flag.Parse()
 
@@ -50,6 +52,18 @@ func main() {
 			log.Fatalf("db-query: %v", err)
 		}
 		fmt.Println(val)
+		return
+	}
+
+	// Restore runs before the listeners bind: it needs the database file to
+	// itself, and nothing should be able to ingest into a half-imported file.
+	if *dbImport != "" {
+		m, err := storage.ImportSnapshot(dbPath, *dbImport)
+		if err != nil {
+			log.Fatalf("db-import: %v", err)
+		}
+		log.Printf("db-import: restored %s from snapshot %s (taken %s, schema_version %d, %s)",
+			dbPath, *dbImport, m.Instant, m.SchemaVersion, formatTableCounts(m.Tables))
 		return
 	}
 
@@ -97,6 +111,12 @@ func main() {
 	}
 	retentionInterval := envDuration("COTEL_RETENTION_INTERVAL", 6*time.Hour)
 	go db.RunRetentionWorker(retentionCfg, retentionInterval)
+
+	snapshotCfg := storage.SnapshotConfig{
+		Dir:  os.Getenv("COTEL_SNAPSHOT_DIR"),
+		Keep: envInt("COTEL_SNAPSHOT_KEEP", storage.DefaultSnapshotKeep),
+	}
+	go db.RunSnapshotWorker(snapshotCfg, envDuration("COTEL_SNAPSHOT_INTERVAL", storage.DefaultSnapshotInterval))
 
 	ingestMux := http.NewServeMux()
 	ingestMux.Handle("/v1/traces", auth.Middleware(db, ingest.New(db)))
@@ -333,6 +353,21 @@ func runHealthcheck(dashAddr string) int {
 		return 1
 	}
 	return 0
+}
+
+// formatTableCounts renders a snapshot manifest's row counts in a stable order,
+// so two restores of the same snapshot log the same line.
+func formatTableCounts(tables map[string]int64) string {
+	names := make([]string, 0, len(tables))
+	for name := range tables {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	parts := make([]string, 0, len(names))
+	for _, name := range names {
+		parts = append(parts, fmt.Sprintf("%s=%d", name, tables[name]))
+	}
+	return strings.Join(parts, " ")
 }
 
 func env(key, fallback string) string {

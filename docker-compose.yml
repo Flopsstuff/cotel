@@ -7,6 +7,9 @@ services:
       - "8080:8080"   # Dashboard
     volumes:
       - cotel-data:/data
+      # Snapshots of the whole database (ADR-0023). Mounted at the path baked
+      # into each snapshot's load.sql, which is what a restore replays.
+      - cotel-snapshots:/snapshots
       # Locally-managed Cloudflare tunnel (optional).
       # Uncomment and adjust the host path if you prefer file-based tunnel config
       # over the CLOUDFLARE_TUNNEL_TOKEN env var. Mount your ~/.cloudflared/
@@ -27,6 +30,12 @@ services:
       # get the correct endpoint to paste into ~/.claude/settings.json.
       # Example: COTEL_PUBLIC_INGEST_URL=https://otlp.example.com
       COTEL_PUBLIC_INGEST_URL: ${COTEL_PUBLIC_INGEST_URL:-}
+      # Database snapshots. An empty COTEL_SNAPSHOT_DIR disables them, which is
+      # the default outside this compose file; here they are always on, because
+      # a deploy without a recovery point is how production ended up with none.
+      COTEL_SNAPSHOT_DIR: ${COTEL_SNAPSHOT_DIR:-/snapshots}
+      COTEL_SNAPSHOT_INTERVAL: ${COTEL_SNAPSHOT_INTERVAL:-6h}
+      COTEL_SNAPSHOT_KEEP: ${COTEL_SNAPSHOT_KEEP:-56}
 
 volumes:
   # Named explicitly so the deploy can be pointed at a different volume without
@@ -38,3 +47,9 @@ volumes:
   # warns that it did not create a hand-made volume; that warning is expected.
   cotel-data:
     name: ${COTEL_DATA_VOLUME:-cotel-data-repaired-20261004}
+  # Named for the same reason as cotel-data: a restore brings the deploy up
+  # against a different data volume while this one stays put. Note that
+  # `docker volume prune` on a stopped deploy takes the backups with it - this
+  # volume is only "in use" while the container exists.
+  cotel-snapshots:
+    name: ${COTEL_SNAPSHOT_VOLUME:-cotel-snapshots}

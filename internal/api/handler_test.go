@@ -158,6 +158,65 @@ func TestHealthRetention(t *testing.T) {
 	})
 }
 
+// TestHealthSnapshot verifies /health surfaces snapshot-worker degradation the
+// same way: a backup that has been failing quietly is the failure a backup
+// exists to rule out, so it must read as degraded, not as ok.
+func TestHealthSnapshot(t *testing.T) {
+	t.Run("unknown before first run", func(t *testing.T) {
+		_, ro := openTestDB(t)
+		h := api.New(ro)
+		_, body := getJSON(t, h, "/api/v1/health")
+		if body["status"] != "ok" {
+			t.Errorf("want status=ok, got %v", body["status"])
+		}
+		snap, _ := body["snapshot"].(map[string]any)
+		if snap == nil || snap["status"] != "unknown" {
+			t.Errorf("want snapshot.status=unknown, got %v", body["snapshot"])
+		}
+	})
+
+	t.Run("reports the last snapshot directory", func(t *testing.T) {
+		db, ro := openTestDB(t)
+		if err := db.SetSetting("snapshot_last_status", "ok"); err != nil {
+			t.Fatalf("set status: %v", err)
+		}
+		if err := db.SetSetting("snapshot_last_dir", "/snapshots/2026-10-06T12-00-00Z"); err != nil {
+			t.Fatalf("set dir: %v", err)
+		}
+		h := api.New(ro)
+		_, body := getJSON(t, h, "/api/v1/health")
+		if body["status"] != "ok" {
+			t.Errorf("want status=ok, got %v", body["status"])
+		}
+		snap, _ := body["snapshot"].(map[string]any)
+		if snap == nil || snap["last_dir"] != "/snapshots/2026-10-06T12-00-00Z" {
+			t.Errorf("want snapshot.last_dir echoed, got %v", body["snapshot"])
+		}
+	})
+
+	t.Run("degraded on recorded error", func(t *testing.T) {
+		db, ro := openTestDB(t)
+		if err := db.SetSetting("snapshot_last_status", "error"); err != nil {
+			t.Fatalf("set status: %v", err)
+		}
+		if err := db.SetSetting("snapshot_last_error", "export to /snapshots: No space left on device"); err != nil {
+			t.Fatalf("set error: %v", err)
+		}
+		h := api.New(ro)
+		_, body := getJSON(t, h, "/api/v1/health")
+		if body["status"] != "degraded" {
+			t.Errorf("want status=degraded, got %v", body["status"])
+		}
+		snap, _ := body["snapshot"].(map[string]any)
+		if snap == nil || snap["status"] != "error" {
+			t.Fatalf("want snapshot.status=error, got %v", body["snapshot"])
+		}
+		if snap["last_error"] != "export to /snapshots: No space left on device" {
+			t.Errorf("want snapshot.last_error echoed, got %v", snap["last_error"])
+		}
+	})
+}
+
 func TestOverview(t *testing.T) {
 	cases := []struct {
 		name       string

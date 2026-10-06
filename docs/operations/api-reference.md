@@ -250,12 +250,13 @@ Instance health. Takes no parameters and is never range-scoped.
 
 | Field | Type | Meaning |
 |---|---|---|
-| `status` | `ok` \| `degraded` | `degraded` when the last retention roll-up failed |
+| `status` | `ok` \| `degraded` | `degraded` when the last retention roll-up or the last snapshot failed |
 | `span_count` | integer | Rows in `spans` |
 | `last_ingest_at` | RFC 3339 string \| `null` | When the newest span was **accepted**; `null` if nothing was ever ingested |
 | `newest_span_age_seconds` | integer \| `null` | Seconds since `last_ingest_at`; `null` if nothing was ever ingested |
 | `db_size_bytes` | integer | Approximate database file size |
 | `retention` | object | `status` (`ok` \| `error` \| `unknown`), `last_run_at`, `last_error` |
+| `snapshot` | object | `status` (`ok` \| `error` \| `unknown`), `last_run_at`, `last_error`, `last_dir` - the last complete snapshot's directory. `unknown` covers both "has not run yet" and snapshots disabled ([Database Snapshots and Restore](./duckdb-snapshots)) |
 | `public_ingest_url` | string | Omitted unless `COTEL_PUBLIC_INGEST_URL` is set |
 
 The two freshness fields are measured from the span's `ingested_at`, not its
