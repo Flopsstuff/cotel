@@ -48,6 +48,9 @@
 # more, or its alert reads word for word like a dead process:
 #   PC_ALERT_SUBJECT  what is red, in the title and in every wake reason
 #   PC_ALERT_LEAD     the first line of a new alert's description
+# Left unset, both are classified from the probe verdict, because this probe
+# reddens on a dead process and on a dead backup through the same marker and
+# the second must not be titled as the first. An explicit value always wins.
 
 set -euo pipefail
 
@@ -327,12 +330,34 @@ SOURCE_LINE="${PC_SOURCE_LINE:-The health probe in Flopsstuff/cotel opened this 
 DEFAULT_REPROBE="Re-probe by dispatching **Health probe** in Flopsstuff/cotel with **page unchecked** (Actions → Health probe → Run workflow), and read its verdict. Do not just \`curl\` the URL: the probe also classifies 503, stale ingest and an empty database, and \`${PROBED_URL}\` may be the deploy host's own loopback, which only that runner can reach. Never pass a \`loopback_url\` override while checking a real alert — that probes something else."
 REPROBE_HINT="${PC_REPROBE_HINT:-$DEFAULT_REPROBE}"
 
+# Read here, not in the action below, because the subject is derived from it.
+# The missing-file error still belongs to the raise path.
+VERDICT=""
+if [ -n "$PROBE_OUT" ] && [ -f "$PROBE_OUT" ]; then
+    VERDICT="$(cat "$PROBE_OUT")"
+fi
+
 # What this alert is about. The dedup marker already keeps two watchers out of
 # each other's alerts, but the marker is machine-facing: without its own subject
 # a second watcher mints an alert whose title and wake reason claim production
 # /healthz is red, which sends the reader to the wrong half of the system.
-SUBJECT="${PC_ALERT_SUBJECT:-prod /healthz}"
-LEAD="${PC_ALERT_LEAD:-Production cotel /healthz probe is red.}"
+#
+# One watcher has the same problem internally: this probe reddens on two
+# unrelated things through one marker, and a snapshot failure is a green
+# /healthz with a dead backup — titled as `/healthz`, the alert names the one
+# part that is working. So the default subject is classified from the verdict,
+# while the marker is deliberately left alone: both subjects share one alert
+# slot, so a second red tick still dedups into the first ticket.
+DEFAULT_SUBJECT="prod /healthz"
+DEFAULT_LEAD="Production cotel /healthz probe is red."
+case "$VERDICT" in
+    *"no current database snapshot"*|*"snapshots are required on this instance"*)
+        DEFAULT_SUBJECT="prod database snapshot"
+        DEFAULT_LEAD="**The application is alive; its backup is not.** cotel is answering \`/healthz\`, so the process and the live database are fine — what has stopped is the snapshot worker, and the newest restore point is aging out. Nothing is down for users right now; what is gone is the ability to recover if something does go down. Read the \`snapshot\` object in \`/api/v1/health\` on the host for the worker's own report (\`status\`, \`last_run_at\`, \`last_error\`), then the container logs for the snapshot worker. Do **not** restart cotel on the assumption that production is down — it is not, and a restart neither fixes the worker nor produces a restore point."
+        ;;
+esac
+SUBJECT="${PC_ALERT_SUBJECT:-$DEFAULT_SUBJECT}"
+LEAD="${PC_ALERT_LEAD:-$DEFAULT_LEAD}"
 
 # The woken reader must be able to tell an exercise from an outage without
 # opening Actions: a dispatched run against an overridden URL is a drill, the
@@ -363,7 +388,7 @@ case "$ACTION" in
             echo "page-cotel-health: FAILED — raise needs a probe output file"
             exit 1
         fi
-        reason="$(cat "$PROBE_OUT")"
+        reason="$VERDICT"
         read_open
         STALE_ID=""
         STALE_IDENT=""
@@ -445,13 +470,9 @@ case "$ACTION" in
             echo "page-cotel-health: no open alert"
             exit 0
         fi
-        green=""
-        if [ -n "$PROBE_OUT" ] && [ -f "$PROBE_OUT" ]; then
-            green="$(cat "$PROBE_OUT")"
-        fi
         payload="$(wake_payload "cotel_health_recovery" \
             "cotel ${SUBJECT} is green again. Close this alert as done, citing the green probe in the closing comment." \
-            "$green")"
+            "$VERDICT")"
         wake_assignee \
             "cotel-health-recovery:${EXISTING_ID}:${CALL_ID}" \
             "cotel ${SUBJECT} recovered${RUN_SUFFIX} — close alert ${EXISTING_IDENT:-$EXISTING_ID} as done" \

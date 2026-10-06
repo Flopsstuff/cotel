@@ -254,6 +254,16 @@ expect "the overdue window is the caller's" 0 "snapshot last run" \
 expect "a stale ingest outranks a broken snapshot" 3 "ingest stale" \
     "$PROBE" "$BASE/snap-both-red/healthz"
 
+# The pager classifies the alert's title off these two phrases. Reword either
+# one and a dead backup is paged as a dead /healthz again, with every test in
+# both suites still green — so the wording is pinned here, on this side too.
+expect "a failed snapshot cycle carries the phrase the pager titles on" 6 "no current database snapshot" \
+    "$PROBE" "$BASE/snap-error/healthz"
+expect "an overdue snapshot carries the same phrase" 6 "no current database snapshot" \
+    "$PROBE" "$BASE/snap-stale/healthz"
+expect "the require-mode verdict carries the phrase the pager titles on" 6 "snapshots are required on this instance" \
+    env SNAPSHOT_CHECK=require "$PROBE" "$BASE/snap-unknown/healthz"
+
 # The ambiguous half: no claim either way. Red only where the caller says
 # snapshots are expected, because "unknown" is also how every local instance
 # reports snapshots being off.

@@ -934,6 +934,179 @@ PY
     pass "edge $action wake names the subject, not /healthz"
 done
 
+# 16. A snapshot verdict is a green /healthz with a dead backup, so the alert
+# names the snapshot. Titled `/healthz`, it names the one part that works and
+# sends the reader to restart a healthy container.
+SNAP_FILE="$TMP/snapshot.out"
+printf '%s\n' "probe-healthz: FAILED — no current database snapshot: red newest snapshot is 90000s old last_run_at=2026-10-04T12:00:00Z threshold=43200s url=http://127.0.0.1:8080/api/v1/health" >"$SNAP_FILE"
+write_fixture <<'JSON'
+[]
+JSON
+reset_log
+printf '%s\n' '{"id":"snap-id","identifier":"ALT-S","title":"cotel prod database snapshot is red [cotel-health-probe]"}' >"$TMP/create.json"
+out="$(run_page 200 raise "$SNAP_FILE" 2>"$TMP/err")" || { fail "snapshot raise — exit $?"; cat "$TMP/err"; }
+case "$out" in
+    "page-cotel-health: opened ALT-S snap-id") pass "snapshot verdict creates" ;;
+    *) fail "snapshot verdict creates — output: $out" ;;
+esac
+python3 - "$(create_payload)" <<'PY'
+import json, sys
+payload = json.loads(sys.argv[1])
+bad = []
+title = payload.get("title") or ""
+if title != "cotel prod database snapshot is red [cotel-health-probe]":
+    bad.append("title=" + title)
+description = payload.get("description") or ""
+if not description.startswith("**The application is alive; its backup is not.**"):
+    bad.append("lead does not name the backup: " + description[:120])
+if "Production cotel /healthz probe is red." in description:
+    bad.append("the snapshot alert still leads with the /healthz lead")
+for needle in ("/api/v1/health", "Do **not** restart cotel"):
+    if needle not in description:
+        bad.append("lead lacks " + needle)
+if bad:
+    raise SystemExit("; ".join(bad))
+PY
+pass "snapshot alert names the snapshot in the title and the lead"
+
+# The same classification reaches the wake reason, which is the one line a
+# woken run is guaranteed to read.
+write_fixture <<'JSON'
+[
+  {
+    "id": "snap-alert-id",
+    "identifier": "ALT-S1",
+    "title": "cotel prod database snapshot is red [cotel-health-probe]",
+    "status": "todo",
+    "assigneeAgentId": "agent-on-call"
+  }
+]
+JSON
+reset_log
+out="$(run_page 200 raise "$SNAP_FILE" 2>"$TMP/err")" || { fail "snapshot still-red wake — exit $?"; cat "$TMP/err"; }
+python3 - "$(wake_body)" <<'PY'
+import json, sys
+body = json.loads(sys.argv[1])
+reason = body.get("reason") or ""
+if "prod database snapshot" not in reason:
+    raise SystemExit("reason does not name the snapshot: " + reason)
+if "/healthz" in reason:
+    raise SystemExit("reason still claims /healthz: " + reason)
+PY
+pass "snapshot still-red wake reason names the snapshot"
+
+# Two red ticks in a row are still one ticket: the subject changed, the dedup
+# marker did not. Were the subject part of the marker, each verdict would mint
+# its own alert for the same watcher.
+assert_log_lacks "snapshot second tick does not create" "POST http://paperclip.test/api/companies/company-1/issues"
+reset_log
+out="$(run_page 200 raise "$SNAP_FILE" 2>"$TMP/err")" || { fail "snapshot third tick — exit $?"; cat "$TMP/err"; }
+case "$out" in
+    "page-cotel-health: woke agent-on-call for ALT-S1 snap-alert-id (run run-7)")
+        pass "a repeated snapshot red dedups into the open alert"
+        ;;
+    *) fail "a repeated snapshot red dedups into the open alert — output: $out" ;;
+esac
+assert_log_lacks "snapshot third tick does not create either" "POST http://paperclip.test/api/companies/company-1/issues"
+assert_log_has "snapshot dedup searches the unchanged marker" "q=cotel-health-probe&"
+
+# The marker is one alert slot for both verdicts: a snapshot red dedups into an
+# alert a /healthz red opened, and the other way round.
+write_fixture <<'JSON'
+[
+  {
+    "id": "healthz-alert-id",
+    "identifier": "ALT-H1",
+    "title": "cotel prod /healthz is red [cotel-health-probe]",
+    "status": "todo",
+    "assigneeAgentId": "agent-on-call"
+  }
+]
+JSON
+reset_log
+out="$(run_page 200 raise "$SNAP_FILE" 2>"$TMP/err")" || { fail "snapshot onto healthz alert — exit $?"; cat "$TMP/err"; }
+case "$out" in
+    "page-cotel-health: woke agent-on-call for ALT-H1 healthz-alert-id (run run-7)")
+        pass "a snapshot red dedups into an open /healthz alert"
+        ;;
+    *) fail "a snapshot red dedups into an open /healthz alert — output: $out" ;;
+esac
+
+# `SNAPSHOT_CHECK=require` on an instance that asserts nothing is the same
+# class of failure and gets the same subject.
+REQUIRE_FILE="$TMP/require.out"
+printf '%s\n' "probe-healthz: FAILED — snapshots are required on this instance and it does not report one: snapshot status unknown — the worker has not run yet, or snapshots are disabled on this instance" >"$REQUIRE_FILE"
+write_fixture <<'JSON'
+[]
+JSON
+reset_log
+printf '%s\n' '{"id":"snap-id","identifier":"ALT-S","title":"cotel prod database snapshot is red [cotel-health-probe]"}' >"$TMP/create.json"
+out="$(run_page 200 raise "$REQUIRE_FILE" 2>"$TMP/err")" || { fail "require raise — exit $?"; cat "$TMP/err"; }
+python3 - "$(create_payload)" <<'PY'
+import json, sys
+payload = json.loads(sys.argv[1])
+if (payload.get("title") or "") != "cotel prod database snapshot is red [cotel-health-probe]":
+    raise SystemExit("title=" + str(payload.get("title")))
+PY
+pass "an unasserted snapshot under require also names the snapshot"
+
+# 17. An ordinary red /healthz is unchanged, to the character: the classifier
+# must not rewrite the alert every other watcher's runbook was written against.
+for verdict in \
+    "probe-healthz: FAILED — unreachable (connection refused)" \
+    "probe-healthz: FAILED — HTTP 503 (body: duckdb: IO Error)" \
+    "probe-healthz: FAILED — ingest is stale: newest span 30000s old threshold=21600s"
+do
+    printf '%s\n' "$verdict" >"$TMP/plain.out"
+    reset_log
+    out="$(run_page 200 raise "$TMP/plain.out" 2>"$TMP/err")" || { fail "plain raise — exit $?"; cat "$TMP/err"; }
+    python3 - "$(create_payload)" <<'PY'
+import json, sys
+payload = json.loads(sys.argv[1])
+bad = []
+if (payload.get("title") or "") != "cotel prod /healthz is red [cotel-health-probe]":
+    bad.append("title=" + str(payload.get("title")))
+if not (payload.get("description") or "").startswith("Production cotel /healthz probe is red."):
+    bad.append("lead=" + (payload.get("description") or "")[:80])
+if bad:
+    raise SystemExit("; ".join(bad))
+PY
+    pass "a plain red keeps the /healthz title and lead — ${verdict:0:40}"
+done
+
+# 18. An explicit subject still wins over the classifier. The edge half passes
+# one, and a snapshot phrase appearing in its probe output must not rename it.
+write_fixture <<'JSON'
+[]
+JSON
+reset_log
+printf '%s\n' '{"id":"edge-id","identifier":"ALT-E","title":"cotel public ingest at otlp.aignite.pl is red [cotel-ingest-edge]"}' >"$TMP/create.json"
+out="$(
+    export PC_ORIGIN_ID=cotel-ingest-edge
+    export PC_ALERT_SUBJECT="public ingest at otlp.aignite.pl"
+    export PC_ALERT_LEAD="cotel answers on the LAN, but its public ingest path is not accepting spans."
+    run_page 200 raise "$SNAP_FILE"
+)"
+case "$out" in
+    "page-cotel-health: opened ALT-E edge-id") pass "explicit subject creates on a snapshot verdict" ;;
+    *) fail "explicit subject creates on a snapshot verdict — output: $out" ;;
+esac
+python3 - "$(create_payload)" <<'PY'
+import json, sys
+payload = json.loads(sys.argv[1])
+bad = []
+if (payload.get("title") or "") != "cotel public ingest at otlp.aignite.pl is red [cotel-ingest-edge]":
+    bad.append("title=" + str(payload.get("title")))
+description = payload.get("description") or ""
+if not description.startswith("cotel answers on the LAN, but its public ingest path is not accepting spans."):
+    bad.append("lead=" + description[:120])
+if "database snapshot" in (payload.get("title") or ""):
+    bad.append("the classifier overrode the explicit subject")
+if bad:
+    raise SystemExit("; ".join(bad))
+PY
+pass "an explicit subject and lead beat the verdict classifier"
+
 echo
 echo "passed=$PASS failed=$FAIL"
 if [ "$FAIL" -ne 0 ]; then

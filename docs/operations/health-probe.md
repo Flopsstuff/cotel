@@ -104,6 +104,11 @@ where snapshots are expected, and turns every "cannot assert" into red.
 Exit **6** and not 5 because `~/ops/cotel-healthz.sh` already spends 5 on "the
 LAN half is green and the public ingest half is not".
 
+This verdict pages under the LAN half's marker, but not in its words: the alert
+is titled `cotel prod database snapshot is red` and leads with "the application
+is alive; its backup is not". See [the two halves are classified
+apart](#the-two-halves-are-classified-apart-and-page-apart).
+
 Two vantage points this must not be turned on for: anything reaching cotel
 through `cotel.aignite.pl`, where Cloudflare Access answers instead of the
 application (the default `auto` degrades quietly there, `require` would page on
@@ -171,6 +176,24 @@ different people doing different things, so they never share an alert:
   that the application is alive and its public ingest path is not, and tell the
   reader to look at the tunnel and DNS rather than restart the container. The
   pager takes those from `PC_ALERT_SUBJECT` and `PC_ALERT_LEAD`.
+
+The LAN half needs the same split **inside** its one marker, because it reddens
+on two unrelated things: a `/healthz` that does not answer, and a `/healthz`
+that answers while the backup has stopped. So when the caller passes no
+`PC_ALERT_SUBJECT`, the pager classifies the subject from the probe verdict:
+
+| Verdict | Title | Lead says |
+|---|---|---|
+| `no current database snapshot`, or `snapshots are required …` | `cotel prod database snapshot is red [cotel-health-probe]` | the application is alive, the backup is not; read the `snapshot` object in `/api/v1/health` and the worker's logs; do **not** restart cotel |
+| anything else | `cotel prod /healthz is red [cotel-health-probe]` | the `/healthz` probe is red |
+
+An explicit `PC_ALERT_SUBJECT`/`PC_ALERT_LEAD` always wins over the
+classification — that is how the edge half keeps its own words.
+
+**The marker stays out of it.** Both subjects share one alert slot, so two red
+ticks of this half — in either order, snapshot then `/healthz` or the reverse —
+still dedup into one ticket. Were the subject part of the dedup key, one
+watcher's consecutive reds would mint an alert each.
 
 One asymmetry on purpose: **while the LAN half is red, the edge half does not
 page.** A dead process makes the public path unreachable as a consequence, and a
@@ -483,13 +506,16 @@ rather than reporting an alert nobody was assigned.
 | `PC_CALL_ID` | `GITHUB_RUN_ID`, then `manual` | Unique half of the recovery idempotency key. A caller with no run id should pass a coarse time bucket; the Pi timer sends `pi-<epoch/21600>` |
 | `PC_SOURCE_LINE` | names Actions | First paragraph of a new alert: who opened it. Override it if you are not the workflow |
 | `PC_REPROBE_HINT` | names an Actions dispatch | How the woken agent re-probes. The Pi timer replaces it with `~/ops/cotel-healthz.sh --probe-only` |
-| `PC_ALERT_SUBJECT` | `prod /healthz` | What is red, in the title and in every wake reason. The edge half sets `public ingest at <url>` |
-| `PC_ALERT_LEAD` | names the `/healthz` probe | First line of a new alert's description. The edge half says the application is alive and the public path is not |
+| `PC_ALERT_SUBJECT` | classified from the verdict: `prod database snapshot` on a snapshot failure, else `prod /healthz` | What is red, in the title and in every wake reason. The edge half sets `public ingest at <url>` |
+| `PC_ALERT_LEAD` | classified the same way | First line of a new alert's description. The edge half says the application is alive and the public path is not |
 
 The last two exist because the dedup marker is machine-facing. Without its own
 subject, a second watcher mints an alert whose title and wake reason claim
 production `/healthz` is red — pointing the reader at the wrong half of the
-system.
+system. The same wrong title came out of the LAN half's own snapshot verdict,
+which is why those two defaults are derived from the verdict rather than fixed;
+see [the two halves are classified
+apart](#the-two-halves-are-classified-apart-and-page-apart).
 
 ### The woken agent re-probes, and the alert tells it to
 
