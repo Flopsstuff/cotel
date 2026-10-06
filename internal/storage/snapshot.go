@@ -89,6 +89,12 @@ func (db *DB) RunSnapshotWorker(cfg SnapshotConfig, interval time.Duration) {
 		log.Printf("snapshots disabled: no snapshot directory configured")
 		return
 	}
+	// A non-positive interval would make every cycle due the moment the last
+	// one finished, which is a busy loop on the connection ingest uses.
+	if interval <= 0 {
+		log.Printf("warning: ignoring snapshot interval %s, using %s", interval, DefaultSnapshotInterval)
+		interval = DefaultSnapshotInterval
+	}
 	log.Printf("snapshot worker: directory %s, interval %s, keeping %d", cfg.Dir, interval, cfg.Keep)
 
 	consecutiveFailures := 0

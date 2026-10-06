@@ -117,6 +117,14 @@ A row count that does not match the manifest fails the import with the table and
 both numbers named. Nothing is written to the live database or to the snapshot at
 any point.
 
+An import that fails partway leaves a half-populated file behind, and the
+refusal above means retrying into it fails too. Throw the probe volume away and
+make a new one rather than trying to clean it up:
+
+```bash
+docker volume rm cotel-data-restore-probe && docker volume create cotel-data-restore-probe
+```
+
 **Step 3 — verify with the same binary that will serve it.**
 
 ```bash
