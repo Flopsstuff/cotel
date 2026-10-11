@@ -227,11 +227,23 @@ them on its own. Worse, the live one is now the compose default, so the other tw
 stop appearing in any deploy path and quietly become unexplained disk. The names
 below are from the 2026-10-04 production recovery; the roles generalise.
 
+`cotel-snapshots` is listed with them because it appears in the same `docker volume
+ls` and is the one volume here that a cleanup must not touch. The recovery does not
+create it and does not depend on it, but anyone arriving to delete leftovers meets
+it at the same moment.
+
 | Volume | Role | Size | Delete when |
 |---|---|---|---|
 | `cotel-data-repaired-20261004` | live production, mounted at `/data`, the compose default | 146 MB | never, it is prod |
+| `cotel-snapshots` | the timed Parquet snapshots written by the running service, the actual backup | bounded by `COTEL_SNAPSHOT_KEEP` | never; it is the only restore point here |
 | `cotel_cotel-data` | the damaged original, untouched: the only artifact that reproduces the `abort()` | 147 MB | upstream [duckdb#25360](https://github.com/duckdb/duckdb/issues/25360) is resolved *and* cotel no longer links a DuckDB that can hit it |
 | `cotel-data-backup-20261004` | byte-identical copy of the damaged original, from step 2 | 147 MB | immediately, see below |
+
+Delete by name, never with `docker volume prune`. Prune takes every volume no
+container is using, and both of this table's "never delete" rows qualify at some
+point: with the deploy up it removes the forensic original along with the step-2
+copy, destroying the one artifact that cannot be regenerated; with the deploy down
+nothing is mounted, so it also takes the snapshots (the backups) with it.
 
 Disk is not what forces any of this: the host had 94 GB free. The reason to decide
 now is that in six months nobody will remember which of the two leftovers is safe
@@ -267,6 +279,32 @@ Its real job ends the moment step 6 passes: until then it is what lets you rebui
 the probe copy without ever mounting the original. Deleting it after the promotion
 in step 7 is the last step of the recovery, not a later cleanup.
 
+That is the instruction, not a description of the host. The deletion is one write on
+a box whose read-write access may not belong to whoever ran the recovery, so it can
+sit undone for as long as that takes, and this page cannot tell you whether it did.
+If a `…-backup-…` volume is still listed, do not infer that it is a second, newer
+artifact and do not infer that it is safe. Classify it, which takes one command:
+
+```bash
+for v in $(docker volume ls -q | grep '^cotel'); do
+  printf '%s ' "$v"
+  docker run --rm -v "$v":/data:ro alpine \
+    sh -c 'sha256sum /data/cotel.duckdb 2>/dev/null || echo "no database file"'
+done
+```
+
+Read the output in this order. The volume the compose file mounts at `/data` is
+production: take that from the compose file, never from a name, and leave it alone;
+its hash moves on every checkpoint, so it will match nothing. A volume with no
+`cotel.duckdb` at all is the snapshots volume, and that one is the backup. Of what
+remains, any volume sharing a hash with another is a copy of the damaged original:
+it does not open, and restoring it reproduces the outage. A leftover that matches
+nothing and is not prod is unexplained, so find out what wrote it before deleting it.
+
+On 2026-10-11 that command printed `7eb82bbe…` twice, for `cotel_cotel-data` and
+`cotel-data-backup-20261004`, one unique hash for the live volume, and `no database
+file` for `cotel-snapshots`.
+
 ### The damaged original has two separate lifetimes
 
 As a **data fallback** it expires on its own. Its newest span was 2026-09-27 and raw
@@ -288,8 +326,8 @@ re-examine at both of these moments rather than on a calendar:
 
 ### The leftovers are not the backup
 
-Three volumes look like redundancy and are not. Two of them are the same damaged
-file and the third is production itself. Do not read the table above as a backup
-policy: the recovery point comes from the timed Parquet snapshots in a separate
-volume ([Database Snapshots and Restore](./duckdb-snapshots)), and deleting
-these leftovers does not touch it.
+The three volumes a recovery leaves look like redundancy and are not. Two of them
+are the same damaged file and the third is production itself. Do not read the table
+above as a backup policy: the recovery point comes from the timed Parquet snapshots
+in a separate volume ([Database Snapshots and Restore](./duckdb-snapshots)), and
+deleting the leftovers does not touch it, provided you delete them by name.
