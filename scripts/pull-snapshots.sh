@@ -123,9 +123,10 @@ trap 'rm -rf "$TMP"' EXIT
 # --- the source -------------------------------------------------------------
 
 ssh_remote() { # $1 remote command string
-    # -n is load-bearing, not hygiene: without it ssh reads the caller's stdin,
-    # and the tick's stdin is the list of instants still to pull — one pull
-    # would swallow the rest of the list and the tick would report success.
+    # -n is load-bearing, not hygiene: without it ssh reads the caller's stdin.
+    # The tick's loop reads its work list on fd 3 for the same reason, so either
+    # guard alone is enough — both are kept because the failure they prevent is
+    # a tick that pulls one snapshot, swallows the rest of the list and exits 0.
     ssh -n \
         -o BatchMode=yes \
         -o ConnectTimeout="$SSH_TIMEOUT" \
