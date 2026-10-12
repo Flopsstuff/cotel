@@ -1,0 +1,78 @@
+# One-shot timing for multi-arch release options (FLO-1043).
+# Does not push images. Safe to run on a PR; remove after the decision lands.
+name: Measure arm64 image build
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/measure-arm64-image.yml"
+      - "Dockerfile"
+      - "go.mod"
+      - "go.sum"
+      - "cmd/**"
+      - "internal/**"
+      - "frontend/**"
+      - "scripts/entrypoint.sh"
+  workflow_dispatch:
+
+jobs:
+  qemu-arm64:
+    name: QEMU arm64 on ubuntu-latest
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Time arm64 build under QEMU
+        run: |
+          set -euo pipefail
+          START=$(date +%s)
+          echo "measure-arm64: qemu start $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          docker buildx build \
+            --platform linux/arm64 \
+            --progress=plain \
+            --load \
+            -t cotel:measure-qemu-arm64 \
+            .
+          END=$(date +%s)
+          ELAPSED=$((END - START))
+          echo "measure-arm64: qemu end $(date -u +%Y-%m-%dT%H:%M:%SZ) elapsed=${ELAPSED}s"
+          echo "elapsed_seconds=${ELAPSED}" >> "$GITHUB_STEP_SUMMARY"
+          echo "## QEMU arm64 on ubuntu-latest" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "- elapsed: **${ELAPSED}s** ($((ELAPSED / 60))m $((ELAPSED % 60))s)" >> "$GITHUB_STEP_SUMMARY"
+
+  native-arm64:
+    name: Native arm64 on ubuntu-24.04-arm
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Time native arm64 build
+        run: |
+          set -euo pipefail
+          START=$(date +%s)
+          echo "measure-arm64: native start $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          docker buildx build \
+            --platform linux/arm64 \
+            --progress=plain \
+            --load \
+            -t cotel:measure-native-arm64 \
+            .
+          END=$(date +%s)
+          ELAPSED=$((END - START))
+          echo "measure-arm64: native end $(date -u +%Y-%m-%dT%H:%M:%SZ) elapsed=${ELAPSED}s"
+          echo "elapsed_seconds=${ELAPSED}" >> "$GITHUB_STEP_SUMMARY"
+          echo "## Native arm64 on ubuntu-24.04-arm" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "- elapsed: **${ELAPSED}s** ($((ELAPSED / 60))m $((ELAPSED % 60))s)" >> "$GITHUB_STEP_SUMMARY"
