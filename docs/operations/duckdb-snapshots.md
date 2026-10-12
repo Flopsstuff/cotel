@@ -242,7 +242,10 @@ of the credentials.
 - **Host loss.** Snapshots land on the same disk as production. They insure
   against file-level corruption, a bad migration and accidental deletion - the
   failures cotel has actually had - and not against the disk or the machine
-  going away. An off-host copy is a separate decision.
+  going away. The off-host copy is decided -
+  [ADR-0024](../decisions/0024-off-host-snapshot-copy-pi-pull): an hourly pull
+  to the Pi over the existing LAN ssh path, with premises loss accepted as
+  uncovered. Until that pull is running, this bullet is the whole story.
 - **`docker volume prune`.** The snapshots volume is only "in use" while the
   container exists, so a prune on a stopped deploy takes the backups with it.
   This is the one new way the volume layout can bite; no code can prevent it.
