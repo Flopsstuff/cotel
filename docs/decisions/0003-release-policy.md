@@ -57,7 +57,7 @@ The published image must be pullable on both amd64 hosts and arm64 hosts (Apple 
 - `latest` (and each version tag) is a multi-arch manifest: `docker pull` on arm64 no longer requires a local `docker compose build` before `cotel --db-import`.
 - CHANGELOG must be kept up-to-date by the developer; the release workflow will produce an empty section if it isn't.
 - Branch protection on `main` would block the release workflow's push-back commit. If protection is added later, the workflow token must be granted bypass or a deploy key used instead.
-- QEMU-emulated arm64 on `ubuntu-latest` was measured and rejected for the release path: native `ubuntu-24.04-arm` finished the same Dockerfile in ~47s, while the QEMU job was still building well past that. Prefer native runners; do not add `platforms: linux/amd64,linux/arm64` on a single amd64 runner.
+- QEMU-emulated arm64 on `ubuntu-latest` was measured and rejected for the release path: native `ubuntu-24.04-arm` finished the same Dockerfile in **47s**, while the QEMU build step was still running at **~11 minutes** when cancelled. Prefer native runners; do not add `platforms: linux/amd64,linux/arm64` on a single amd64 runner.
 
 ## Decision lenses applied
 
