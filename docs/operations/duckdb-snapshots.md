@@ -150,6 +150,14 @@ needs nothing but the image already on the host: no DuckDB CLI, no version
 matching by hand (which is the step of the recovery procedure most able to
 destroy a file).
 
+Published releases push a multi-arch image (`linux/amd64` and `linux/arm64`) —
+see [ADR-0003](../decisions/0003-release-policy). On an arm64 host (Pi, Apple
+Silicon) `docker pull ghcr.io/flopsstuff/cotel:latest` is enough; you do not
+need `docker compose build` just to get a binary that can import. If pull still
+reports `no matching manifest for linux/arm64`, you are on a release older than
+that change — build once with `docker compose build` and proceed with the local
+tag.
+
 Two rules the flag enforces rather than documents: the target database file must
 be **empty or absent** (the snapshot's `schema.sql` issues plain `CREATE TABLE`,
 so importing over populated tables would fail halfway), and the snapshot must
