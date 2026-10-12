@@ -229,15 +229,125 @@ of every agent's token. Treat the snapshots volume exactly like the data volume:
 it is not a file to hand around, and an off-host copy of it is an off-host copy
 of the credentials.
 
+## The off-host mirror
+
+Snapshots land on the same disk as production, so a second copy lives on
+another machine: the Pi pulls the complete snapshots it does not have yet and
+keeps them. The decision, the transport it was chosen on and the risk that is
+knowingly *not* covered are
+[ADR-0024](../decisions/0024-off-host-snapshot-copy-pi-pull).
+
+```bash
+scripts/pull-snapshots.sh              # one tick: pull what is missing, prune
+scripts/pull-snapshots.sh --status     # is the mirror current?
+scripts/pull-snapshots.sh --dry-run    # what a tick would do; writes nothing
+```
+
+The bytes come out through a throwaway `--rm` container with the volume mounted
+`:ro`, because a Docker named volume on macOS has no host-side path for `rsync`
+to read - it is inside Docker Desktop's VM. Production is never touched.
+
+### Where it lives, and why there
+
+`SNAPSHOT_MIRROR_DIR`, default `$HOME/cotel-snapshots`, mode 700. Deliberately
+**not** under `~/projects`: that checkout is shared, and a copy inside a
+repository is a copy that can be committed. Deliberately **not** under
+`~/ops/reports/`, which is swept on a 31-day retention rule that has nothing to
+do with this data. The schedule itself is a user systemd timer in the owner's
+`~/ops` tree, which materializes the script from `main` at each tick - the same
+arrangement the health probe's schedule uses, and for the same reason.
+
+The mirror carries the same secrets as the data volume: `users.token` is
+plaintext by design, so every snapshot in it holds a copy of every agent's
+ingest token. Treat the directory like the database itself - mode 700, never
+inside a repository, not a thing to hand around.
+
+### Reading `--status`
+
+This is what answers "is the mirror current" without trusting that the timer
+ran:
+
+```
+pull-snapshots: status
+  mirror       /home/flop/cotel-snapshots — 25 complete snapshots, 118M on disk, keep 56
+  local newest 2026-10-12T17-39-54Z (age 1h37m)
+  source       robmini:cotel-snapshots — newest 2026-10-12T17-39-54Z (age 1h37m), 25 complete
+  lag          0s — the mirror holds the newest source snapshot
+  to pull      0 source snapshot(s) not here yet
+```
+
+`lag` is the gap between the newest snapshot here and the newest one at the
+source. At the shipped `6h` interval and an hourly tick, a lag under an hour is
+a mirror that is working; a lag that keeps growing means the tick is no longer
+running, and nothing else will tell you that - a timer that was never installed
+or was disabled raises no alert.
+
+### Exit codes
+
+A tick's non-zero exit is what the `~/ops` unit turns into `~/ops/ALERT` plus a
+desktop notification, so the codes are meant to be read:
+
+| | |
+|---|---|
+| `0` | Tick completed, including "nothing to do" |
+| `1` | Source unreachable - ssh or `docker run` failed |
+| `2` | The remote listing was empty, or was not snapshot directories at all |
+| `3` | A pulled snapshot failed verification; the partial was deleted and nothing landed |
+| `4` | The mirror directory is missing and uncreatable, or not writable |
+| `64` | Invalid invocation or configuration - not a tick outcome |
+
+Every pulled directory is verified before it lands: per-file `sha256` against
+the same bytes read back out of the source volume, plus `snapshot.json` parsing
+and agreeing with the instant it was pulled under. Extraction goes into
+`.partial-<instant>` and is renamed to `<instant>` only after that passes, so an
+interrupted pull cannot leave a directory a later tick reads as present.
+
+### The mirror does not mirror deletions
+
+Local pruning is `SNAPSHOT_MIRROR_KEEP` newest complete snapshots, never below
+one. A local snapshot is **never** deleted because the source stopped having it.
+This is the single reason the implementation is not `rsync --delete`:
+propagating a source deletion would faithfully reproduce `docker volume prune`
+on a stopped deploy - the accident the next section names as the new one - into
+the copy that exists to survive it. A test holds the rule, and it must not be
+"simplified" later.
+
+### Restoring from the mirror
+
+The mirror's directories *are* the snapshot directories, named after their
+instants, so this is [the restore procedure above](#restoring-from-a-snapshot)
+with the mirror mounted where the volume would be:
+
+```bash
+docker run --rm --entrypoint /usr/local/bin/cotel \
+  -v "$HOME/cotel-snapshots:/snapshots:ro" \
+  -v cotel-data-restore-probe:/data \
+  ghcr.io/flopsstuff/cotel:latest --db-import /snapshots/2026-10-12T17-39-54Z
+```
+
+`/snapshots` is not a convention here but a requirement: `load.sql` holds
+absolute `/snapshots/<instant>/...` paths, which is also why each mirrored
+directory keeps the source's name exactly.
+
+**That command does not run on the Pi.** `--db-import` needs a cotel binary for
+the host's platform and the published image is amd64 only, so the proof
+available on the Pi is byte-identity - `sha256` per file and the manifest, both
+checked on every pull - rather than a restore. Restore from the mirror wherever
+an amd64 cotel binary exists, by copying the directory there; restorability of
+the artifact itself is established at the source, with the drill in
+[ADR-0023](../decisions/0023-production-database-snapshots).
+
 ## What snapshots do not cover
 
 - **Host loss.** Snapshots land on the same disk as production. They insure
   against file-level corruption, a bad migration and accidental deletion - the
   failures cotel has actually had - and not against the disk or the machine
   going away. The off-host copy is decided -
-  [ADR-0024](../decisions/0024-off-host-snapshot-copy-pi-pull): an hourly pull
-  to the Pi over the existing LAN ssh path, with premises loss accepted as
-  uncovered. Until that pull is running, this bullet is the whole story.
+  [ADR-0024](../decisions/0024-off-host-snapshot-copy-pi-pull) - and the pull
+  that implements it is [the off-host mirror](#the-off-host-mirror): an hourly
+  pull to the Pi over the existing LAN ssh path, with premises loss accepted as
+  uncovered because it is another machine in the same building. A mirror is only
+  as current as its last tick, so read `--status` instead of assuming.
 - **`docker volume prune`.** The snapshots volume is only "in use" while the
   container exists, so a prune on a stopped deploy takes the backups with it.
   This is the one new way the volume layout can bite; no code can prevent it.
