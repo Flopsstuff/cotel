@@ -1,7 +1,13 @@
 services:
   cotel:
     build: .
-    image: ghcr.io/flopsstuff/cotel:latest
+    # Deliberately NOT ghcr.io/flopsstuff/cotel:latest. With `build:` present,
+    # `image:` is the name compose tags the local build with, so reusing the
+    # published name would leave built-here and pulled-from-registry
+    # indistinguishable on the host, and a stray `docker pull` of that name
+    # would then replace this service's binary at the next restart with content
+    # no deploy step validated.
+    image: cotel-local:latest
     ports:
       - "4318:4318"   # OTLP/HTTP ingest
       - "8080:8080"   # Dashboard

@@ -150,13 +150,20 @@ needs nothing but the image already on the host: no DuckDB CLI, no version
 matching by hand (which is the step of the recovery procedure most able to
 destroy a file).
 
-Published releases push a multi-arch image (`linux/amd64` and `linux/arm64`) —
-see [ADR-0003](../decisions/0003-release-policy). On an arm64 host (Pi, Apple
-Silicon) `docker pull ghcr.io/flopsstuff/cotel:latest` is enough; you do not
-need `docker compose build` just to get a binary that can import. If pull still
+`ghcr.io/flopsstuff/cotel:latest` is the registry's published release and a real
+multi-arch index (`linux/amd64` + `linux/arm64`) — see
+[ADR-0003](../decisions/0003-release-policy) — so it is safe to `docker run` on
+an arm64 host (Pi, Apple Silicon) straight from a `docker pull`; you do not need
+`docker compose build` just to get a binary that can import. If pull still
 reports `no matching manifest for linux/arm64`, you are on a release older than
-that change — build once with `docker compose build` and proceed with the local
-tag.
+that change — build once with `docker compose build`, which tags its result
+`cotel-local:latest`, and use that name in the commands below.
+
+Those two names are never the same artifact: `cotel-local:latest` is what this
+host built, `ghcr.io/flopsstuff/cotel:latest` is what the registry published,
+and the production deploy runs the former. For a restore either will do — the
+import only needs a cotel binary for this platform — but when it matters which
+one you asked, the name now tells you.
 
 Two rules the flag enforces rather than documents: the target database file must
 be **empty or absent** (the snapshot's `schema.sql` issues plain `CREATE TABLE`,
@@ -199,15 +206,20 @@ make a new one rather than trying to clean it up:
 docker volume rm cotel-data-restore-probe && docker volume create cotel-data-restore-probe
 ```
 
-**Step 3 - verify with the same binary that will serve it.**
+**Step 3 - verify with the same binary that will serve it.** Which name that is
+depends on the host: `cotel-local:latest` where the image is built locally, as
+production does, and `ghcr.io/flopsstuff/cotel:latest` where it is pulled. The
+distinction matters at this step and not at step 2 - what this step catches is a
+file the *serving* binary cannot open, so asking any other binary answers a
+different question.
 
 ```bash
 docker run --rm --entrypoint /usr/local/bin/cotel -v cotel-data-restore-probe:/data \
-  ghcr.io/flopsstuff/cotel:latest --db-query "SELECT count(*) FROM spans"
+  cotel-local:latest --db-query "SELECT count(*) FROM spans"
 docker run --rm --entrypoint /usr/local/bin/cotel -v cotel-data-restore-probe:/data \
-  ghcr.io/flopsstuff/cotel:latest --db-query "SELECT max(start_time) FROM spans"
+  cotel-local:latest --db-query "SELECT max(start_time) FROM spans"
 docker run --rm --entrypoint /usr/local/bin/cotel -v cotel-data-restore-probe:/data \
-  ghcr.io/flopsstuff/cotel:latest --db-query "SELECT count(*) FROM duckdb_indexes()"
+  cotel-local:latest --db-query "SELECT count(*) FROM duckdb_indexes()"
 ```
 
 The secondary indexes are **rebuilt from the data** by the import rather than
@@ -337,12 +349,15 @@ docker run --rm --entrypoint /usr/local/bin/cotel \
 absolute `/snapshots/<instant>/...` paths, which is also why each mirrored
 directory keeps the source's name exactly.
 
-**That command does not run on the Pi.** `--db-import` needs a cotel binary for
-the host's platform and the published image is amd64 only, so the proof
-available on the Pi is byte-identity - `sha256` per file and the manifest, both
-checked on every pull - rather than a restore. Restore from the mirror wherever
-an amd64 cotel binary exists, by copying the directory there; restorability of
-the artifact itself is established at the source, with the drill in
+**That command now runs on the Pi too.** `--db-import` needs a cotel binary for
+the host's platform, and the published image stopped being amd64-only: `docker
+pull ghcr.io/flopsstuff/cotel:latest` on the Pi resolves the `linux/arm64` entry
+of the index and the binary inside it executes natively. What has not changed is
+the proof the mirror itself offers on every tick - byte-identity, `sha256` per
+file plus the manifest - which is what the status line reports; an actual
+restore from the mirror on the Pi is now possible but is not something the pull
+does for you. Restorability of the artifact itself is still established at the
+source, with the drill in
 [ADR-0023](../decisions/0023-production-database-snapshots).
 
 ## What snapshots do not cover
