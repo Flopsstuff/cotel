@@ -83,6 +83,15 @@ docker run --rm --entrypoint /usr/local/bin/cotel -v cotel-data-probe:/data \
 
 `--entrypoint` is not optional here: the image's entrypoint script starts the server and passes extra arguments through, so without it the flag is swallowed and you get a *running cotel* writing to the volume instead of a one-shot query.
 
+**Which image to ask.** `ghcr.io/flopsstuff/cotel:latest` is the registry's published release, and since the release pipeline publishes a multi-arch index (`linux/arm64` + `linux/amd64`, [ADR-0003](../decisions/0003-release-policy)) the command above runs as-is on an arm64 host — a Pi or Apple Silicon — with nothing but a `docker pull`. That is the right image when you want *the released* engine version. It is **not** necessarily the one that wrote the damaged file: the production deploy builds on its host and tags the result `cotel-local:latest`, and `:latest` in the registry moves only when someone cuts a release. On a host that builds its own image, ask `cotel-local:latest` instead, and treat a disagreement between the two answers as the thing to resolve before you touch the file:
+
+```bash
+docker run --rm --entrypoint /usr/local/bin/cotel -v cotel-data-probe:/data \
+  cotel-local:latest --db-query "SELECT version()"
+```
+
+The two names are deliberately distinct so that this question has an answer at all; they used to be the same string, which made "which binary is running here" unanswerable on the production host.
+
 `--db-query` opens the database **read-only**, so it is safe to run against the probe copy. If the file is too damaged to open even read-only, read the pin out of the source tree instead:
 
 ```bash
@@ -150,7 +159,7 @@ SELECT max(start_time), max(ingested_at) FROM spans;          -- newest data sti
 SELECT index_name FROM duckdb_indexes() ORDER BY index_name;  -- all four back
 ```
 
-Then exit the CLI and confirm the file opens with the cotel binary — the round trip is the real test, because a version-mismatched CLI write would show up here and nowhere earlier:
+Then exit the CLI and confirm the file opens with the cotel binary — the round trip is the real test, because a version-mismatched CLI write would show up here and nowhere earlier. Ask the binary that will actually serve the file, which on a host that builds its own image means `cotel-local:latest` (see step 4):
 
 ```bash
 docker run --rm --entrypoint /usr/local/bin/cotel -v cotel-data-probe:/data \

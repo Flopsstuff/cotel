@@ -515,6 +515,15 @@ docker compose up
 CGO_ENABLED=1 go test ./...
 ```
 
+`docker compose build` tags its result **`cotel-local:latest`**, which is not any
+`ghcr.io/flopsstuff/cotel:*` name on purpose: compose builds this image rather
+than pulling it (that is what the deploy does on the production host too), and
+if the local build carried the published name you could no longer tell which of
+the two artifacts a host was running — nor would `docker pull` of the published
+name be safe, since it would quietly replace the running service's binary at the
+next restart. So on any host, `cotel-local:latest` is what was built there and
+`ghcr.io/flopsstuff/cotel:latest` is what the registry published.
+
 The runtime image is ≈ 294 MB. Most of that is the statically linked DuckDB
 engine (it was 213 MB on the DuckDB 1.1.3 driver, which loaded the ICU extension
 from the network at startup instead of bundling it).
