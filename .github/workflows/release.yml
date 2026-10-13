@@ -230,6 +230,9 @@ jobs:
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # This job has no checkout, so gh has no git remote to resolve the
+          # repository from; it does not read GITHUB_REPOSITORY.
+          GH_REPO: ${{ github.repository }}
         run: |
           gh release create "${{ needs.prepare.outputs.tag }}" \
             --title "cotel ${{ needs.prepare.outputs.tag }}" \
