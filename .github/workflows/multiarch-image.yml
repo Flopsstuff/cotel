@@ -24,6 +24,8 @@ env:
 jobs:
   build:
     name: Build ${{ matrix.platform }}
+    # Fork PRs get a read-only GITHUB_TOKEN; packages:write cannot elevate it.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     permissions:
@@ -83,6 +85,7 @@ jobs:
   merge:
     name: Publish multi-arch tag
     needs: build
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     permissions:
       contents: read

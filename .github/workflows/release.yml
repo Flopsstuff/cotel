@@ -28,6 +28,7 @@ jobs:
       tag: ${{ steps.version.outputs.tag }}
       version: ${{ steps.version.outputs.version }}
       image: ${{ steps.image.outputs.name }}
+      revision: ${{ steps.commit.outputs.sha }}
     steps:
       - name: Ensure running on main
         run: |
@@ -106,6 +107,7 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
       - name: Commit and tag
+        id: commit
         run: |
           git add CHANGELOG.md
           git commit -m "chore: release ${{ steps.version.outputs.tag }}"
@@ -113,6 +115,7 @@ jobs:
             -m "Release ${{ steps.version.outputs.tag }}"
           git push origin HEAD:main
           git push origin "${{ steps.version.outputs.tag }}"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -159,7 +162,7 @@ jobs:
           platforms: ${{ matrix.platform }}
           labels: |
             org.opencontainers.image.version=${{ needs.prepare.outputs.version }}
-            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.revision=${{ needs.prepare.outputs.revision }}
           outputs: type=image,name=${{ needs.prepare.outputs.image }},push-by-digest=true,name-canonical=true,push=true
           cache-from: type=gha,scope=${{ matrix.digest_name }}
           cache-to: type=gha,scope=${{ matrix.digest_name }},mode=max
