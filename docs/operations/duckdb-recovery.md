@@ -245,8 +245,8 @@ it at the same moment.
 |---|---|---|---|
 | `cotel-data-repaired-20261004` | live production, mounted at `/data`, the compose default | 146 MB | never, it is prod |
 | `cotel-snapshots` | the timed Parquet snapshots written by the running service, the actual backup | bounded by `COTEL_SNAPSHOT_KEEP` | never; it is the only restore point here |
-| `cotel_cotel-data` | the damaged original, untouched: the only artifact that reproduces the `abort()` | 147 MB | upstream [duckdb#25360](https://github.com/duckdb/duckdb/issues/25360) is resolved *and* cotel no longer links a DuckDB that can hit it |
-| `cotel-data-backup-20261004` | byte-identical copy of the damaged original, from step 2 | 147 MB | immediately, see below |
+| `cotel_cotel-data` | the damaged original, untouched: the only artifact that reproduces the `abort()` | 147 MB | a landed upstream fix *and* a DuckDB in cotel proven not to hit it, see below |
+| `cotel-data-backup-20261004` | byte-identical copy of the damaged original, from step 2 | 147 MB | immediately, see below. For the 2026-10-04 recovery: deleted 2026-10-13, hash-verified against the original first |
 
 Delete by name, never with `docker volume prune`. Prune takes every volume no
 container is using, and both of this table's "never delete" rows qualify at some
@@ -312,7 +312,10 @@ nothing and is not prod is unexplained, so find out what wrote it before deletin
 
 On 2026-10-11 that command printed `7eb82bbe…` twice, for `cotel_cotel-data` and
 `cotel-data-backup-20261004`, one unique hash for the live volume, and `no database
-file` for `cotel-snapshots`.
+file` for `cotel-snapshots`. The step-2 copy was deleted on 2026-10-13 after the
+same two hashes were confirmed a second time, so the 2026-10-04 recovery now leaves
+`cotel-data-repaired-20261004`, `cotel_cotel-data` and `cotel-snapshots`. A
+`…-backup-…` volume appearing after that date is not this one: classify it.
 
 ### The damaged original has two separate lifetimes
 
@@ -323,15 +326,33 @@ spans are purged at `COTEL_RETENTION_RAW_DAYS` (default 30), so from roughly
 As a **bug-repro artifact** it lives as long as the upstream defect. It is the only
 file in existence that aborts DuckDB 1.1.3 inside `duckdb_open_ext`, and it cannot
 be regenerated: the schema change that damaged the index ran once, against data that
-no longer exists. duckdb#25360 is open and had no upstream reply a month after
-filing, so a request for a reproduction is still plausible.
+no longer exists.
 
-Therefore: **hold `cotel_cotel-data` indefinitely**, mounted read-only only, and
-re-examine at both of these moments rather than on a calendar:
+The upstream trigger matches ours closely enough to treat it as the same defect
+rather than a lookalike: `ALTER TABLE` adding a `VARCHAR` column to a long-lived
+indexed table, then a large replace transaction. `internal/storage/schema.sql` does
+exactly that — line 53 adds `spans.user_id VARCHAR`, and line 74 puts an ART index
+on that same added column.
 
-- the upstream issue changes state, or
-- the DuckDB version linked into cotel moves, which is also when the repro becomes
-  the natural acceptance test for the bump.
+Therefore: **hold `cotel_cotel-data` indefinitely**, mounted read-only only. Both
+release conditions have to hold, and each one has a trap:
+
+- **A landed fix upstream, not a closed issue.** duckdb#25360 is not ours — it was
+  filed by an unaffiliated reporter, against a ~19 GB database, and we have never
+  commented on it. A maintainer asked *that reporter* for a minimal reproducer on
+  2026-10-07 and has had no answer; the most likely end state is a close as stale.
+  That would satisfy the words "the issue is resolved" while the defect is still
+  live, so it does not release this volume. Read the closing commit, not the state.
+- **A DuckDB in cotel shown not to hit it.** Today cotel links
+  `duckdb-go/v2 v2.10506.0` (DuckDB 1.5.6) and the crash was on 1.1.3; nobody has
+  demonstrated either way, so this half is currently unevaluable rather than
+  satisfied. Only a reproducer settles it, which is the same reason a version bump
+  is the natural moment to build one.
+
+Never attach this volume, or anything extracted from it, to a public upstream issue:
+it is production telemetry with real user ids, session ids and span attributes. An
+upstream contribution has to be a synthetic reproducer built from the schema above,
+and publishing one is an external-facing decision, not an operational one.
 
 ### The leftovers are not the backup
 
