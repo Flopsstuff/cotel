@@ -29,6 +29,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -52,10 +53,19 @@ const reproSpanDays = 60
 // deep nodes, i.e. the structure the defect damages.
 const reproUsers = 12
 
-// preUserIDSchema is `spans` as it stood at schema version 2: every column the
-// table has today except user_id, with the three ART indexes of that era. The
-// point is to reach the ALTER from a table that was built and filled without
-// the column, which is the state production was in.
+// preUserIDSchema is `spans` as it stood at schema version 2, taken from that
+// era's schema.sql: every column the table has today except user_id, plus
+// duration_ms, and the three ART indexes of that era.
+//
+// Both differences from today's table carry a migration. Starting without
+// user_id is what makes the v2 -> v3 ALTER add a column to a filled, indexed
+// table. Starting *with* duration_ms is what makes the v9 -> v10 ALTER that
+// drops it do anything at all: `DROP COLUMN IF EXISTS` over a column that was
+// never there is a silent no-op, and v10 is the ALTER that ran in production on
+// a long-lived table six weeks before the open aborted, where v2 -> v3 ran the
+// day after the database was created. While the column is present the table
+// also carries the logical/physical column skew of ADR-0013, so the indexes are
+// built over the layout production built them over.
 const preUserIDSchema = `
 CREATE TABLE schema_version (
     version     INTEGER PRIMARY KEY,
@@ -70,6 +80,9 @@ CREATE TABLE spans (
     name            VARCHAR NOT NULL,
     start_time      TIMESTAMPTZ NOT NULL,
     end_time        TIMESTAMPTZ NOT NULL,
+    duration_ms     DOUBLE GENERATED ALWAYS AS (
+                        epoch_ms(end_time) - epoch_ms(start_time)
+                    ),
     service_name    VARCHAR,
     session_id      VARCHAR,
     model           VARCHAR,
@@ -163,6 +176,23 @@ func mustExec(t *testing.T, db *sql.DB, what, query string, args ...any) {
 	t.Logf("%s: ok in %s", what, time.Since(start).Round(time.Millisecond))
 }
 
+// rowQuerier is the one method spansHasColumn needs, so it can be asked of the
+// raw seed connection and of a migrated database alike.
+type rowQuerier interface {
+	QueryRow(query string, args ...any) *sql.Row
+}
+
+func spansHasColumn(t *testing.T, q rowQuerier, col string) bool {
+	t.Helper()
+	var n int
+	if err := q.QueryRow(`
+		SELECT count(*) FROM information_schema.columns
+		WHERE table_name = 'spans' AND column_name = ?`, col).Scan(&n); err != nil {
+		t.Fatalf("read spans columns: %v", err)
+	}
+	return n > 0
+}
+
 func indexNames(t *testing.T, ro *ReadDB) []string {
 	t.Helper()
 	rows, err := ro.Query(`SELECT index_name FROM duckdb_indexes() ORDER BY index_name`)
@@ -206,6 +236,10 @@ func TestARTIndexSurvivesAddedColumnAndBulkReplace(t *testing.T) {
 	t.Logf("engine %s: %d spans over %d days, then %d replace/restart cycles", engine, spans, reproSpanDays, cycles)
 	mustExec(t, seed, "pre-migration schema", preUserIDSchema)
 	mustExec(t, seed, fmt.Sprintf("seed %d spans", spans), seedSpans, now, reproSpanDays, 0, spans)
+	if !spansHasColumn(t, seed, "duration_ms") {
+		t.Fatal("the seeded database has no duration_ms, so it is not pre-v10 and the v10 ALTER " +
+			"under test would pass over it as a silent no-op: restore the column in preUserIDSchema")
+	}
 	mustExec(t, seed, "seed checkpoint", "CHECKPOINT")
 	if err := seed.Close(); err != nil {
 		t.Fatalf("close seed: %v", err)
@@ -213,8 +247,8 @@ func TestARTIndexSurvivesAddedColumnAndBulkReplace(t *testing.T) {
 	requireNoWAL(t, path, "after seeding")
 
 	// Phase 2 — the migration, as cotel performs it on the next start:
-	// schema.sql adds user_id VARCHAR to the filled table, then builds an ART
-	// index on that added column.
+	// schema.sql adds user_id VARCHAR to the filled table, drops duration_ms
+	// off the middle of it, and builds an ART index on the added column.
 	db, err := Open(path)
 	if err != nil {
 		t.Fatalf("REPRODUCED: the open that runs the migration failed: %v", err)
@@ -226,6 +260,11 @@ func TestARTIndexSurvivesAddedColumnAndBulkReplace(t *testing.T) {
 	}()
 	if v, ok := appliedSchemaVersion(db.rw); !ok || v < 10 {
 		t.Fatalf("schema did not migrate: applied version %d (recorded=%v)", v, ok)
+	}
+	// The version row alone does not say v10's ALTER ran — it would be recorded
+	// over a no-op just the same. The column is gone only if it executed.
+	if spansHasColumn(t, db.rw, "duration_ms") {
+		t.Fatal("duration_ms is still declared after the migration: the v10 ALTER did not drop it")
 	}
 	t.Logf("indexes after migration: %v", indexNames(t, db.ReadOnly()))
 
@@ -289,12 +328,14 @@ func TestARTIndexSurvivesAddedColumnAndBulkReplace(t *testing.T) {
 	}
 
 	t.Logf("did not reproduce on %s after %d cycles: every open succeeded, both checkpoints folded "+
-		"on every cycle, all four indexes survived, and indexed probes agreed with unindexed ones",
+		"on every cycle, all four indexes survived, pushed-down equality agreed with the same "+
+		"predicate as an expression, and the primary key's index answered both ways",
 		engine, cycles)
 }
 
 // assertIndexesIntact is the verdict after a restart: the four indexes exist,
-// no row was lost, and the index on the added column still answers correctly.
+// no row was lost, equality on the added column answers correctly, and the
+// primary key's ART index still holds its own entries.
 func assertIndexesIntact(t *testing.T, db *DB, wantSpans int) {
 	t.Helper()
 	want := []string{"idx_spans_name", "idx_spans_session_id", "idx_spans_start_time", "idx_spans_user_id"}
@@ -305,7 +346,8 @@ func assertIndexesIntact(t *testing.T, db *DB, wantSpans int) {
 	if n := countSpans(t, db); n != wantSpans {
 		t.Fatalf("after reopen: %d spans, want %d", n, wantSpans)
 	}
-	assertIndexedProbesAgree(t, db)
+	assertPushdownProbesAgree(t, db)
+	assertPrimaryKeyIndexAnswers(t, db)
 }
 
 func countSpans(t *testing.T, db *DB) int {
@@ -317,36 +359,133 @@ func countSpans(t *testing.T, db *DB) int {
 	return n
 }
 
-// assertIndexedProbesAgree compares an equality on the added column — which the
-// ART index on it can serve — against the same predicate wrapped in an
-// expression, which it cannot. A damaged or mis-addressed index shows up as a
-// disagreement; a wrong count here is this defect's silent form, and neither a
-// checkpoint nor an open reports it.
-func assertIndexedProbesAgree(t *testing.T, db *DB) {
+// assertPushdownProbesAgree compares a bare `user_id = <constant>` on the added
+// column, which the optimizer folds into the scan, against the same predicate
+// wrapped in an expression, which it cannot fold. A wrong count on the first is
+// this defect's silent form — the shape ADR-0013 documents, where the pushed
+// filter is answered against the wrong column offset and matches nothing — and
+// neither a checkpoint nor an open reports it.
+//
+// It is a comparison of two scans, not of an index against a scan: on the
+// engine the tree links, no SELECT plan over `spans` is served by an ART index
+// scan, including an equality on the primary key (measured; see the reproducer
+// section of docs/operations/duckdb-recovery.md). The pair is therefore worth
+// only what the difference between the two plans is worth, so that difference
+// is asserted rather than assumed.
+func assertPushdownProbesAgree(t *testing.T, db *DB) {
 	t.Helper()
 	ro := db.ReadOnly()
 	for u := 0; u < reproUsers; u++ {
 		want := fmt.Sprintf("user-%d", u)
-		var indexed, scanned int
-		if err := ro.QueryRow("SELECT count(*) FROM spans WHERE user_id = ?", want).Scan(&indexed); err != nil {
-			t.Fatalf("indexed probe %s: %v", want, err)
+		bare := fmt.Sprintf("SELECT count(*) FROM spans WHERE user_id = '%s'", want)
+		wrapped := fmt.Sprintf("SELECT count(*) FROM spans WHERE user_id || '' = '%s'", want)
+
+		if u == 0 {
+			// One pair of plans per restart is enough to show the two probes
+			// still take different paths through the scan.
+			filter := fmt.Sprintf("user_id='%s'", want)
+			if plan := queryPlan(t, ro, bare); !strings.Contains(plan, filter) {
+				t.Fatalf("%s is no longer pushed into the scan, so it tests the same path as the "+
+					"control probe and the pair has nothing left to disagree about; plan: %s", bare, plan)
+			}
+			if plan := queryPlan(t, ro, wrapped); strings.Contains(plan, filter) {
+				t.Fatalf("the control probe %s is now pushed down as a bare equality; plan: %s", wrapped, plan)
+			}
 		}
-		if err := ro.QueryRow("SELECT count(*) FROM spans WHERE user_id || '' = ?", want).Scan(&scanned); err != nil {
-			t.Fatalf("unindexed probe %s: %v", want, err)
+
+		var pushed, scanned int
+		if err := ro.QueryRow(bare).Scan(&pushed); err != nil {
+			t.Fatalf("pushdown probe %s: %v", want, err)
 		}
-		if indexed != scanned {
-			t.Fatalf("REPRODUCED: user_id = %q matched %d rows through the index, %d by scan", want, indexed, scanned)
+		if err := ro.QueryRow(wrapped).Scan(&scanned); err != nil {
+			t.Fatalf("control probe %s: %v", want, err)
 		}
-		if indexed == 0 {
+		if pushed != scanned {
+			t.Fatalf("REPRODUCED: user_id = %q matched %d rows as a pushed-down filter, %d as an expression", want, pushed, scanned)
+		}
+		if pushed == 0 {
 			t.Fatalf("probe %s matched nothing by either path; the fixture built no entries for it", want)
 		}
 	}
 }
 
+// assertPrimaryKeyIndexAnswers exercises the one path on this engine that
+// provably traverses an ART index: unique-constraint enforcement. An index that
+// has lost entries accepts a span_id that is already stored; one that has gained
+// phantom entries rejects a span_id that is not. Neither shows up in a count, a
+// checkpoint or an open.
+func assertPrimaryKeyIndexAnswers(t *testing.T, db *DB) {
+	t.Helper()
+	var stored string
+	if err := db.ReadOnly().QueryRow("SELECT span_id FROM spans LIMIT 1").Scan(&stored); err != nil {
+		t.Fatalf("read a stored span_id: %v", err)
+	}
+	const insert = `INSERT INTO spans (trace_id, span_id, name, start_time, end_time)
+		VALUES ('pk-probe', ?, 'pk.probe', now(), now())`
+
+	_, err := db.rw.Exec(insert, stored)
+	if err == nil {
+		t.Fatalf("REPRODUCED: re-inserting the stored span_id %q was accepted; the primary key's "+
+			"ART index no longer holds its own entries", stored)
+	}
+	if !strings.Contains(err.Error(), "Constraint Error") {
+		t.Fatalf("re-inserting span_id %q failed for some other reason, so the probe proved nothing: %v", stored, err)
+	}
+
+	fresh := "pk-probe-" + strconv.FormatInt(time.Now().UnixNano(), 10)
+	if _, err := db.rw.Exec(insert, fresh); err != nil {
+		t.Fatalf("REPRODUCED: inserting the unused span_id %q was rejected: %v", fresh, err)
+	}
+	res, err := db.rw.Exec("DELETE FROM spans WHERE span_id = ?", fresh)
+	if err != nil {
+		t.Fatalf("delete probe row %q: %v", fresh, err)
+	}
+	if n, err := res.RowsAffected(); err != nil || n != 1 {
+		t.Fatalf("deleting probe row %q removed %d rows (err %v), want 1", fresh, n, err)
+	}
+}
+
+// queryPlan returns the physical plan with its box drawing and whitespace
+// removed, so a predicate that the renderer wrapped across lines is still one
+// substring.
+func queryPlan(t *testing.T, ro *ReadDB, query string) string {
+	t.Helper()
+	rows, err := ro.Query("EXPLAIN " + query)
+	if err != nil {
+		t.Fatalf("explain %s: %v", query, err)
+	}
+	defer rows.Close()
+	var plan strings.Builder
+	for rows.Next() {
+		var kind, body string
+		if err := rows.Scan(&kind, &body); err != nil {
+			t.Fatalf("scan plan: %v", err)
+		}
+		plan.WriteString(body)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate plan: %v", err)
+	}
+	return strings.Map(func(r rune) rune {
+		if r == ' ' || r == '\n' || (r >= 0x2500 && r <= 0x257f) {
+			return -1
+		}
+		return r
+	}, plan.String())
+}
+
+// requireNoWAL fails when a fold left log entries behind. An empty file is
+// allowed: an engine that truncates the WAL rather than unlinking it has folded
+// everything, and failing on the inode alone would report the next such engine
+// as a reproduction of this defect on the very assertion that guards the fold.
 func requireNoWAL(t *testing.T, path, when string) {
 	t.Helper()
 	info, err := os.Stat(path + ".wal")
 	if err == nil {
+		if info.Size() == 0 {
+			t.Logf("%s: %s is present but empty, so the fold is complete", when, path+".wal")
+			return
+		}
 		t.Fatalf("%s: %s is still present (%d bytes); the checkpoint did not fold", when, path+".wal", info.Size())
 	}
 	if !os.IsNotExist(err) {
