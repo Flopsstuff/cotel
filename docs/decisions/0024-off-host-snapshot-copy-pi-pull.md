@@ -1,7 +1,7 @@
 # ADR 0024 - The off-host copy is a Pi-side pull, and it cannot be an rsync of the volume
 
 **Date:** 2026-10-12
-**Status:** Accepted
+**Status:** Accepted, except the schedule - see **Not scheduled** under Decision
 **Deciders:** Prospero (CEO, risk model and mechanism), Daedalus (CTO, transport and implementation)
 
 ---
@@ -96,12 +96,20 @@ container of the image cotel's own runtime is built on, which is already on that
 
 **A Pi-side pull on a systemd timer, hourly, using option 3's transport.**
 
+> **Not scheduled (2026-10-13).** The timer was never installed. It would have had to
+> live in the owner's own `~/ops` tree rather than in a company repository, that write
+> is sanctioned per case, and the request was declined. So nothing on this machine runs
+> the pull on its own: the mirror is refreshed only when someone runs
+> `scripts/pull-snapshots.sh`, and its freshness is unknown until `--status` is read.
+> Everything else below shipped and is live - the transport, the mirror, the
+> verification and the pruning rule.
+
 - **The script lives in this repo** (`scripts/pull-snapshots.sh`), and the timer in
   `~/ops` materializes it from `origin/main` at each tick. That is
   [ADR-0022](./0022-health-probe-scheduler-outside-github)'s pattern, unchanged and for
   the same reasons: the code path stays reviewed here and reaches the schedule with no
   sync step.
-- **Hourly, not every 6 h.** A tick that finds nothing new costs one ssh round trip, so
+- **Hourly was the intended cadence**, not every 6 h. A tick that finds nothing new costs one ssh round trip, so
   the cadence is a free variable; matching it to the snapshot interval would put the
   mirror's worst case at nearly two intervals behind for no saving.
 - **The mirror lives at `~/cotel-snapshots/`, mode 700** - outside `~/projects`,
@@ -139,14 +147,15 @@ container of the image cotel's own runtime is built on, which is already on that
   itself is established at the source, with the drill in ADR-0023. Publishing an arm64
   manifest would make the mirror independently verifiable on the Pi; that is a
   packaging decision with its own ticket, not a prerequisite for having the copy.
-- **One more script and timer in `~/ops` that this company maintains.** Named as the
-  honest cost when the option was chosen, and accepted. It is also a write into the
-  owner's own maintenance tree rather than a company repo, which is sanctioned per
-  case - the same gate `cotel-healthz.timer` went through.
-- **A failing pull is loud; an absent timer is not.** The unit's non-zero exit reaches
-  `~/ops/ALERT` and a desktop notification through the `OnFailure=` path the other ops
-  units already use, so a pull that breaks is announced. A timer that was never
-  installed, or was disabled, raises nothing - the same residual
+- **No footprint in `~/ops` after all.** The extra script and timer this company would
+  have maintained there was named as the honest cost of the option and accepted by the
+  CEO, then declined at the gate that actually owns it: `~/ops` is the owner's
+  maintenance tree, not a company repo, and that write is sanctioned per case - the same
+  gate `cotel-healthz.timer` passed and this one did not.
+- **Nothing is loud, because there is no unit.** The design put a failing pull on the
+  `OnFailure=` path the other ops units use, so a broken tick would have announced
+  itself; with the timer declined, that path does not exist and the only signal is
+  `--status` read by a human. The weaker half of this was already the accepted residual
   [ADR-0022](./0022-health-probe-scheduler-outside-github) accepted for the probe's own
   schedule, and the reason the mirror's newest instant is worth reading in the runbook
   rather than assumed.

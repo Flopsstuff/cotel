@@ -253,8 +253,9 @@ of the credentials.
 
 Snapshots land on the same disk as production, so a second copy lives on
 another machine: the Pi pulls the complete snapshots it does not have yet and
-keeps them. The decision, the transport it was chosen on and the risk that is
-knowingly *not* covered are
+keeps them. **Nothing schedules that pull**, so the mirror is exactly as fresh
+as the last time someone ran the command below. The decision, the transport it
+was chosen on and the risk that is knowingly *not* covered are
 [ADR-0024](../decisions/0024-off-host-snapshot-copy-pi-pull).
 
 ```bash
@@ -273,9 +274,9 @@ to read - it is inside Docker Desktop's VM. Production is never touched.
 **not** under `~/projects`: that checkout is shared, and a copy inside a
 repository is a copy that can be committed. Deliberately **not** under
 `~/ops/reports/`, which is swept on a 31-day retention rule that has nothing to
-do with this data. The schedule itself is a user systemd timer in the owner's
-`~/ops` tree, which materializes the script from `main` at each tick - the same
-arrangement the health probe's schedule uses, and for the same reason.
+do with this data. There is **no** schedule: the systemd timer that would have
+run this in the owner's `~/ops` tree was declined, so the pull happens only when
+someone runs the command above.
 
 The mirror carries the same secrets as the data volume: `users.token` is
 plaintext by design, so every snapshot in it holds a copy of every agent's
@@ -297,15 +298,15 @@ pull-snapshots: status
 ```
 
 `lag` is the gap between the newest snapshot here and the newest one at the
-source. At the shipped `6h` interval and an hourly tick, a lag under an hour is
-a mirror that is working; a lag that keeps growing means the tick is no longer
-running, and nothing else will tell you that - a timer that was never installed
-or was disabled raises no alert.
+source. With no schedule it grows by one snapshot every `6h` until someone runs
+a tick, so treat it as the mirror's age rather than as a health signal, and read
+it before relying on the copy. Nothing else will tell you: there is no unit, so
+no alert.
 
 ### Exit codes
 
-A tick's non-zero exit is what the `~/ops` unit turns into `~/ops/ALERT` plus a
-desktop notification, so the codes are meant to be read:
+A tick's non-zero exit reaches only whoever ran it - nothing watches this pull -
+so the codes are meant to be read:
 
 | | |
 |---|---|
@@ -367,10 +368,11 @@ source, with the drill in
   failures cotel has actually had - and not against the disk or the machine
   going away. The off-host copy is decided -
   [ADR-0024](../decisions/0024-off-host-snapshot-copy-pi-pull) - and the pull
-  that implements it is [the off-host mirror](#the-off-host-mirror): an hourly
-  pull to the Pi over the existing LAN ssh path, with premises loss accepted as
-  uncovered because it is another machine in the same building. A mirror is only
-  as current as its last tick, so read `--status` instead of assuming.
+  that implements it is [the off-host mirror](#the-off-host-mirror): a pull to
+  the Pi over the existing LAN ssh path, with premises loss accepted as
+  uncovered because it is another machine in the same building. That pull is
+  **unscheduled** - a mirror is only as current as its last tick, and here the
+  last tick was a person, so read `--status` instead of assuming.
 - **`docker volume prune`.** The snapshots volume is only "in use" while the
   container exists, so a prune on a stopped deploy takes the backups with it.
   This is the one new way the volume layout can bite; no code can prevent it.
