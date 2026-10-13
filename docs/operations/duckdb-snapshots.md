@@ -206,15 +206,20 @@ make a new one rather than trying to clean it up:
 docker volume rm cotel-data-restore-probe && docker volume create cotel-data-restore-probe
 ```
 
-**Step 3 - verify with the same binary that will serve it.**
+**Step 3 - verify with the same binary that will serve it.** Which name that is
+depends on the host: `cotel-local:latest` where the image is built locally, as
+production does, and `ghcr.io/flopsstuff/cotel:latest` where it is pulled. The
+distinction matters at this step and not at step 2 - what this step catches is a
+file the *serving* binary cannot open, so asking any other binary answers a
+different question.
 
 ```bash
 docker run --rm --entrypoint /usr/local/bin/cotel -v cotel-data-restore-probe:/data \
-  ghcr.io/flopsstuff/cotel:latest --db-query "SELECT count(*) FROM spans"
+  cotel-local:latest --db-query "SELECT count(*) FROM spans"
 docker run --rm --entrypoint /usr/local/bin/cotel -v cotel-data-restore-probe:/data \
-  ghcr.io/flopsstuff/cotel:latest --db-query "SELECT max(start_time) FROM spans"
+  cotel-local:latest --db-query "SELECT max(start_time) FROM spans"
 docker run --rm --entrypoint /usr/local/bin/cotel -v cotel-data-restore-probe:/data \
-  ghcr.io/flopsstuff/cotel:latest --db-query "SELECT count(*) FROM duckdb_indexes()"
+  cotel-local:latest --db-query "SELECT count(*) FROM duckdb_indexes()"
 ```
 
 The secondary indexes are **rebuilt from the data** by the import rather than

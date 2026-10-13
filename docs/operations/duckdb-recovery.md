@@ -159,11 +159,11 @@ SELECT max(start_time), max(ingested_at) FROM spans;          -- newest data sti
 SELECT index_name FROM duckdb_indexes() ORDER BY index_name;  -- all four back
 ```
 
-Then exit the CLI and confirm the file opens with the cotel binary — the round trip is the real test, because a version-mismatched CLI write would show up here and nowhere earlier. Ask the binary that will actually serve the file, which on a host that builds its own image means `cotel-local:latest` (see step 4):
+Then exit the CLI and confirm the file opens with the cotel binary — the round trip is the real test, because a version-mismatched CLI write would show up here and nowhere earlier. Ask the binary that will actually serve the file: on a host that builds its own image, which production does, that is `cotel-local:latest` (see step 4); on a host that pulls, substitute `ghcr.io/flopsstuff/cotel:latest`.
 
 ```bash
 docker run --rm --entrypoint /usr/local/bin/cotel -v cotel-data-probe:/data \
-  ghcr.io/flopsstuff/cotel:latest --db-query "SELECT count(*) FROM spans"
+  cotel-local:latest --db-query "SELECT count(*) FROM spans"
 ```
 
 No `cotel.duckdb.wal` should remain in the probe volume after the CLI exits cleanly.
