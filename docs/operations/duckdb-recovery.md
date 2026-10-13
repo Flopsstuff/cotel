@@ -368,25 +368,51 @@ exactly the moment nobody remembers an optional test.
 One pass is:
 
 1. build `spans` as it stood at schema version 2 — every column it has today except
-   `user_id` — with that era's three ART indexes, and fill it with spans spread over
-   60 days, i.e. across the 30-day raw-retention boundary;
+   `user_id`, plus the mid-table `duration_ms` generated column that only v10
+   removed — with that era's three ART indexes, and fill it with spans spread over
+   60 days, i.e. across the 30-day raw-retention boundary. Both differences carry a
+   migration, and the second one carries the migration that matters: `DROP COLUMN IF
+   EXISTS duration_ms` over a column the fixture never had is a silent no-op, and
+   v10 is the ALTER production ran on a long-lived filled table six weeks before the
+   abort, where v2 → v3 ran the day after the database was created. While the column
+   is there the table also carries the logical/physical column skew of
+   [ADR-0013](../decisions/0013-spans-has-no-derived-columns), so the indexes are
+   built over the layout production built them over;
 2. open it with `storage.Open`, so the real `schema.sql` runs the real
-   `ALTER TABLE spans ADD COLUMN user_id VARCHAR` against a filled, indexed table and
-   then builds `idx_spans_user_id` on that added column;
+   `ALTER TABLE spans ADD COLUMN user_id VARCHAR` against a filled, indexed table,
+   drops `duration_ms` out of the middle of it, and then builds `idx_spans_user_id`
+   on the added column;
 3. write the added column for every row with a bulk `UPDATE`, then run cotel's own
    retention roll-up as the large replace transaction — the `INSERT INTO daily_usage`
    and the `DELETE FROM spans` are one transaction, so this is the real mutation and
    not an imitation of it;
 4. checkpoint, close, reopen, checkpoint again, ingest a further batch, and repeat.
 
-Each pass asserts four things, and they fail for different reasons:
+Each pass asserts the following, and they fail for different reasons:
 
 | Assertion | What a failure means |
 |---|---|
+| `duration_ms` is there before the migration and gone after it | the pass never exercised v10's `ALTER TABLE spans DROP COLUMN` — either the fixture stopped being pre-v10, in which case the drop was a no-op, or the drop ran and left the column |
 | the reopen succeeds | the 1.1.3 `abort()` inside `duckdb_open_ext`, which 1.5.6 raises as a Go error instead |
-| both checkpoints fold | the index fold refused — the same signal the startup and shutdown checkpoints give in production, and the earliest honest warning there is |
+| both checkpoints fold | the index fold refused — the same signal the startup and shutdown checkpoints give in production, and the earliest honest warning there is. A `.wal` file that is present but zero bytes counts as folded, so an engine that truncates rather than unlinks is not reported as this defect |
 | all four indexes are present after the restart | an index was lost rather than damaged |
-| an indexed `user_id = ?` agrees with the same predicate written so the index cannot serve it | the silent form of this damage: a wrong answer, which no checkpoint and no open reports |
+| a bare `user_id = <constant>`, which the optimizer folds into the scan, agrees with the same predicate wrapped in an expression, which it does not | the silent form of this damage: a wrong answer, which no checkpoint and no open reports. It is [ADR-0013](../decisions/0013-spans-has-no-derived-columns)'s symptom exactly — a pushed-down equality answered against the wrong column offset, matching nothing |
+| re-inserting a stored `span_id` is rejected, and inserting an unused one is accepted | the primary key's unique ART index has lost its own entries, or gained phantom ones. This is the only assertion in the list that provably traverses an ART index — see below |
+
+**The equality pair compares two sequential scans, not an index against a scan.** On
+the linked engine, no `SELECT` over `spans` is planned as an ART index scan: `EXPLAIN`
+answers `SEQ_SCAN` / `Type: Sequential Scan` for `user_id = <constant>` and for a
+bound `user_id = ?` alike, for an equality on the primary key, and for the textbook
+case — a unique match in a 100 000-row table with a fresh index on exactly the probed
+column — with `index_scan_max_count` and `index_scan_percentage` raised to admit
+everything, and with and without the `storage_compatibility_version` pin cotel opens
+with. So an assertion phrased as *indexed probe agrees with unindexed probe* would be
+two sequential scans agreeing with each other. What the pair does compare is filter
+pushdown against no pushdown, which is the path ADR-0013's wrong answers came out of;
+the test asserts that the two probes still plan differently, so the comparison cannot
+quietly degenerate into one path checked twice. The unique-constraint probe is the
+check that reaches an ART index, because conflict detection consults the primary key's
+index on the way in.
 
 Size and repetitions are tunable, and turning them up is the first thing to do when
 the verdict is "did not reproduce":
@@ -410,13 +436,23 @@ docker run --rm -u "$(id -u):$(id -g)" -e HOME=/tmp/h -e GOCACHE=/go/.cache/go-b
 On 2026-10-13, on linux/arm64 under `golang:1.24`, against the engine the tree links
 today — `duckdb-go/v2 v2.10506.0`, with `SELECT version()` answering `v1.5.6`:
 
-| Parameters | Result |
-|---|---|
-| 20 000 spans, 2 cycles (the defaults, so `go test ./...` runs this) | did not reproduce, 4.7 s |
-| 200 000 spans, 6 cycles — 8 opens, 14 checkpoints, the table peaking at 407 763 rows | did not reproduce, 3 m 40 s |
+| Fixture | Parameters | Result |
+|---|---|---|
+| pre-v3: `duration_ms` absent, so the only ALTER exercised was v2 → v3 and v10's `DROP COLUMN` was a silent no-op | 20 000 spans, 2 cycles | did not reproduce, 4.7 s |
+| pre-v3, as above | 200 000 spans, 6 cycles — 8 opens, 14 checkpoints, the table peaking at 407 763 rows | did not reproduce, 3 m 40 s |
+| pre-v10: `duration_ms` present and dropped by the migration under test, the indexes built over the column skew | 20 000 spans, 2 cycles (the defaults, so `go test ./...` runs this) | did not reproduce, 4.1 s |
+| pre-v10, as above | 200 000 spans, 6 cycles — 8 opens, 14 checkpoints, the table peaking at 407 956 rows | did not reproduce, 2 m 58 s |
+
+The first two rows are kept because they are what was run, not because they cover
+what they were taken to cover: their fixture never had `duration_ms`, so the v10
+`ALTER TABLE spans DROP COLUMN` did nothing, and the only ALTER those two runs put
+under an indexed filled table was v2 → v3 — which in production ran the day after
+the database was created, on an almost empty table. The bottom two rows are the same
+two sizes over the corrected fixture, so they are the ones that exercised the ALTER
+production ran six weeks before the abort. No run has reproduced anything.
 
 **This is not a demonstration that 1.5.6 is free of the defect, and must not be
-quoted as one.** It is two negative runs at one scale on one architecture. Three
+quoted as one.** It is four negative runs at two scales on one architecture. Three
 things bound what they cover:
 
 - The production file that was damaged held ~34 700 spans in 147 MB and took weeks
