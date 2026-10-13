@@ -344,15 +344,96 @@ release conditions have to hold, and each one has a trap:
   That would satisfy the words "the issue is resolved" while the defect is still
   live, so it does not release this volume. Read the closing commit, not the state.
 - **A DuckDB in cotel shown not to hit it.** Today cotel links
-  `duckdb-go/v2 v2.10506.0` (DuckDB 1.5.6) and the crash was on 1.1.3; nobody has
-  demonstrated either way, so this half is currently unevaluable rather than
-  satisfied. Only a reproducer settles it, which is the same reason a version bump
-  is the natural moment to build one.
+  `duckdb-go/v2 v2.10506.0` (DuckDB 1.5.6) and the crash was on 1.1.3. This half
+  used to be unevaluable — nobody had tried either way. It is now measured, and the
+  measurement is negative rather than exonerating: see [The synthetic
+  reproducer](#the-synthetic-reproducer) below. A run that does not reproduce does
+  not release this volume; a run that does is an incident.
 
 Never attach this volume, or anything extracted from it, to a public upstream issue:
 it is production telemetry with real user ids, session ids and span attributes. An
 upstream contribution has to be a synthetic reproducer built from the schema above,
 and publishing one is an external-facing decision, not an operational one.
+
+### The synthetic reproducer
+
+`TestARTIndexSurvivesAddedColumnAndBulkReplace` in
+`internal/storage/art_repro_test.go` runs the sequence above against whatever engine
+the tree links, built from the schema and nothing else — every value is derived from
+the row number, so it carries no user id, session id or span attribute that belonged
+to anyone, and it can be run anywhere. It is in the ordinary test set, not behind a
+tag, because the moment it most needs to run is a driver or engine bump, and that is
+exactly the moment nobody remembers an optional test.
+
+One pass is:
+
+1. build `spans` as it stood at schema version 2 — every column it has today except
+   `user_id` — with that era's three ART indexes, and fill it with spans spread over
+   60 days, i.e. across the 30-day raw-retention boundary;
+2. open it with `storage.Open`, so the real `schema.sql` runs the real
+   `ALTER TABLE spans ADD COLUMN user_id VARCHAR` against a filled, indexed table and
+   then builds `idx_spans_user_id` on that added column;
+3. write the added column for every row with a bulk `UPDATE`, then run cotel's own
+   retention roll-up as the large replace transaction — the `INSERT INTO daily_usage`
+   and the `DELETE FROM spans` are one transaction, so this is the real mutation and
+   not an imitation of it;
+4. checkpoint, close, reopen, checkpoint again, ingest a further batch, and repeat.
+
+Each pass asserts four things, and they fail for different reasons:
+
+| Assertion | What a failure means |
+|---|---|
+| the reopen succeeds | the 1.1.3 `abort()` inside `duckdb_open_ext`, which 1.5.6 raises as a Go error instead |
+| both checkpoints fold | the index fold refused — the same signal the startup and shutdown checkpoints give in production, and the earliest honest warning there is |
+| all four indexes are present after the restart | an index was lost rather than damaged |
+| an indexed `user_id = ?` agrees with the same predicate written so the index cannot serve it | the silent form of this damage: a wrong answer, which no checkpoint and no open reports |
+
+Size and repetitions are tunable, and turning them up is the first thing to do when
+the verdict is "did not reproduce":
+
+```bash
+COTEL_ART_REPRO_SPANS=200000 COTEL_ART_REPRO_CYCLES=6 \
+  CGO_ENABLED=1 go test -timeout 60m -v -run TestARTIndex ./internal/storage/
+```
+
+There is no Go toolchain on the Pi, so a run there goes through the image:
+
+```bash
+docker run --rm -u "$(id -u):$(id -g)" -e HOME=/tmp/h -e GOCACHE=/go/.cache/go-build \
+  -e CGO_ENABLED=1 -e COTEL_ART_REPRO_SPANS=200000 -e COTEL_ART_REPRO_CYCLES=6 \
+  -v "$HOME/go":/go -v "$PWD":/src -w /src golang:1.24 \
+  go test -timeout 60m -v -run TestARTIndex ./internal/storage/
+```
+
+#### What has been run, and what it does not say
+
+On 2026-10-13, on linux/arm64 under `golang:1.24`, against the engine the tree links
+today — `duckdb-go/v2 v2.10506.0`, with `SELECT version()` answering `v1.5.6`:
+
+| Parameters | Result |
+|---|---|
+| 20 000 spans, 2 cycles (the defaults, so `go test ./...` runs this) | did not reproduce, 4.7 s |
+| 200 000 spans, 6 cycles — 8 opens, 14 checkpoints, the table peaking at 407 763 rows | did not reproduce, 3 m 40 s |
+
+**This is not a demonstration that 1.5.6 is free of the defect, and must not be
+quoted as one.** It is two negative runs at one scale on one architecture. Three
+things bound what they cover:
+
+- The production file that was damaged held ~34 700 spans in 147 MB and took weeks
+  of ingest and roll-ups after the migration before an open aborted. The runs above
+  compress that into minutes; whatever the real trigger needs may need wall-clock or
+  a write pattern this sequence does not have.
+- duckdb#25360 reports the same class of fault on 1.5.5 against a ~19 GB database,
+  three orders of magnitude larger than anything run here. Sheer size may be part of
+  the trigger.
+- The damage accumulates invisibly. A pass that ends clean proves the index folded
+  and read back correctly *that time*, which is the strongest statement available
+  and is still not absence.
+
+So the second release condition now reads: *not shown to reproduce at our scale on
+1.5.6*, which is strictly weaker than *fixed*. Re-run the reproducer — heavier than
+the defaults — whenever the linked engine moves, and record the result here next to
+these rows rather than replacing them.
 
 ### The leftovers are not the backup
 
