@@ -15,15 +15,20 @@ on:
 
 env:
   REGISTRY: ghcr.io
+  # GHCR digests require a lowercase repository path.
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  release:
-    name: Create release
+  prepare:
+    name: Tag release
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      packages: write
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      version: ${{ steps.version.outputs.version }}
+      image: ${{ steps.image.outputs.name }}
+      revision: ${{ steps.commit.outputs.sha }}
     steps:
       - name: Ensure running on main
         run: |
@@ -31,6 +36,11 @@ jobs:
             echo "::error::Releases must be triggered from the main branch."
             exit 1
           fi
+
+      - name: Lowercase image name
+        id: image
+        run: |
+          echo "name=${{ env.REGISTRY }}/$(echo '${{ env.IMAGE_NAME }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
 
       - uses: actions/checkout@v5
         with:
@@ -97,6 +107,7 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
       - name: Commit and tag
+        id: commit
         run: |
           git add CHANGELOG.md
           git commit -m "chore: release ${{ steps.version.outputs.tag }}"
@@ -104,6 +115,90 @@ jobs:
             -m "Release ${{ steps.version.outputs.tag }}"
           git push origin HEAD:main
           git push origin "${{ steps.version.outputs.tag }}"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-notes
+          path: release-notes.md
+
+  build:
+    name: Build ${{ matrix.platform }}
+    needs: prepare
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+            digest_name: linux-amd64
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+            digest_name: linux-arm64
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          labels: |
+            org.opencontainers.image.version=${{ needs.prepare.outputs.version }}
+            org.opencontainers.image.revision=${{ needs.prepare.outputs.revision }}
+          outputs: type=image,name=${{ needs.prepare.outputs.image }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=${{ matrix.digest_name }}
+          cache-to: type=gha,scope=${{ matrix.digest_name }},mode=max
+
+      - name: Export digest
+        run: |
+          mkdir -p "${{ runner.temp }}/digests"
+          digest="${{ steps.build.outputs.digest }}"
+          touch "${{ runner.temp }}/digests/${digest#sha256:}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ matrix.digest_name }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    name: Manifest and GitHub Release
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: digests-*
+          merge-multiple: true
+
+      - name: Download release notes
+        uses: actions/download-artifact@v4
+        with:
+          name: release-notes
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -119,26 +214,26 @@ jobs:
         id: meta
         uses: docker/metadata-action@v6
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          images: ${{ needs.prepare.outputs.image }}
           tags: |
-            type=semver,pattern={{version}},value=${{ steps.version.outputs.tag }}
-            type=semver,pattern={{major}}.{{minor}},value=${{ steps.version.outputs.tag }}
+            type=semver,pattern={{version}},value=${{ needs.prepare.outputs.tag }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ needs.prepare.outputs.tag }}
             type=raw,value=latest
 
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      - name: Create manifest list and push
+        working-directory: ${{ runner.temp }}/digests
+        run: |
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf '${{ needs.prepare.outputs.image }}@sha256:%s ' *)
 
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # This job has no checkout, so gh has no git remote to resolve the
+          # repository from; it does not read GITHUB_REPOSITORY.
+          GH_REPO: ${{ github.repository }}
         run: |
-          gh release create "${{ steps.version.outputs.tag }}" \
-            --title "cotel ${{ steps.version.outputs.tag }}" \
+          gh release create "${{ needs.prepare.outputs.tag }}" \
+            --title "cotel ${{ needs.prepare.outputs.tag }}" \
             --notes-file release-notes.md

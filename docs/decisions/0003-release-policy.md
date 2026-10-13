@@ -31,12 +31,16 @@ Releases are created **only** by manually triggering `.github/workflows/release.
 2. Accepts a `bump` input (`minor` default, `patch`, `major`).
 3. Updates `CHANGELOG.md` and commits it.
 4. Creates an annotated git tag and pushes both the commit and the tag.
-5. Builds and pushes the Docker image to GHCR with `vMAJOR.MINOR.PATCH`, `vMAJOR.MINOR`, and `latest` tags.
+5. Builds and pushes a **multi-arch** Docker image to GHCR (`linux/amd64` and `linux/arm64`) with `vMAJOR.MINOR.PATCH`, `vMAJOR.MINOR`, and `latest` tags.
 6. Creates a GitHub Release with the extracted changelog section as release notes.
+
+### Image platforms
+
+The published image must be pullable on both amd64 hosts and arm64 hosts (Apple Silicon production, Raspberry Pi restore drills). A single `platforms: linux/amd64,linux/arm64` build on `ubuntu-latest` would compile DuckDB through cgo under QEMU; measured on 2026-10-12 that path is the expensive one (see Consequences). Instead `release.yml` builds each architecture on a **native** hosted runner (`ubuntu-latest` + `ubuntu-24.04-arm`), pushes by digest, and merges a manifest list. Native arm64 on the hosted runner was ~47s for a coldish image build; that is cheap enough to keep on every release. `multiarch-image.yml` exercises the same two native builds on PRs that touch the image path, without pushing.
 
 ### CI changes
 
-`ci.yml` now runs only on pushes to `main` and pull requests. It no longer publishes Docker images — that responsibility belongs entirely to `release.yml`. The smoke test continues to validate Docker builds on every CI run.
+`ci.yml` now runs only on pushes to `main` and pull requests. It no longer publishes Docker images — that responsibility belongs entirely to `release.yml`. The smoke test continues to validate an amd64 Docker build on every CI run; `multiarch-image.yml` covers the arm64 half of the release path.
 
 ## Options considered
 
@@ -50,8 +54,10 @@ Releases are created **only** by manually triggering `.github/workflows/release.
 
 - No Docker image is published until someone presses the button — deliberate gate.
 - GHCR always has a `latest` tag pointing to the newest release, and versioned tags for pinning.
+- `latest` (and each version tag) is a multi-arch manifest: `docker pull` on arm64 no longer requires a local `docker compose build` before `cotel --db-import`.
 - CHANGELOG must be kept up-to-date by the developer; the release workflow will produce an empty section if it isn't.
 - Branch protection on `main` would block the release workflow's push-back commit. If protection is added later, the workflow token must be granted bypass or a deploy key used instead.
+- QEMU-emulated arm64 on `ubuntu-latest` was measured and rejected for the release path: native `ubuntu-24.04-arm` finished the same Dockerfile in **47s**, while the QEMU build step was still running at **~11 minutes** when cancelled. Prefer native runners; do not add `platforms: linux/amd64,linux/arm64` on a single amd64 runner.
 
 ## Decision lenses applied
 

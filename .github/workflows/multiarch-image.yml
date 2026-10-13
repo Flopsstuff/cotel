@@ -1,0 +1,134 @@
+# PR gate for the release image build path: native amd64 + native arm64,
+# push-by-digest, then a throwaway multi-arch tag `pr-<n>` so arm64 hosts can
+# `docker pull` the merged manifest without cutting a release. QEMU is
+# intentionally not used (see ADR-0003).
+name: Multi-arch image build
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/multiarch-image.yml"
+      - ".github/workflows/release.yml"
+      - "Dockerfile"
+      - "go.mod"
+      - "go.sum"
+      - "cmd/**"
+      - "internal/**"
+      - "frontend/**"
+      - "scripts/entrypoint.sh"
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  build:
+    name: Build ${{ matrix.platform }}
+    # Fork PRs get a read-only GITHUB_TOKEN; packages:write cannot elevate it.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+            digest_name: linux-amd64
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+            digest_name: linux-arm64
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Lowercase image name
+        id: image
+        run: |
+          echo "name=${{ env.REGISTRY }}/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          outputs: type=image,name=${{ steps.image.outputs.name }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=multiarch-${{ matrix.digest_name }}
+          cache-to: type=gha,scope=multiarch-${{ matrix.digest_name }},mode=max
+
+      - name: Export digest
+        run: |
+          mkdir -p "${{ runner.temp }}/digests"
+          digest="${{ steps.build.outputs.digest }}"
+          touch "${{ runner.temp }}/digests/${digest#sha256:}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ matrix.digest_name }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    name: Publish multi-arch tag
+    needs: build
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Lowercase image name
+        id: image
+        run: |
+          echo "name=${{ env.REGISTRY }}/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
+      - name: Tag name
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "name=pr-${{ github.event.number }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=multiarch-test" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: digests-*
+          merge-multiple: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create manifest list and push
+        working-directory: ${{ runner.temp }}/digests
+        run: |
+          IMAGE="${{ steps.image.outputs.name }}"
+          TAG="${{ steps.tag.outputs.name }}"
+          docker buildx imagetools create \
+            -t "${IMAGE}:${TAG}" \
+            $(printf "${IMAGE}@sha256:%s " *)
+          echo "Published ${IMAGE}:${TAG}"
+          docker buildx imagetools inspect "${IMAGE}:${TAG}"
