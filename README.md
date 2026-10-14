@@ -304,6 +304,7 @@ docker inspect --format '{{.State.Health.Status}}' cotel   # starting → health
 | `spans` | Rows in `spans` |
 | `last_ingest_at` | When the newest span was **accepted** (RFC 3339), or `null` if nothing was ever ingested |
 | `newest_span_age_seconds` | Seconds since `last_ingest_at`, or `null` if nothing was ever ingested |
+| `tunnel` | **Absent** unless this deployment runs a Cloudflare tunnel. Then an object: `ok` (is the public path up), `ready_connections` (edge connections cloudflared has registered, `null` if it could not be asked at all) and `error` (why not, when `ok` is false) |
 
 The age is measured from `ingested_at`, not `start_time`: importing an archive
 replays the original ingest time, so a restore cannot make a dark instance look
@@ -320,6 +321,23 @@ query is a failure: that answers `503` with `{"ok": false}`, so the probe cannot
 report a dead database as healthy. The same two fields are on
 `GET /api/v1/health` — see
 [docs/operations/api-reference.md](docs/operations/api-reference.md).
+
+The `tunnel` object exists because a dead tunnel looks like nothing from here.
+cloudflared is a second process in the container, cotel is the main one, so
+cloudflared can exit and leave the container `(healthy)` with `RestartCount` 0
+while every client exporting to the public ingest URL gets a Cloudflare error
+and loses its spans. The state is read from cloudflared's own metrics listener
+(`/ready`), not from process liveness: a cloudflared that is up but has
+registered no edge connection drops traffic exactly like one that is gone.
+`ok: true` requires at least one registered connection.
+
+Like staleness, a dead tunnel **does not change the status code** and does not
+make `ok` false. LAN ingest on `:4318` keeps working while the public path is
+down, and this endpoint drives the container `HEALTHCHECK` and the deploy gate —
+taking the container down over an unreachable edge would turn a partial outage
+into a total one. The field is the signal; the threshold belongs to whoever
+polls. Nothing is reported when no tunnel is configured, so a local or CI
+instance says nothing about a tunnel rather than claiming a dead one.
 
 The retention and snapshot workers' health is deliberately **not** here. This
 endpoint is what `cotel --healthcheck`, the Docker `HEALTHCHECK` and the deploy's
@@ -544,6 +562,8 @@ from the network at startup instead of bundling it).
 | `COTEL_SNAPSHOT_VOLUME` | `cotel-snapshots` | Read by `docker-compose.yml`, not by the binary: the Docker volume mounted at `/snapshots`. Note that `docker volume prune` on a stopped deploy deletes it - the volume counts as in use only while the container exists. |
 | `COTEL_WAL_AUTOCHECKPOINT` | `4MB` | DuckDB `checkpoint_threshold`: the write-ahead log is folded into the main file once it grows past this size. Lower values bound how much WAL an ungraceful kill leaves to replay on the next open; higher values checkpoint less often during ingest. DuckDB's own default is `16MB`. |
 | `CLOUDFLARE_TUNNEL_TOKEN` | _(unset)_ | When set, starts `cloudflared tunnel run` before cotel; enables public HTTPS access via Cloudflare Tunnel |
+| `COTEL_TUNNEL_METRICS_ADDR` | `127.0.0.1:2000` | Where cloudflared's metrics listener binds inside the container (`--metrics`). Its `/ready` route is what the `tunnel` field on `/healthz` reports. The entrypoint passes it on only when it actually started a tunnel, so setting it on a tokenless deployment does not make `/healthz` report a tunnel that was never meant to run |
+| `COTEL_TUNNEL_RESTART_BACKOFF_MAX` | `60` | Cap in seconds on the wait between cloudflared restarts. The supervisor restarts it for as long as the container lives, doubling the delay from 1s up to this cap; a cloudflared that stayed up at least this long resets the delay |
 | `TUNNEL_EDGE_IP_VERSION` | `4` in token mode | Read by `cloudflared`, not by cotel: the address family used to reach the Cloudflare edge (`4`, `6` or `auto`). cloudflared's own default became `auto` in 2026.4.0, which tries whichever family the resolver answers with first and falls back only after a connection has failed; token mode pins `4` unless you set this. Not set in local-config mode, where `config.yml` owns the setting. See [token mode](docs/operations/cloudflare-tunnel-remote.md#the-bundled-cloudflared) |
 | `COTEL_PUBLIC_INGEST_URL` | _(unset)_ | Absolute `http`/`https` URL of the public OTLP ingest endpoint (e.g. `https://cotel-ingest.yourdomain.com`). When set, the Setup page substitutes this URL into the copy-paste Claude Code snippets. |
 | `SNAPSHOT_CHECK` | `auto` | Read by `scripts/probe-healthz.sh`, not by the binary: whether a green `/healthz` is followed by a snapshot check against `/api/v1/health`. `auto` pages only on affirmative failure (`status: error`, or a snapshot older than the window); `require` also pages when the instance makes no snapshot claim at all, which is what you want wherever snapshots are expected; `off` never asks. See [Production health probes](docs/operations/health-probe.md#the-snapshot-claim-asked-of-a-second-endpoint). |

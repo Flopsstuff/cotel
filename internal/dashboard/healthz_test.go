@@ -1,6 +1,7 @@
 package dashboard_test
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/Flopsstuff/cotel/internal/dashboard"
 	"github.com/Flopsstuff/cotel/internal/storage"
+	"github.com/Flopsstuff/cotel/internal/tunnel"
 )
 
 func openTestDBRW(t *testing.T) (*storage.DB, *storage.ReadDB) {
@@ -187,5 +189,72 @@ func TestHealthzFailedQueryIsNotOK(t *testing.T) {
 	}
 	if code == http.StatusOK {
 		t.Errorf("a failed query must not answer 200, got %d", code)
+	}
+}
+
+// stubProber stands in for cloudflared's metrics listener.
+type stubProber struct{ health tunnel.Health }
+
+func (s stubProber) Health(context.Context) tunnel.Health { return s.health }
+
+func TestHealthzReportsTunnelWhenOneRuns(t *testing.T) {
+	_, ro := openTestDBRW(t)
+	ready := 4
+	code, body := getHealthz(t, dashboard.New(ro).SetTunnelProber(
+		stubProber{health: tunnel.Health{OK: true, ReadyConnections: &ready}}))
+
+	if code != http.StatusOK {
+		t.Fatalf("want 200, got %d", code)
+	}
+	tun, ok := body["tunnel"].(map[string]any)
+	if !ok {
+		t.Fatalf("want a tunnel object, got %v", body["tunnel"])
+	}
+	if tun["ok"] != true {
+		t.Errorf("want tunnel.ok=true, got %v", tun["ok"])
+	}
+	if tun["ready_connections"] != float64(4) {
+		t.Errorf("want tunnel.ready_connections=4, got %v", tun["ready_connections"])
+	}
+	if _, present := tun["error"]; present {
+		t.Errorf("a healthy tunnel must not carry an error, got %v", tun["error"])
+	}
+}
+
+// The dead tunnel this field exists for: the application and LAN ingest are
+// fine, so the status code and ok must not move — only the new field does.
+func TestHealthzDeadTunnelIsReportedWithoutFailingTheCheck(t *testing.T) {
+	_, ro := openTestDBRW(t)
+	code, body := getHealthz(t, dashboard.New(ro).SetTunnelProber(
+		stubProber{health: tunnel.Health{Error: "cloudflared metrics listener 127.0.0.1:2000 unreachable: connection refused"}}))
+
+	if code != http.StatusOK {
+		t.Errorf("a dead tunnel must not change the status code: want 200, got %d", code)
+	}
+	if body["ok"] != true {
+		t.Errorf("a dead tunnel must not change ok, got %v", body["ok"])
+	}
+	tun, ok := body["tunnel"].(map[string]any)
+	if !ok {
+		t.Fatalf("want a tunnel object, got %v", body["tunnel"])
+	}
+	if tun["ok"] != false {
+		t.Errorf("want tunnel.ok=false, got %v", tun["ok"])
+	}
+	if tun["ready_connections"] != nil {
+		t.Errorf("an unreachable cloudflared has no connection count, got %v", tun["ready_connections"])
+	}
+	if tun["error"] == nil || tun["error"] == "" {
+		t.Errorf("a dead tunnel must say why, got %v", tun["error"])
+	}
+}
+
+// A tokenless deployment (local dev, CI) runs no tunnel, and must not report a
+// dead one: the key is absent rather than false.
+func TestHealthzOmitsTunnelWhenNoneIsConfigured(t *testing.T) {
+	_, ro := openTestDBRW(t)
+	_, body := getHealthz(t, dashboard.New(ro))
+	if v, present := body["tunnel"]; present {
+		t.Errorf("want no tunnel key without a tunnel, got %v", v)
 	}
 }

@@ -36,6 +36,12 @@ jobs:
       - name: go test
         run: CGO_ENABLED=1 go test ./...
 
+      # The container's cloudflared supervisor, against a stub cloudflared: it
+      # keeps the tunnel alive and is in no Go package, so nothing above covers
+      # it.
+      - name: cloudflared supervisor tests
+        run: bash scripts/supervise-cloudflared_test.sh
+
   smoke:
     name: Smoke test
     runs-on: ubuntu-latest
@@ -70,6 +76,15 @@ jobs:
           RESP=$(curl -sf http://localhost:8080/healthz)
           echo "healthz: $RESP"
           echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); assert d['spans'] == 3, f'expected 3 spans, got {d[\"spans\"]}'"
+
+      # This compose run has no tunnel token, so /healthz must say nothing about
+      # a tunnel. A "tunnel" key here would mean a tokenless deployment reports
+      # a dead tunnel — every local and CI instance red for a tunnel nobody
+      # asked for.
+      - name: Verify healthz omits the tunnel field without a token
+        run: |
+          curl -sf http://localhost:8080/healthz \
+            | python3 -c "import sys,json; d=json.load(sys.stdin); assert 'tunnel' not in d, f'unexpected tunnel field: {d}'"
 
       - name: Dashboard health check
         run: curl -sf http://localhost:8080/

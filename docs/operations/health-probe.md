@@ -72,6 +72,24 @@ If `last_ingest_at` / `newest_span_age_seconds` are absent, the probe degrades
 to liveness (HTTP 200) so it keeps working before that contract is on
 production.
 
+### The `tunnel` field is reported, not yet classified
+
+`/healthz` also carries a `tunnel` object on a deployment that runs one — the
+state of the cloudflared process in the container, read from its `/ready` route
+([README](https://github.com/Flopsstuff/cotel/blob/main/README.md#what-healthz-returns)). The LAN probe deliberately
+does **not** classify it yet: every verdict above routes the on-call to a
+different place, and "the application is fine, the public path is not" already
+has a half of its own with its own words, its own dedup marker and its own
+re-probe instructions. Folding it into the LAN half's exit codes would page the
+database wording for a Cloudflare fault. The field is there for an operator
+reading `/healthz` directly, and for whoever decides which half should own that
+classification.
+
+Where it helps today is the ambiguity the edge half cannot resolve on its own: a
+red public-ingest probe says the chain is broken somewhere between DNS and the
+origin, while `tunnel.ok: false` beside a green `ok: true` names cloudflared
+itself, from inside the container, before anyone opens a shell on the host.
+
 ### The snapshot claim, asked of a second endpoint
 
 A green `/healthz` is followed by a second question, to `/api/v1/health` on the

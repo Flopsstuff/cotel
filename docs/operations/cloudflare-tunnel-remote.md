@@ -72,7 +72,7 @@ docker run -d \
 docker compose up -d
 ```
 
-The entrypoint detects `CLOUDFLARE_TUNNEL_TOKEN`, removes it from the environment it passes on, and runs `cloudflared tunnel run --token …` in the background.
+The entrypoint detects `CLOUDFLARE_TUNNEL_TOKEN`, removes it from the environment it passes on, and starts `scripts/supervise-cloudflared.sh` in the background, which runs `cloudflared tunnel run --token …` and restarts it for as long as the container lives (see [Keeping the tunnel up](#keeping-the-tunnel-up)).
 
 ## Where the token is visible
 
@@ -82,7 +82,7 @@ The token is the authority to serve your public hostnames, so it is worth knowin
 |---|---|
 | `docker compose logs cotel` / `docker logs` | No - the entrypoint keeps the variable out of cloudflared's environment, and cloudflared redacts the `--token` flag to `token:*****` |
 | `docker inspect` / `docker compose config` | **Yes** - it is container configuration; whoever can run these can read it |
-| `/proc/1/environ` inside the container | **Yes** - a process's environment block is a snapshot taken at `exec`, so unsetting the variable afterwards does not clear it |
+| `/proc/1/environ` inside the container, and the same file for the supervisor | **Yes** - a process's environment block is a snapshot taken at `exec`, so unsetting the variable afterwards does not clear it. The entrypoint hands the token to `supervise-cloudflared.sh` through its environment, so that process has a copy too; cloudflared itself does not, which is the one that matters for the log |
 | `ps` inside the container | **Yes** - it is an argument to `cloudflared` |
 
 The log line matters separately from the rest: the deploy health gate (`scripts/wait-for-healthy.sh`) copies container logs into the CI run log on a failed deploy, which is a far wider audience than "someone with a shell on the host". The other three rows all require host or container access, which already implies access to the token by other means.
@@ -105,11 +105,55 @@ A few things are worth knowing when reading the startup log:
 
 Newer cloudflared can read the token from a file (`--token-file`) instead of an argument, which would flip the last row of the table above to "No". cotel does not use it, because that row is the only one it changes: whoever can run `ps` inside the container can read `/proc/1/environ` too, so the same person reaches the same value by a path `--token-file` does not touch. It would need a tmpfs mount and a secret on disk to close nothing. Getting the token out of the container altogether means [local-config mode](./cloudflare-tunnel-local.md), where the credentials are a host-mounted file.
 
+## Keeping the tunnel up
+
+cloudflared does not run as the container's main process — cotel does — so for
+a long time a dead tunnel was invisible and permanent. It cost 11 h 39 min of
+telemetry on 2026-10-14: the host rebooted, cloudflared started before the
+host's resolver was usable, and edge discovery failed on the one DNS query it
+cannot retry past:
+
+```
+ERR edge discovery: error looking up Cloudflare edge IPs: the DNS query failed
+  error="lookup _v2-origintunneld._tcp.argotunnel.com on 127.0.0.11:53: no such host"
+INF Tunnel server stopped
+ERR Initiating shutdown
+```
+
+`restart: unless-stopped` never fired, because the process that died was not the
+one Docker watches. The container stayed `Up (healthy)` with `RestartCount` 0,
+the LAN ingest port kept answering, and every agent exporting to the public URL
+got Cloudflare 1033 until someone restarted the container by hand.
+
+Two things close that, both in this repo:
+
+- **`scripts/supervise-cloudflared.sh`** runs cloudflared and restarts it on
+  every exit, forever, waiting 1s and doubling up to `60s`
+  (`COTEL_TUNNEL_RESTART_BACKOFF_MAX`); a cloudflared that stayed up at least
+  that long resets the delay. The alternative — making the tunnel's death fatal
+  to the container so Docker's restart policy handles it — was rejected because
+  it couples a working data plane to an unreachable edge: dropping LAN ingest on
+  `:4318` over a DNS hiccup is the worse of the two failures.
+- **`/healthz` reports the tunnel.** The entrypoint points cloudflared's metrics
+  listener at `COTEL_TUNNEL_METRICS_ADDR` (`127.0.0.1:2000` by default) and
+  tells cotel where it is; `/healthz` then carries a `tunnel` object read from
+  cloudflared's `/ready`, so "the container is healthy and the tunnel is dead"
+  is a state an operator and a poller can both see. It is an added field and a
+  deliberate non-failure: see
+  [What `/healthz` returns](https://github.com/Flopsstuff/cotel/blob/main/README.md#what-healthz-returns).
+
+The supervisor is exercised by `bash scripts/supervise-cloudflared_test.sh`
+against a stub cloudflared — no Docker, no credentials, no network.
+
 ## Verifying the tunnel
 
 ```sh
-# Container logs — look for "cloudflared started in token mode"
+# Container logs — look for "cloudflared started in token mode under supervision",
+# then cloudflared's own "Registered tunnel connection" (one per edge connection)
 docker compose logs cotel
+
+# The tunnel as cotel sees it: ok plus the number of registered edge connections
+curl -s http://localhost:8080/healthz | python3 -m json.tool
 
 # Tunnel status in the Cloudflare dashboard:
 # Zero Trust → Networks → Tunnels → cotel → should show "Healthy"

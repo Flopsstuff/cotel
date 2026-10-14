@@ -5,20 +5,26 @@
 #   Local-config mode: /etc/cloudflared/config.yml mounted → cloudflared tunnel --config ... run
 # Token mode takes precedence if both are present. No tunnel is started if neither is set.
 #
+# cloudflared runs under scripts/supervise-cloudflared.sh, which restarts it for
+# as long as the container lives: on its own it exits for good on a failed edge
+# discovery, and nothing here would notice, because cotel is the main process.
+#
 # On SIGTERM/SIGINT the signal is forwarded to cotel first and we wait for it to
 # exit, so cotel can CHECKPOINT the DuckDB WAL before the container stops;
 # otherwise the next start replays the WAL (a multi-minute cost on a large DB).
 # cloudflared is stopped afterwards.
 
-CLOUDFLARED_PID=""
+CLOUDFLARED_SUPERVISOR_PID=""
 COTEL_PID=""
 CLOUDFLARED_CONFIG_DEFAULT=/etc/cloudflared/config.yml
+CLOUDFLARED_SUPERVISOR=/usr/local/bin/supervise-cloudflared.sh
+TUNNEL_METRICS_ADDR_DEFAULT=127.0.0.1:2000
 
 stop_cloudflared() {
-    if [ -n "${CLOUDFLARED_PID}" ]; then
-        echo "entrypoint: stopping cloudflared (PID ${CLOUDFLARED_PID})"
-        kill "${CLOUDFLARED_PID}" 2>/dev/null || true
-        wait "${CLOUDFLARED_PID}" 2>/dev/null || true
+    if [ -n "${CLOUDFLARED_SUPERVISOR_PID}" ]; then
+        echo "entrypoint: stopping the cloudflared supervisor (PID ${CLOUDFLARED_SUPERVISOR_PID})"
+        kill "${CLOUDFLARED_SUPERVISOR_PID}" 2>/dev/null || true
+        wait "${CLOUDFLARED_SUPERVISOR_PID}" 2>/dev/null || true
     fi
 }
 
@@ -47,20 +53,32 @@ trap terminate TERM INT
 cfd_token="${CLOUDFLARE_TUNNEL_TOKEN:-}"
 unset CLOUDFLARE_TUNNEL_TOKEN
 
+cfd_config="${CLOUDFLARED_CONFIG:-${CLOUDFLARED_CONFIG_DEFAULT}}"
+
+# cotel reports the tunnel's state on /healthz only when this variable reaches
+# it, so it is exported below exclusively on the paths that actually start a
+# tunnel. An operator-set value must not survive into a deployment with no
+# tunnel: a tokenless instance (local dev, CI) would then report a dead one.
+tunnel_metrics_addr="${COTEL_TUNNEL_METRICS_ADDR:-${TUNNEL_METRICS_ADDR_DEFAULT}}"
+unset COTEL_TUNNEL_METRICS_ADDR
+
 if [ -n "${cfd_token}" ]; then
-    # cloudflared 2026.4.0 changed the --edge-ip-version default from 4 to auto,
-    # which follows whichever family the resolver answers with first and only
-    # falls back to the other one after a connection has already failed. Keep
-    # the old default here, where cotel owns the whole invocation; local-config
-    # mode is left alone because this env var outranks a config.yml setting.
-    export TUNNEL_EDGE_IP_VERSION="${TUNNEL_EDGE_IP_VERSION:-4}"
-    cloudflared tunnel run --token "${cfd_token}" &
-    CLOUDFLARED_PID=$!
-    echo "entrypoint: cloudflared started in token mode (PID ${CLOUDFLARED_PID})"
-elif [ -f "${CLOUDFLARED_CONFIG:-${CLOUDFLARED_CONFIG_DEFAULT}}" ]; then
-    cloudflared tunnel --config "${CLOUDFLARED_CONFIG:-${CLOUDFLARED_CONFIG_DEFAULT}}" run &
-    CLOUDFLARED_PID=$!
-    echo "entrypoint: cloudflared started in local-config mode (PID ${CLOUDFLARED_PID})"
+    # Passed through the supervisor's environment rather than its arguments, so
+    # the token does not gain a second `ps` row; the supervisor unsets it before
+    # cloudflared inherits anything.
+    CLOUDFLARE_TUNNEL_TOKEN="${cfd_token}" \
+    COTEL_TUNNEL_METRICS_ADDR="${tunnel_metrics_addr}" \
+        "${CLOUDFLARED_SUPERVISOR}" &
+    CLOUDFLARED_SUPERVISOR_PID=$!
+    export COTEL_TUNNEL_METRICS_ADDR="${tunnel_metrics_addr}"
+    echo "entrypoint: cloudflared started in token mode under supervision (supervisor PID ${CLOUDFLARED_SUPERVISOR_PID}, metrics ${tunnel_metrics_addr})"
+elif [ -f "${cfd_config}" ]; then
+    CLOUDFLARED_CONFIG="${cfd_config}" \
+    COTEL_TUNNEL_METRICS_ADDR="${tunnel_metrics_addr}" \
+        "${CLOUDFLARED_SUPERVISOR}" &
+    CLOUDFLARED_SUPERVISOR_PID=$!
+    export COTEL_TUNNEL_METRICS_ADDR="${tunnel_metrics_addr}"
+    echo "entrypoint: cloudflared started in local-config mode under supervision (supervisor PID ${CLOUDFLARED_SUPERVISOR_PID}, metrics ${tunnel_metrics_addr})"
 fi
 
 /usr/local/bin/cotel "$@" &

@@ -25,6 +25,7 @@ import (
 	"github.com/Flopsstuff/cotel/internal/importpkg"
 	"github.com/Flopsstuff/cotel/internal/ingest"
 	"github.com/Flopsstuff/cotel/internal/storage"
+	"github.com/Flopsstuff/cotel/internal/tunnel"
 )
 
 func main() {
@@ -127,7 +128,13 @@ func main() {
 	dashMux.Handle("/api/v1/export", auth.Middleware(db, export.NewHandler(db)))
 	dashMux.Handle("/api/v1/import", auth.Middleware(db, importpkg.NewHandler(db)))
 	dashMux.Handle("/api/v1/", apiHandler)
-	dashMux.Handle("/", dashboard.New(ro))
+
+	dashHandler := dashboard.New(ro)
+	if prober := tunnel.FromEnv(); prober != nil {
+		dashHandler = dashHandler.SetTunnelProber(prober)
+		log.Printf("tunnel health on /healthz reads cloudflared metrics at %s", prober.Addr())
+	}
+	dashMux.Handle("/", dashHandler)
 
 	// Open the gates: from here the ports serve live traffic instead of 503.
 	srv.ingest.set(ingestMux)

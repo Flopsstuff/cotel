@@ -54,6 +54,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=builder /cotel /usr/local/bin/cotel
 COPY --from=cloudflared-dl /usr/local/bin/cloudflared /usr/local/bin/cloudflared
 COPY scripts/entrypoint.sh /usr/local/bin/entrypoint.sh
+COPY scripts/supervise-cloudflared.sh /usr/local/bin/supervise-cloudflared.sh
 
 # Data directory — mount a named volume here.
 VOLUME /data
