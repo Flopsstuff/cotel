@@ -240,8 +240,9 @@ expect "timeout is unreachable" 1 "unreachable" \
     env CONNECT_TIMEOUT=1 "$PROBE" "http://192.0.2.1:9/healthz"
 
 # A name that does not exist: curl rc 6. Must not share exit 1 with "prod down".
+# no_proxy so an environment-configured proxy cannot resolve the name for curl.
 expect "unresolvable name is observer dns, not unreachable" 7 "observer cannot resolve name" \
-    env CONNECT_TIMEOUT=2 "$PROBE" "http://no-such-host.invalid./healthz"
+    env CONNECT_TIMEOUT=2 NO_PROXY='*' no_proxy='*' "$PROBE" "http://no-such-host.invalid./healthz"
 
 # ---- the snapshot claim, read from /api/v1/health on a green /healthz ----
 

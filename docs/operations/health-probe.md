@@ -718,4 +718,4 @@ bash scripts/page-cotel-health_test.sh
 
 `probe-edge-ingest.sh` exit codes: `0` the ingest handler answered 401,
 `1` unreachable, `2` answered but not with the handler's 401, `4` Access now
-fronts the ingest host.
+fronts the ingest host, `7` observer cannot resolve name.
