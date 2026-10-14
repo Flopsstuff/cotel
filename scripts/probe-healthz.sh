@@ -30,15 +30,17 @@
 #
 # Exit codes:
 #   0  healthy
-#   1  unreachable (timeout, refused, DNS)
+#   1  unreachable (timeout, refused — after the name resolved)
 #   2  HTTP non-200
 #   3  200 but ingest is stale or the database has never accepted a span
 #   4  Cloudflare Access blocked the probe (cannot see /healthz)
 #   6  /healthz is green but the database has no current snapshot
+#   7  this host could not resolve the name (prod was never asked)
 #
 # 6 and not 5: ~/ops/cotel-healthz.sh already spends 5 on "the LAN half is
 # green and the public ingest half is not", and passes a probe's own code
-# through otherwise.
+# through otherwise. 7 is separate from 1 so the host wrapper can page an
+# observer-resolver alert without burning the prod /healthz streak.
 
 set -euo pipefail
 
@@ -129,14 +131,32 @@ set -e
 
 if [ "$CURL_RC" -ne 0 ]; then
     err="$(tr '\n' ' ' <"$ERR" | sed 's/[[:space:]]*$//')"
+    exit_code=1
     case "$CURL_RC" in
-        6)  why="dns lookup failed" ;;
+        6)
+            why="dns lookup failed"
+            exit_code=7
+            ;;
         7)  why="connection refused" ;;
-        28) why="timed out after ${CONNECT_TIMEOUT}s" ;;
+        28)
+            case "$err" in
+                *[Rr]esolv*)
+                    why="dns resolve timed out after ${CONNECT_TIMEOUT}s"
+                    exit_code=7
+                    ;;
+                *)
+                    why="timed out after ${CONNECT_TIMEOUT}s"
+                    ;;
+            esac
+            ;;
         *)  why="curl exit ${CURL_RC}" ;;
     esac
-    echo "probe-healthz: FAILED — unreachable (${why}${err:+; ${err}}) url=${URL}"
-    exit 1
+    if [ "$exit_code" -eq 7 ]; then
+        echo "probe-healthz: FAILED — observer cannot resolve name (${why}${err:+; ${err}}) url=${URL}"
+    else
+        echo "probe-healthz: FAILED — unreachable (${why}${err:+; ${err}}) url=${URL}"
+    fi
+    exit "$exit_code"
 fi
 
 if access_blocked "$HDRS" "$HTTP_CODE"; then

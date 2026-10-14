@@ -141,6 +141,11 @@ expect "connection refused is unreachable" 1 "public ingest unreachable" \
 expect "timeout is unreachable" 1 "public ingest unreachable" \
     env CONNECT_TIMEOUT=1 "$PROBE" "http://192.0.2.1:9/v1/traces"
 
+# A name that does not exist: curl rc 6. Must not share exit 1 with "ingest down".
+# no_proxy so an environment-configured proxy cannot resolve the name for curl.
+expect "unresolvable name is observer dns, not unreachable" 7 "observer cannot resolve name" \
+    env CONNECT_TIMEOUT=2 NO_PROXY='*' no_proxy='*' "$PROBE" "http://no-such-host.invalid./v1/traces"
+
 expect "a non-numeric timeout is rejected, not silently defaulted" 2 "CONNECT_TIMEOUT must be a positive integer" \
     env CONNECT_TIMEOUT=soon "$PROBE" "$BASE/v1/traces"
 

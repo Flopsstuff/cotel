@@ -55,12 +55,13 @@ they send the on-call looking in different places:
 
 | Probe verdict | Exit | Typical cause |
 |---|---|---|
-| `unreachable` | 1 | Process not listening, host down, or the tunnel is not forwarding |
+| `unreachable` | 1 | Process not listening, host down, or the tunnel is not forwarding (name already resolved) |
 | `HTTP 503 database unreadable` | 2 | Process is up; DuckDB is not |
 | `HTTP <other>` | 2 | Crash loop, proxy error, unexpected handler |
 | `ingest stale` / `empty database` | 3 | Process is up and the DB reads; spans are not being accepted |
 | `cloudflare access blocked` | 4 | Probe config, **not** an outage — see below |
 | `no current database snapshot` | 6 | Everything above is fine; the backup is not happening — see below |
+| `observer cannot resolve name` | 7 | The **prober host** could not resolve the name — production was never asked |
 
 A 200 with `ok: true` is not enough. Staleness is a body field
 (`newest_span_age_seconds`); the endpoint keeps 200 on a quiet instance so the
@@ -139,12 +140,13 @@ ingest handler. No Access service token is involved, and none is needed.
 | Probe verdict | Exit | Typical cause |
 |---|---|---|
 | `HTTP 401 from the ingest handler` | 0 | the public ingest path is up |
-| `public ingest unreachable` | 1 | DNS gone, connection refused, timeout — a blanked tunnel token looks like this |
+| `public ingest unreachable` | 1 | connection refused or timeout after resolve — a blanked tunnel token looks like this |
 | `cloudflare reached, the origin did not answer` | 2 | 502/530 and friends: the tunnel is up, the origin is not |
 | `/v1/traces is not routed` | 2 | 404 — wrong tunnel target, or the ingest port is not served |
 | `accepting unauthenticated spans` | 2 | 200 to an invalid token: reachable, but the auth policy is open |
 | `401 but not from the ingest handler` | 2 | a 401 whose body is not the application's JSON — an interstitial, not cotel |
 | `cloudflare access now fronts the ingest host` | 4 | Access was enabled on this host, which rejects every agent's spans too |
+| `observer cannot resolve name` | 7 | The **prober host** could not resolve the name — public ingest was never asked |
 
 Two deliberate narrownesses:
 
@@ -176,6 +178,15 @@ different people doing different things, so they never share an alert:
   that the application is alive and its public ingest path is not, and tell the
   reader to look at the tunnel and DNS rather than restart the container. The
   pager takes those from `PC_ALERT_SUBJECT` and `PC_ALERT_LEAD`.
+
+Exit **7** is a third class: the observer could not resolve the name, so
+production was never sampled. Collapsing it into exit 1 used to burn the prod
+streak and page "cotel prod /healthz is red" while a real public-ingest outage
+stayed invisible behind the resolver failure. The Pi wrapper therefore pages
+exit 7 under its own markers (`[cotel-observer-dns]` /
+`[cotel-observer-dns-edge]`), with their own streaks, and does **not** suppress
+the other half — a blind LAN half must not hide a red edge half. The alert text
+says production state is unknown and asks for a check from another machine.
 
 The LAN half needs the same split **inside** its one marker, because it reddens
 on two unrelated things: a `/healthz` that does not answer, and a `/healthz`
@@ -264,8 +275,9 @@ journalctl --user -u cotel-healthz.service -n 50
 ```
 
 `--probe-only` exits with the LAN probe's own code when that half is red
-(1 unreachable, 2 HTTP, 3 stale/empty), **5** when the LAN half is green and the
-public ingest half is not, and 0 when both are green. The sentinel is not the
+(1 unreachable, 2 HTTP, 3 stale/empty, 6 snapshot, 7 observer DNS), **5** when
+the LAN half is green and the public ingest half is not, and 0 when both are
+green. The sentinel is not the
 edge probe's own code on purpose: 1 and 2 would read as the LAN half's
 "unreachable" and "HTTP", which send the reader to the host instead of to
 Cloudflare.
@@ -701,8 +713,9 @@ bash scripts/page-cotel-health_test.sh
 ```
 
 `probe-healthz.sh` exit codes: `0` healthy, `1` unreachable, `2` HTTP non-200,
-`3` stale/empty, `4` Access blocked, `6` no current database snapshot.
+`3` stale/empty, `4` Access blocked, `6` no current database snapshot,
+`7` observer cannot resolve name.
 
 `probe-edge-ingest.sh` exit codes: `0` the ingest handler answered 401,
 `1` unreachable, `2` answered but not with the handler's 401, `4` Access now
-fronts the ingest host.
+fronts the ingest host, `7` observer cannot resolve name.

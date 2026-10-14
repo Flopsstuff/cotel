@@ -28,10 +28,14 @@
 #
 # Exit codes:
 #   0  the public ingest path is up (the application answered 401)
-#   1  unreachable (DNS, refused, timeout) — tunnel down or host gone
+#   1  unreachable (refused, timeout after resolve) — tunnel down or host gone
 #   2  something answered, but it was not the ingest handler's 401
 #   4  Cloudflare Access is in front of the ingest host — which also rejects
 #      every agent's spans, so it is an outage, not a probe-config problem
+#   7  this host could not resolve the name (public ingest was never asked)
+#
+# 7 is separate from 1 so ~/ops/cotel-healthz.sh can page an observer-resolver
+# alert without burning the public-ingest streak.
 
 set -euo pipefail
 
@@ -71,15 +75,33 @@ set -e
 
 if [ "$CURL_RC" -ne 0 ]; then
     err="$(tr '\n' ' ' <"$ERR" | sed 's/[[:space:]]*$//')"
+    exit_code=1
     case "$CURL_RC" in
-        6)  why="dns lookup failed" ;;
+        6)
+            why="dns lookup failed"
+            exit_code=7
+            ;;
         7)  why="connection refused" ;;
-        28) why="timed out after ${CONNECT_TIMEOUT}s" ;;
+        28)
+            case "$err" in
+                *[Rr]esolv*)
+                    why="dns resolve timed out after ${CONNECT_TIMEOUT}s"
+                    exit_code=7
+                    ;;
+                *)
+                    why="timed out after ${CONNECT_TIMEOUT}s"
+                    ;;
+            esac
+            ;;
         35|60) why="tls handshake failed" ;;
         *)  why="curl exit ${CURL_RC}" ;;
     esac
-    echo "probe-edge-ingest: FAILED — public ingest unreachable (${why}${err:+; ${err}}) url=${URL}"
-    exit 1
+    if [ "$exit_code" -eq 7 ]; then
+        echo "probe-edge-ingest: FAILED — observer cannot resolve name (${why}${err:+; ${err}}) url=${URL}"
+    else
+        echo "probe-edge-ingest: FAILED — public ingest unreachable (${why}${err:+; ${err}}) url=${URL}"
+    fi
+    exit "$exit_code"
 fi
 
 location="$(awk 'tolower($0) ~ /^location:/{sub(/^[^:]+:[[:space:]]*/,""); sub(/\r$/,""); print; exit}' "$HDRS")"
