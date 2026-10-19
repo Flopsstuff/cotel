@@ -45,12 +45,14 @@ ticket, an in-run red confirmation, and a measured staleness threshold.**
 Six things had to be true together; the first five copy `probe-ingest`, whose
 shape the board accepted in the same form.
 
-1. **Own marker: `[cotel-healthz-host]`.** New rather than reused. It must not
-   collide with `[cotel-ingest-edge]` — on one marker the two halves would
-   fight, a green tick on one asking for the close of an alert the other had
-   just raised — nor with the drill markers, nor with the script's default
-   `[cotel-health-probe]`, which belonged to the retired Pi timer and may still
-   have an alert standing under it that this job must not inherit.
+1. **Own marker: `[cotel-health-probe]`**, this half's historical one and the
+   pager script's default. What it must not be is `[cotel-ingest-edge]` — on one
+   marker the two halves would fight, a green tick on one asking for the close
+   of an alert the other had just raised — nor either drill marker. Reusing the
+   retired Pi timer's marker carries one precondition, that nothing is left
+   standing under it: an inherited open alert would dedup the first real outage
+   onto a ticket nobody is working. Every alert under it was closed before the
+   schedule was turned on, and only an *open* issue is ever a dedup target.
 2. **`PC_ALERT_MAX_AGE_H=0` and `PC_STILL_RED_WAKE=0`.** The staleness window
    off means an open alert is always the dedup target, so one outage mints
    exactly one ticket; the second drops the per-tick wake. Without the pair,
@@ -60,7 +62,7 @@ shape the board accepted in the same form.
    later red tick, so until it is closed the *next* outage wakes nobody.
    ADR-0025 records "we only need failure, so drop the green path" as the
    tempting mistake, and it silently disarms the watcher.
-4. **A coarse hourly recovery key, `healthz-host-<epoch/3600>`.** `PC_CALL_ID`
+4. **A coarse hourly recovery key, `health-probe-<epoch/3600>`.** `PC_CALL_ID`
    feeds the recovery wake's idempotency key and defaults to the run id. With
    the staleness window off an alert can stand for a long time, and a per-run
    key would make every green tick in the meantime mint another wake — 96
@@ -123,7 +125,7 @@ is independent of the instance's traffic shape.
   `gh run list --repo Flopsstuff/cotel --workflow=health-probe.yml --event=schedule`
   and empty output is the answer rather than an error.
 - **A second production marker exists, and the two must stay separate.**
-  `[cotel-healthz-host]` and `[cotel-ingest-edge]` watch different things from
+  `[cotel-health-probe]` and `[cotel-ingest-edge]` watch different things from
   different places and can be red independently: the tunnel outage of 2026-10-14
   was red on the ingest marker while `/healthz` answered 200 on the LAN
   throughout. Merging them would make each half's green tick close the other

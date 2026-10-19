@@ -137,6 +137,30 @@ bound, and the first person to rely on that is the one holding a silent outage.
   on the same schedule with one. Everywhere this record says "nothing asks
   `/healthz` on a schedule now" — the bullet above and the stale-ingest bullet
   before it — read ADR-0026 instead. The rest of this record stands as written.
+
+  The grant came with four conditions, and they are acceptance criteria rather
+  than advice. **One**, both pager steps fire on `inputs.page || github.event_name
+  == 'schedule'`: `schedule` supplies no inputs, so moving only the job's `if:`
+  would have produced a watcher that runs, goes red in Actions, and pages
+  nobody. **Two**, `PC_ALERT_MAX_AGE_H=0` and `PC_STILL_RED_WAKE=0`, the same
+  pair the ingest half carries — without them one outage mints up to 96 tickets
+  a day at `*/15`. **Three**, a production marker of its own, distinct from
+  `[cotel-ingest-edge]`, so that neither half's green tick closes the other
+  half's alert; the dispatch keeps paging a drill marker. **Four**, the snapshot
+  alert's wording is left alone — `scripts/page-cotel-health.sh` already titles
+  a snapshot failure `prod database snapshot` and leads with "the application is
+  alive; its backup is not".
+
+  Three things stay unwatched afterwards. The **dashboard host through
+  Cloudflare Access** — a working process behind a broken edge still reads
+  green, and the request for an Access token to close that was withdrawn, so
+  `probe-edge` remains a dispatch-only drill. **A deploy host that is off
+  produces no colour at all** rather than red: the run sits in the queue, and
+  `timeout-minutes` does not bound queue time. Measured on 2026-10-19, deploy
+  `3a6997f7` waited in the queue from 05:26Z to 11:27Z, six hours. That case is
+  what the external ingest half is for. And **GitHub still drops scheduled
+  ticks**, for this half exactly as for the other, so the detection delay stays
+  unbounded and "did it run" stays a measurement.
 - **Watching the worker is only half of watching the restore point, and the
   other half is not a watcher question.** What a lost snapshot worker actually
   costs is bounded by what the off-host copy holds, and that copy decays on its

@@ -92,7 +92,7 @@ as a drill.
 | Blind to | the database and ingest freshness: this check stops at the auth boundary; and its own dropped ticks | **its own host being down** — with the runner off the job queues, producing no colour at all; and its own dropped ticks | nothing in the path, but see the Access caveat below |
 | Access service token | **not needed** | not needed | required |
 | Ingest staleness window | n/a — never reads `/healthz` | **24 h** on a schedule, 6 h on a dispatch | 6 h |
-| Pages | **production** `[cotel-ingest-edge]` on a schedule, `[cotel-ingest-edge-drill]` on a dispatch | **production** `[cotel-healthz-host]` on a schedule, `[cotel-health-probe-drill]` on a dispatch | `[cotel-health-probe-drill-edge]` — drill only |
+| Pages | **production** `[cotel-ingest-edge]` on a schedule, `[cotel-ingest-edge-drill]` on a dispatch | **production** `[cotel-health-probe]` on a schedule, `[cotel-health-probe-drill]` on a dispatch | `[cotel-health-probe-drill-edge]` — drill only |
 
 **Neither scheduled job may be moved to the other's runner.** `probe-ingest`
 exists to hold an external vantage point, and the self-hosted alternative is
@@ -114,11 +114,14 @@ not a duplicate. A dispatch is separated from the schedule for the stronger
 version of the same reason — a drill must not touch a real alert; see
 [Running a drill](#running-a-drill).
 
-The script's own default marker, `[cotel-health-probe]`, belonged to the retired
-Pi timer and has no caller at all now. It is deliberately *not* reused by the
-scheduled `/healthz` job: an alert may still be standing under it, and
-inheriting one would make the new watcher start out deduped onto a ticket nobody
-is working.
+The scheduled `/healthz` job pages under `[cotel-health-probe]`, which is both
+this half's historical marker and the script's own default. The retired Pi timer
+used it before, so the thing to check before trusting it again is that no alert
+is left standing under it: an inherited one would dedup the first real outage
+onto a ticket nobody is working. Every alert under that marker was closed when
+the schedule was turned on; `scripts/page-cotel-health.sh` only ever treats an
+*open* issue carrying the exact `[marker]` as a dedup target, so a closed one
+costs nothing.
 
 ## What the `/healthz` probe checks
 
@@ -208,7 +211,7 @@ Exit **6** and not 5 because the retired `~/ops/cotel-healthz.sh` spends 5 on
 are a contract any future caller reads.
 
 This verdict pages under the `/healthz` caller's marker —
-`[cotel-healthz-host]` on the schedule — but not in its words: the alert is
+`[cotel-health-probe]` on the schedule — but not in its words: the alert is
 titled `cotel prod database snapshot is red` and leads with "the application is
 alive; its backup is not". See [the two halves are classified
 apart](#the-two-halves-are-classified-apart-and-page-apart).
@@ -345,7 +348,7 @@ are dropped independently, so neither can know the other's verdict for this
 minute. A dead process therefore pages twice, once per marker.
 
 Read that pair as one finding with two symptoms rather than two incidents. Which
-one to trust about *what* is fixed: `[cotel-healthz-host]` is the one that sees
+one to trust about *what* is fixed: `[cotel-health-probe]` is the one that sees
 the process, so start there; the ingest alert's own description already tells its
 reader to check `/healthz` before touching the tunnel. The reverse case is not
 redundancy at all — an ingest alert alone, with `/healthz` green, is the
@@ -448,13 +451,12 @@ confirmation are identical, which is what a drill is testing.
 
 Every rehearsal pages a **drill** marker, never a production one. The two
 production markers belong to a schedule only: `[cotel-ingest-edge]` to
-`probe-ingest` and `[cotel-healthz-host]` to `probe-loopback`. Dispatched, the
+`probe-ingest` and `[cotel-health-probe]` to `probe-loopback`. Dispatched, the
 same jobs pin `[cotel-ingest-edge-drill]` and `[cotel-health-probe-drill]`, and
 `probe-edge` pins `[cotel-health-probe-drill-edge]` unconditionally.
-`[cotel-health-probe]`, the script's default, has no caller at all.
 
 **Check the marker in the alert's title, not the job you dispatched.** A drill
-that mints `[cotel-healthz-host]` means the conditional broke and the drill just
+that mints `[cotel-health-probe]` means the conditional broke and the drill just
 filed a production outage; that is the one failure mode in this section worth
 looking for every time.
 
@@ -685,7 +687,7 @@ rather than reporting an alert nobody was assigned.
 | `PC_API_TOKEN` | required | Agent API key. Create-only on issues |
 | `PC_COMPANY_ID` | required | Company the alert is opened in |
 | `PC_ASSIGNEE_AGENT_ID` | Daedalus | Assignee of a new alert. The assignment is the wake |
-| `PC_ORIGIN_ID` | `cotel-health-probe` | Dedup marker. `probe-ingest` sets `cotel-ingest-edge` on a schedule and `cotel-ingest-edge-drill` on a dispatch; `probe-loopback` sets `cotel-healthz-host` on a schedule and `cotel-health-probe-drill` on a dispatch; `probe-edge` pins `cotel-health-probe-drill-edge`. Nothing uses the default, which belonged to the retired Pi timer |
+| `PC_ORIGIN_ID` | `cotel-health-probe` | Dedup marker. `probe-ingest` sets `cotel-ingest-edge` on a schedule and `cotel-ingest-edge-drill` on a dispatch; `probe-loopback` sets `cotel-health-probe` on a schedule and `cotel-health-probe-drill` on a dispatch; `probe-edge` pins `cotel-health-probe-drill-edge`. The scheduled `/healthz` job is the default's only caller |
 | `PC_ALERT_MAX_AGE_H` | `6` | Hours an open alert stays a dedup target on a red tick. `0` always dedups. Both scheduled jobs set `0` |
 | `PC_STILL_RED_WAKE` | `1` | Whether a red tick wakes the assignee of an already-open alert. `0` silences that wake and exits 0. Both scheduled jobs set `0` |
 | `PC_RUN_ID` | unset | Sent as `X-Paperclip-Run-Id` when set |
@@ -695,7 +697,7 @@ rather than reporting an alert nobody was assigned.
 | `GITHUB_ACTOR` | unset | Quoted into a new alert's body when set |
 | `HEALTHZ_URL` | unset | Named in the alert so the assignee re-probes the same URL |
 | `GITHUB_RUN_ID` | unset | Fallback for `PC_CALL_ID` |
-| `PC_CALL_ID` | `GITHUB_RUN_ID`, then `manual` | Unique half of the recovery idempotency key. Both scheduled jobs send an hourly bucket (`ingest-<epoch/3600>`, `healthz-host-<epoch/3600>`) rather than the run id: with the staleness window off an alert can stand for a long time, and a per-run key would make every green tick in the meantime mint another recovery wake. A dispatch keeps the run id — each drill is its own call |
+| `PC_CALL_ID` | `GITHUB_RUN_ID`, then `manual` | Unique half of the recovery idempotency key. Both scheduled jobs send an hourly bucket (`ingest-<epoch/3600>`, `health-probe-<epoch/3600>`) rather than the run id: with the staleness window off an alert can stand for a long time, and a per-run key would make every green tick in the meantime mint another recovery wake. A dispatch keeps the run id — each drill is its own call |
 | `PC_SOURCE_LINE` | names Actions | First paragraph of a new alert: who opened it. Override it if you are not the workflow |
 | `PC_REPROBE_HINT` | names a dispatch of `probe-loopback` | How the woken agent re-probes. Correct as-is only for `probe-loopback`'s own alerts; `probe-ingest` replaces it with `bash scripts/probe-edge-ingest.sh`, which runs from any machine with internet |
 | `PC_ALERT_SUBJECT` | classified from the verdict: `prod database snapshot` on a snapshot failure, else `prod /healthz` | What is red, in the title and in every wake reason. Correct as-is for `probe-loopback`; `probe-ingest` sets `public ingest at <host>` |
@@ -813,7 +815,7 @@ Three more details matter in operation:
   extreme: the same key forever means one wake per alert, and a dropped wake
   then leaves a resolved alert standing, while a per-run key means a wake per
   tick. So each scheduled job passes an hourly bucket — `ingest-<epoch/3600>`
-  and `healthz-host-<epoch/3600>`. The still-red wake buckets on a 6h window —
+  and `health-probe-<epoch/3600>`. The still-red wake buckets on a 6h window —
   `cotel-health-still-red:<alert id>:<epoch/21600>` — for the callers that
   leave it on; neither of these does.
 - **An alert assigned to anyone else is a pager failure, by name.** An agent

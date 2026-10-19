@@ -219,10 +219,10 @@ jobs:
       PC_COMPANY_ID: ${{ secrets.PAPERCLIP_COMPANY_ID }}
       # A dispatched run is an exercise and gets its own dedup marker, so a
       # drill can neither mint an alert that reads like an outage nor act on a
-      # standing real one. The scheduled marker is new rather than the script's
-      # default: the default belonged to the retired Pi timer and may still have
-      # an alert standing under it, which this job must not inherit.
-      PC_ORIGIN_ID: ${{ github.event_name == 'schedule' && 'cotel-healthz-host' || 'cotel-health-probe-drill' }}
+      # standing real one. The scheduled marker is this half's historical one,
+      # distinct from the ingest half's: on a shared marker a green tick from
+      # one half would ask for the close of an alert the other had just raised.
+      PC_ORIGIN_ID: ${{ github.event_name == 'schedule' && 'cotel-health-probe' || 'cotel-health-probe-drill' }}
       # These two are a pair. `0` switches the staleness window off, so an open
       # alert is always the dedup target and one outage mints exactly one
       # ticket; `PC_STILL_RED_WAKE=0` drops the per-tick wake that would
@@ -242,7 +242,7 @@ jobs:
       # call and wants its own recovery.
       - name: Bucket the recovery key for the scheduled run
         if: github.event_name == 'schedule'
-        run: echo "PC_CALL_ID=healthz-host-$(( $(date -u +%s) / 3600 ))" >> "$GITHUB_ENV"
+        run: echo "PC_CALL_ID=health-probe-$(( $(date -u +%s) / 3600 ))" >> "$GITHUB_ENV"
 
       # The pager is the only thing here that wakes anyone, and this runner is
       # a developer Mac rather than a managed image. Check its interpreters on
