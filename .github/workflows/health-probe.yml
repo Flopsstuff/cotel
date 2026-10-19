@@ -1,19 +1,34 @@
 name: Health probe
 
-# This workflow no longer schedules anything. `cron: "17 * * * *"` sat on the
-# default branch for nine hours and produced one run: GitHub schedules public
-# repositories on a best-effort basis and *drops* ticks rather than delaying
-# them, so the detection delay it bought was unbounded — the same silence the
-# probe exists to close. The scheduled probe is now a systemd timer on the Pi
-# (`~/ops/cotel-healthz.sh`, every 10 minutes), which owns the production alert
-# marker. See docs/operations/health-probe.md and ADR-0022.
+# One job here is scheduled, and it is a **best-effort watcher, not
+# monitoring**: `probe-ingest` asks the public OTLP ingest URL from outside
+# every network cotel lives in. GitHub schedules public repositories on a
+# best-effort basis and *drops* ticks rather than delaying them — measured in
+# this repository, one run out of the nine expected over nine hours — so the
+# detection delay it buys is unbounded. It is strictly better than nothing,
+# and that is the whole of what it promises. See
+# docs/operations/health-probe.md and ADR-0025.
 #
-# What is left here is dispatch-only: a drill of the pager, and the only
-# vantage point outside the LAN. Both jobs therefore page the *drill* markers,
-# never production.
+# That job is `ubuntu-latest` and must never be self-hosted. An observer inside
+# the network it observes shares the uplink and the power outlet with it and
+# goes down alongside it, which is why the 10-minute timer that used to own the
+# production marker was retired.
+#
+# The other two jobs are dispatch-only drills of the pager and page *drill*
+# markers, never production.
 on:
+  schedule:
+    # The cadence is free — a dropped tick costs nothing, a kept one costs one
+    # HTTP request — so it is set to the floor a reader would tolerate rather
+    # than to a budget. It does not bound the detection delay; nothing that
+    # runs here can.
+    - cron: "*/15 * * * *"
   workflow_dispatch:
     inputs:
+      ingest_url:
+        description: "Override the public OTLP ingest URL (empty = production ingest)"
+        required: false
+        default: ""
       url:
         description: "Override the edge /healthz URL (empty = production dashboard)"
         required: false
@@ -58,6 +73,114 @@ jobs:
         run: bash scripts/page-cotel-health_test.sh
       - name: Run snapshot mirror tests
         run: bash scripts/pull-snapshots_test.sh
+
+  probe-ingest:
+    name: Probe the public OTLP ingest
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: health-probe-ingest
+      cancel-in-progress: true
+    env:
+      INGEST_URL: ${{ inputs.ingest_url || 'https://otlp.aignite.pl/v1/traces' }}
+      CONNECT_TIMEOUT: "15"
+      PC_API_URL: ${{ secrets.PAPERCLIP_API_URL }}
+      PC_API_TOKEN: ${{ secrets.PAPERCLIP_API_TOKEN }}
+      PC_COMPANY_ID: ${{ secrets.PAPERCLIP_COMPANY_ID }}
+      # Cloudflare Access fronts the Paperclip API, so the pager needs this pair
+      # or every call to it comes back 302 and the alert is never created. The
+      # probe itself ignores them — the ingest host is not behind Access.
+      CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+      CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+      # The schedule is the only watcher cotel has, so it is the one caller in
+      # this workflow that pages a production marker. A dispatch is a rehearsal
+      # and gets its own, for the same reason the other two jobs do.
+      PC_ORIGIN_ID: ${{ github.event_name == 'schedule' && 'cotel-ingest-edge' || 'cotel-ingest-edge-drill' }}
+      # These two are a pair, and both differ from the pager's defaults, which
+      # were written for a watcher that ticked on a reliable schedule. `0`
+      # switches the staleness window off, so an open alert is always the dedup
+      # target and one outage mints exactly one ticket; `PC_STILL_RED_WAKE=0`
+      # drops the per-tick wake that would otherwise land about four times a
+      # day while that ticket stands. What it costs is that the recovery wake
+      # is now the only thing that re-arms this watcher — an alert nobody
+      # closes makes the next outage silent.
+      PC_ALERT_MAX_AGE_H: "0"
+      PC_STILL_RED_WAKE: "0"
+      GITHUB_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v5
+
+      # Every one of these overrides the pager's default, and the defaults are
+      # about the dashboard `/healthz` probed from a host on the LAN: left
+      # alone they would title this alert after a process that is working and
+      # send its reader to a dispatch whose runner may be the dead host.
+      - name: Word the alert for the public ingest
+        run: |
+          host="$(printf '%s' "$INGEST_URL" | sed -E 's#^[a-zA-Z][a-zA-Z0-9+.-]*://##; s#[/?].*$##')"
+          {
+            echo "PC_ALERT_SUBJECT=public ingest at ${host}"
+            echo 'PC_ALERT_LEAD=**Spans are being dropped right now.** The public OTLP ingest endpoint did not answer from outside, twice in a row a minute apart. Every agent exporting to it is writing into a hole, and what it sends during the outage is gone — nothing buffers it. This check stops at the auth boundary and never reaches `/healthz`, so it says nothing about the process: ask `/healthz` on the deploy host first. A green `/healthz` means the process and the database are fine and the fault is DNS, the Cloudflare tunnel or the ingest route — read the tunnel logs rather than restarting cotel itself. **The watcher that raised this is best-effort and drops ticks, so the outage may have begun long before this alert.**'
+            echo 'PC_REPROBE_HINT=Re-probe from any machine with internet and a cotel checkout: `bash scripts/probe-edge-ingest.sh`. It needs no credential, and green is exactly HTTP 401 from the ingest handler. Do **not** re-probe by dispatching the loopback half of **Health probe** — that runner sits on the deploy host, which is one of the hosts that may be down. To rehearse this path instead, dispatch **Health probe** with `ingest_url` pointing at a dead URL and **page** checked.'
+            # A coarse bucket rather than this run id. With the staleness window
+            # off an alert can stand for a long time, and a per-run key would
+            # make every green tick in the meantime mint another recovery wake.
+            echo "PC_CALL_ID=ingest-$(( $(date -u +%s) / 3600 ))"
+          } >> "$GITHUB_ENV"
+
+      - name: Probe the public ingest
+        run: |
+          set -o pipefail
+          mkdir -p "$RUNNER_TEMP"
+          PROBE_OUT="$RUNNER_TEMP/probe-ingest.out"
+          probe() {
+            set +e
+            scripts/probe-edge-ingest.sh | tee "$PROBE_OUT"
+            PROBE_RC=${PIPESTATUS[0]}
+            set -e
+          }
+          # The failure streak lives inside this one run, because there is
+          # nowhere between runs to keep it: ticks are dropped, so "two runs in
+          # a row" is not a quantity this watcher can count. One Cloudflare 5xx
+          # must still not mint a ticket, hence the second look a minute later.
+          # Exit 7 is not a red to confirm — it is this runner failing DNS.
+          probe
+          if [ "$PROBE_RC" != "0" ] && [ "$PROBE_RC" != "7" ]; then
+            echo "first probe exited ${PROBE_RC}; looking again in 60s and paging only if that is red too"
+            sleep 60
+            probe
+          fi
+          echo "PROBE_OUT=$PROBE_OUT" >> "$GITHUB_ENV"
+          echo "PROBE_RC=$PROBE_RC" >> "$GITHUB_ENV"
+
+      # Paging failures are a warning, never the job's verdict: this job's
+      # colour must mean "the public ingest is up or down" and nothing else.
+      - name: Page Paperclip on red
+        if: env.PROBE_RC != '0' && env.PROBE_RC != '7' && (github.event_name == 'schedule' || inputs.page)
+        run: |
+          scripts/page-cotel-health.sh raise "$PROBE_OUT" \
+            || echo "::warning title=Pager failed::could not raise the Paperclip alert; nobody was woken for this red probe"
+
+      # Not optional, even though this watcher only has to detect failure: with
+      # the staleness window off, the open alert dedups every later red tick,
+      # so until it is closed the *next* outage wakes nobody. One wake on
+      # recovery is what re-arms the pager.
+      - name: Wake the alert's assignee on green
+        if: env.PROBE_RC == '0' && (github.event_name == 'schedule' || inputs.page)
+        run: |
+          scripts/page-cotel-health.sh resolve "$PROBE_OUT" \
+            || echo "::warning title=Pager failed::could not wake the alert's assignee; the standing Paperclip alert will keep deduping later red probes"
+
+      - name: Report the probe verdict
+        if: env.PROBE_RC != '0'
+        run: |
+          cat "$PROBE_OUT"
+          if [ "$PROBE_RC" = "7" ]; then
+            echo "::warning title=This watcher could not resolve the ingest name::DNS failed on the runner, so the public ingest was never asked. That is a defect in the observer, not evidence about cotel, and there is nothing to page."
+            exit 0
+          fi
+          echo "probe-edge-ingest exited ${PROBE_RC}"
+          exit 1
 
   probe-loopback:
     name: Probe /healthz on the deploy host

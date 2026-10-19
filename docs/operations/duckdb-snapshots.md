@@ -78,12 +78,16 @@ docker run --rm -v cotel-snapshots:/snapshots debian:bookworm-slim \
 
 ## Who is watching it
 
-Nobody has to remember to run the command above: the scheduled health probe
-asks the same endpoint. The LAN half of
-[the 10-minute tick](./health-probe) reads `/healthz` first and, when that is
-green, asks `/api/v1/health` and classifies the `snapshot` object. A red verdict
-pages the same way a dead process does — two consecutive failures, the
-`[cotel-health-probe]` marker, an issue whose assignment wakes an agent.
+**Nobody is, as of 2026-10-14.** `scripts/probe-healthz.sh` reads `/healthz`
+first and, when that is green, asks `/api/v1/health` and classifies the
+`snapshot` object — a red verdict pages under the `[cotel-health-probe]`
+marker, as an issue whose assignment wakes an agent. That still works, from any
+machine on the LAN, but **no schedule runs it**: the 10-minute timer that did
+was retired by board order, and the one scheduled watcher cotel has left asks
+the public ingest URL only. See
+[Production health probes](./health-probe#what-this-watcher-cannot-see). Until
+something schedules this probe again, a stopped snapshot worker is found by
+running the command above by hand.
 
 The claim is deliberately **not** on `/healthz`. That endpoint is the container
 liveness contract: `cotel --healthcheck`, the Docker `HEALTHCHECK` and
