@@ -51,8 +51,6 @@ on:
       - "scripts/probe-edge-ingest_test.sh"
       - "scripts/page-cotel-health.sh"
       - "scripts/page-cotel-health_test.sh"
-      - "scripts/pull-snapshots.sh"
-      - "scripts/pull-snapshots_test.sh"
       - ".github/workflows/health-probe.yml"
 
 permissions:
@@ -71,8 +69,6 @@ jobs:
         run: bash scripts/probe-edge-ingest_test.sh
       - name: Run pager tests
         run: bash scripts/page-cotel-health_test.sh
-      - name: Run snapshot mirror tests
-        run: bash scripts/pull-snapshots_test.sh
 
   probe-ingest:
     name: Probe the public OTLP ingest
