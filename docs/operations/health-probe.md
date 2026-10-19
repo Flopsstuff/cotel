@@ -400,8 +400,16 @@ A real outage does not have this problem: production is still red when the
 assignee re-probes, so they add evidence instead of closing, and the alert is
 there for the next tick to dedup into. To drill those two legs anyway, the
 assignee has to agree in advance to **leave the alert open for about three
-minutes**. Without that agreement, dispatch 1 is the only leg a drill proves,
-and the dedup and still-red behaviour is covered by
+minutes** — which means drilling them from the assignee's own run, since they
+are the one who would otherwise close it.
+
+**Dispatch 2 has been drilled live that way, and it behaved.** The second red
+dispatch reached its pager 104 seconds after the create, while the alert was
+still open, and the step log read `… is open and still-red wakes are off; woke
+nobody`; no second issue carried the drill marker. The window existed only
+because the assignment run took longer than usual to close that alert, so
+budget for a retry rather than one attempt. Where no such window opens, the
+dedup and still-red behaviour is covered by
 `scripts/page-cotel-health_test.sh` instead.
 
 **The recovery leg is squeezed from both sides, and the same agreement is what
@@ -471,10 +479,15 @@ the green run's log, to the second. If that row says `status: coalesced`, the
 drill did not exercise the recovery path, whatever the other rows say and
 however the alert ended.
 
-No drill has yet caught the recovery wake *starting* a run. Four pairs have
+No drill has yet caught the recovery wake *starting* a run. Five pairs have
 closed the alert unattended, and the third proved the raise path did not do it
 — its assignment run had finished two minutes earlier — but in every pair the
-recovery wake was folded into a run that already held the alert. That branch is
+recovery wake was folded into a run that already held the alert. The fifth was
+dispatched green 11 seconds after the create, specifically to beat the close,
+and read the same: `requestedAt 05:20:28.556Z`, `status: coalesced`,
+`coalescedCount: 1`, the assignment run's id. Beating the close and catching
+the recovery wake alone are the same 20-second window, so hurrying does not
+open it. That branch is
 the ordinary production shape (an alert standing for an hour has no live run),
 and it is the same `wakeup` call the assignment path makes, so the risk is low
 and the gap is in the evidence, not in the mechanism. Say which of the two you
@@ -754,16 +767,16 @@ create an issue, and wake its own agent. An agent key cannot wake anyone else,
 which is why an alert assigned elsewhere is a named pager failure rather than
 something the pager steps over, and why the drill's page arrives on Daedalus.
 
-Four secrets, not three. Alongside `PAPERCLIP_API_URL`,
-`PAPERCLIP_API_TOKEN` and `PAPERCLIP_COMPANY_ID`, a paging job needs
-`CF_ACCESS_CLIENT_ID` / `CF_ACCESS_CLIENT_SECRET`, because Cloudflare Access
-fronts the Paperclip API. A job that sets only the first three probes and fails
-and *looks* like it paged — the pager's failure is a `::warning`, the job is
-already red from the probe, and the only sign is
+Five secrets, not three. Alongside `PAPERCLIP_API_URL`,
+`PAPERCLIP_API_TOKEN` and `PAPERCLIP_COMPANY_ID`, a paging job needs the
+`CF_ACCESS_CLIENT_ID` / `CF_ACCESS_CLIENT_SECRET` pair, because Cloudflare
+Access fronts the Paperclip API. A job that sets only the first three probes,
+fails to page, and *looks* like it paged — the pager's failure is a
+`::warning`, the job is already red from the probe, and the only sign is
 `issue search: HTTP 302` in the step log. That is why a drill's verdict is
 whether the page arrived, never the job's colour.
 
-None of them had to be minted for this watcher: all four were already
+None of them had to be minted for this watcher: all five were already
 repository secrets, and `probe-edge-ingest.sh` itself needs none at
 all. A board API key — instance-admin authority over the whole tracker, handed
 to a public repository's CI — was refused in

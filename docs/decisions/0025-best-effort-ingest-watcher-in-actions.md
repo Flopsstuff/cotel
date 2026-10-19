@@ -117,8 +117,10 @@ bound, and the first person to rely on that is the one holding a silent outage.
   other conclusions stand independently and are restated here where they still
   apply.
 - **No new credential, and nothing for the board to do.**
-  `PAPERCLIP_API_URL`, `PAPERCLIP_API_TOKEN` and `PAPERCLIP_COMPANY_ID` were
-  already repository secrets, and the probe itself needs none at all.
+  `PAPERCLIP_API_URL`, `PAPERCLIP_API_TOKEN`, `PAPERCLIP_COMPANY_ID` and the
+  `CF_ACCESS_CLIENT_ID` / `CF_ACCESS_CLIENT_SECRET` pair the Paperclip API sits
+  behind were already repository secrets, and the probe itself needs none at
+  all.
   [ADR-0021](./0021-recovery-wakes-the-alerts-assignee)'s refusal of a board API
   key in a public repository's CI stands untouched.
 - **Option 3 is kept as the upgrade path, not discarded.** If a fine-grained
