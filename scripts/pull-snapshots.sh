@@ -27,6 +27,13 @@
 #   scripts/pull-snapshots.sh              # one tick: pull what is missing, prune
 #   scripts/pull-snapshots.sh --status     # is the mirror current?
 #   scripts/pull-snapshots.sh --dry-run    # what a tick would do; writes nothing
+#   scripts/pull-snapshots.sh --status --max-lag 24h   # exit 5 if staler than that
+#
+# Nothing schedules this pull (ADR-0024), so the mirror's lag is the time since
+# the last run and `--status` read by a person is the only signal there is.
+# `--max-lag` turns that reading into an exit code, so whatever eventually runs
+# on a schedule — a unit, a CI job, a person's shell — gets a verdict instead of
+# a duration to interpret.
 #
 # Env:
 #   SNAPSHOT_SSH_HOST       default robmini
@@ -42,6 +49,7 @@
 #   2   remote listing empty or malformed
 #   3   a pulled snapshot failed verification (sha256 or manifest); nothing landed
 #   4   mirror directory missing or unwritable
+#   5   --status --max-lag only: the mirror is staler than the threshold
 #   64  invalid invocation or configuration (not a tick outcome)
 #
 # Needs only ssh, tar, sha256sum, jq and the standard text tools (awk, sed,
@@ -68,6 +76,10 @@ Usage:
   scripts/pull-snapshots.sh --status     is the mirror current?
   scripts/pull-snapshots.sh --dry-run    what a tick would do; writes nothing
 
+  --max-lag <duration>   with --status: exit 5 unless the mirror's lag behind
+                         the source is within <duration>. Accepts 90s, 30m,
+                         24h, 7d, or bare seconds.
+
 Env:
   SNAPSHOT_SSH_HOST       default robmini
   SNAPSHOT_VOLUME         default cotel-snapshots
@@ -82,6 +94,7 @@ Exit codes:
   2   remote listing empty or malformed
   3   a pulled snapshot failed verification; nothing landed
   4   mirror directory missing or unwritable
+  5   --status --max-lag only: the mirror is staler than the threshold
   64  invalid invocation or configuration
 EOF
 }
@@ -93,17 +106,53 @@ die() { # $1 message, $2 exit code
     exit "$2"
 }
 
-MODE=tick
-if [ "$#" -gt 1 ]; then
-    die "too many arguments; one of --status, --dry-run, --help" 64
+parse_duration() { # $1 like 90s, 30m, 24h, 7d or bare seconds -> seconds on stdout
+    local v="$1" n u
+    n="${v%[smhd]}"
+    u="${v#"$n"}"
+    case "$n" in ''|*[!0-9]*) return 1 ;; esac
+    case "$u" in
+        ''|s) echo "$n" ;;
+        m)    echo "$((n * 60))" ;;
+        h)    echo "$((n * 3600))" ;;
+        d)    echo "$((n * 86400))" ;;
+        *)    return 1 ;;
+    esac
+}
+
+MODE=""
+MAX_LAG=""
+want_mode() { # $1 mode name
+    if [ -n "$MODE" ]; then
+        die "one mode at a time; got --${MODE} and --${1}" 64
+    fi
+    MODE="$1"
+}
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --status)      want_mode status ;;
+        --dry-run)     want_mode dry-run ;;
+        --max-lag)
+            shift
+            MAX_LAG="${1:-}"
+            [ -n "$MAX_LAG" ] || die "--max-lag needs a duration, e.g. --max-lag 24h" 64
+            ;;
+        --max-lag=*)   MAX_LAG="${1#*=}" ;;
+        -h|--help)     usage; exit 0 ;;
+        *)             die "unknown argument '${1}'; one of --status [--max-lag <duration>], --dry-run, --help" 64 ;;
+    esac
+    shift
+done
+MODE="${MODE:-tick}"
+
+if [ -n "$MAX_LAG" ]; then
+    if [ "$MODE" != "status" ]; then
+        die "--max-lag is a verdict on --status; it does not apply to a ${MODE}" 64
+    fi
+    if ! MAX_LAG_SECONDS="$(parse_duration "$MAX_LAG")"; then
+        die "--max-lag wants a duration like 90s, 30m, 24h or 7d, got '${MAX_LAG}'" 64
+    fi
 fi
-case "${1:-}" in
-    "")           MODE=tick ;;
-    --status)     MODE=status ;;
-    --dry-run)    MODE=dry-run ;;
-    -h|--help)    usage; exit 0 ;;
-    *)            die "unknown argument '${1}'; one of --status, --dry-run, --help" 64 ;;
-esac
 
 if ! [ "$SSH_TIMEOUT" -gt 0 ] 2>/dev/null; then
     die "SNAPSHOT_SSH_TIMEOUT must be a positive integer, got '${SSH_TIMEOUT}'" 64
@@ -350,7 +399,7 @@ do_status() {
     remote_instants "$remote"
     bytes="$(du -sh "$MIRROR_DIR" 2>/dev/null | cut -f1)"
 
-    local ln le rn re lagline
+    local ln le rn re lagline lag_seconds=-1
     ln="$(newest_of "$local_list")"
     rn="$(newest_of "$remote")"
     re="$(instant_epoch "$rn")"
@@ -367,15 +416,28 @@ do_status() {
     if [ -z "$ln" ]; then
         lagline="unknown — the mirror is empty"
     elif [ "$ln" = "$rn" ]; then
+        lag_seconds=0
         lagline="0s — the mirror holds the newest source snapshot"
     else
-        lagline="$(fmt_age $((re - le))) behind the source"
+        lag_seconds=$((re - le))
+        lagline="$(fmt_age "$lag_seconds") behind the source"
     fi
     echo "  lag          ${lagline}"
 
     local missing
     missing="$(LC_ALL=C comm -23 "$remote" "$local_list" | grep -c . || true)"
     echo "  to pull      ${missing} source snapshot(s) not here yet"
+
+    if [ -n "$MAX_LAG" ]; then
+        echo "  threshold    ${MAX_LAG} — lag within this is a pass"
+        if [ "$lag_seconds" -lt 0 ]; then
+            die "the mirror holds no complete snapshot, so it is not within ${MAX_LAG} of the source" 5
+        fi
+        if [ "$lag_seconds" -gt "$MAX_LAG_SECONDS" ]; then
+            die "the mirror is $(fmt_age "$lag_seconds") behind the source, over the ${MAX_LAG} threshold; run a tick" 5
+        fi
+        echo "  verdict      fresh — within ${MAX_LAG} of the source"
+    fi
 }
 
 do_dry_run() {

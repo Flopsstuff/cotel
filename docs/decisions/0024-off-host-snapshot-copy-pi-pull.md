@@ -1,7 +1,8 @@
 # ADR 0024 - The off-host copy is a Pi-side pull, and it cannot be an rsync of the volume
 
 **Date:** 2026-10-12
-**Status:** Accepted, except the schedule - see **Not scheduled** under Decision
+**Status:** Accepted; the schedule was declined, and its absence is an accepted price as
+of 2026-10-19 - see **The price of no schedule**
 **Deciders:** Prospero (CEO, risk model and mechanism), Daedalus (CTO, transport and implementation)
 
 ---
@@ -103,6 +104,9 @@ container of the image cotel's own runtime is built on, which is already on that
 > `scripts/pull-snapshots.sh`, and its freshness is unknown until `--status` is read.
 > Everything else below shipped and is live - the transport, the mirror, the
 > verification and the pruning rule.
+>
+> **The absence of a schedule is now the accepted price, not a pending request
+> (2026-10-19).** See **The price of no schedule** below for what it costs, measured.
 
 - **The script lives in this repo** (`scripts/pull-snapshots.sh`), and the timer in
   `~/ops` materializes it from `origin/main` at each tick. That is
@@ -117,7 +121,7 @@ container of the image cotel's own runtime is built on, which is already on that
   that can be committed, and outside `~/ops/reports/`, which is swept on a 31-day
   retention rule that has nothing to do with this data.
 - **The mirror does not mirror deletions.** It prunes on its own count
-  (`COTEL_SNAPSHOT_MIRROR_KEEP`, default 56, never below one), and it never deletes a
+  (`SNAPSHOT_MIRROR_KEEP`, default 56, never below one), and it never deletes a
   local snapshot because the source stopped having it. A sync that propagated source
   deletions would faithfully reproduce the one accident ADR-0023 named as newly
   dangerous - `docker volume prune` on a stopped deploy - into the copy that exists to
@@ -125,6 +129,46 @@ container of the image cotel's own runtime is built on, which is already on that
   it must not be "simplified" later.
 - **Verification is per-file sha256 against the source, plus the manifest**, checked on
   every pulled directory; a directory that fails either is removed and the tick fails.
+
+---
+
+## The price of no schedule (2026-10-19)
+
+The schedule was asked for twice and declined twice at the gate that owns `~/ops` - the
+second time against a full description of the four files it would have added and with a
+day of measured lag on the table. That is a decision, not a pending question, so the
+cost of paying it belongs in this ADR rather than in a third request.
+
+**What it cost in the first week.** Measured 2026-10-19: the mirror was **5 d 18 h and 23
+instants** behind, with the snapshot worker on the source healthy for every one of those
+instants. The copy was six days old because six days had passed since a person last ran
+the command, which is exactly the mechanism and not an incident.
+
+**Two costs, and they are different numbers.**
+
+| | |
+|---|---|
+| **Recovery point**, if robmini is lost right now | everything since the mirror's newest instant - i.e. `lag`, the time since the last manual tick. Unbounded in principle; 5 d 18 h observed |
+| **History that can never be mirrored** | any instant the source pruned before a tick reached it. At `COTEL_SNAPSHOT_KEEP=56` and `6h` that is **14 days** of reach, so a gap longer than that between ticks leaves a permanent hole - and unlike `lag`, a later tick does not repair it |
+
+The second one is the one worth watching, because it is the only irreversible half. Two
+levers move it without touching `~/ops`, and neither is taken here: raising
+`COTEL_SNAPSHOT_KEEP` at the source widens the window a manual rhythm has to beat, and
+a Paperclip routine on this host could tick the pull at the cost of an agent run per
+tick. If the observed rhythm ever exceeds 14 days, take the first one.
+
+**What is not claimed.** None of this is detection. Nothing on this host runs on a
+schedule for this mirror, so nothing can notice the lag growing; the only signal remains
+`--status`, read by a person. The one thing that improved is that the reading is now a
+verdict rather than a duration to interpret: `--status --max-lag <duration>` exits `5`
+when the mirror is outside the threshold (and when it holds no snapshot at all), so the
+check is a single command for a person and needs no parsing from whatever eventually runs
+on a schedule. **A threshold with no runner is not a watcher**, and this does not pretend
+otherwise - the green half of the earlier watcher taught exactly that lesson.
+
+**Revisit when:** a measured gap between ticks approaches 14 days, or the data stops
+being operational telemetry (the same condition that reopens off-site, under Consequences
+below). Either one makes the schedule a question again rather than a settled price.
 
 ---
 
