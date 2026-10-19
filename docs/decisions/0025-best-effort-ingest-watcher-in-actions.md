@@ -131,6 +131,18 @@ bound, and the first person to rely on that is the one holding a silent outage.
   restore point is found only by hand**, by running `scripts/probe-healthz.sh`
   from any machine on the LAN. That is the price, recorded rather than
   discovered.
+- **Watching the worker is only half of watching the restore point, and the
+  other half is not a watcher question.** What a lost snapshot worker actually
+  costs is bounded by what the off-host copy holds, and that copy decays on its
+  own: [ADR-0024](./0024-off-host-snapshot-copy-pi-pull)'s pull has no
+  schedule, so the mirror is only as current as the last person who ran it.
+  Measured for the first time on 2026-10-19, it was **5d18h and 23 instants
+  behind** a source whose worker had been healthy throughout — a pager on
+  `/api/v1/health` would have been green across that entire window, because
+  nothing was wrong at the end it watches. Granting that pager therefore closes
+  one of two independent ways the restore point rots, and the larger one on this
+  evidence is the unscheduled pull. Read `scripts/pull-snapshots.sh --status`
+  before concluding anything about recoverability from a green probe.
 - **Reaching `/healthz` through Cloudflare Access is closed, and not on
   technical grounds.** The `CF_ACCESS_CLIENT_ID` / `CF_ACCESS_CLIENT_SECRET`
   pair still gets HTTP 302 from `https://cotel.aignite.pl/healthz` (runs

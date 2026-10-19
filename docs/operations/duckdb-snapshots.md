@@ -381,7 +381,10 @@ source, with the drill in
   the Pi over the existing LAN ssh path, with premises loss accepted as
   uncovered because it is another machine in the same building. That pull is
   **unscheduled** - a mirror is only as current as its last tick, and here the
-  last tick was a person, so read `--status` instead of assuming.
+  last tick was a person, so read `--status` instead of assuming. Measured once,
+  on 2026-10-19: **5d18h and 23 instants behind**, while the worker on the
+  source was healthy the whole time. A green snapshot verdict says the worker
+  runs, not that an off-host copy of its output exists.
 - **`docker volume prune`.** The snapshots volume is only "in use" while the
   container exists, so a prune on a stopped deploy takes the backups with it.
   This is the one new way the volume layout can bite; no code can prevent it.
