@@ -404,6 +404,18 @@ minutes**. Without that agreement, dispatch 1 is the only leg a drill proves,
 and the dedup and still-red behaviour is covered by
 `scripts/page-cotel-health_test.sh` instead.
 
+**The recovery leg is squeezed from both sides, and the same agreement is what
+opens it.** A green dispatch reaches its pager in about 20 seconds — it does not
+re-probe, so it has no 60-second wait — which is fast enough to beat the close.
+But at 20 seconds the alert's own assignment run is still live, so the recovery
+wake is *coalesced* into it: measured at `requestedAt 05:08:22.670Z`,
+`source: automation`, `status: coalesced`, sharing the assignment run's id.
+Wait long enough for that run to finish and the alert is closed instead. So
+there is no gap, in a drill, where the recovery wake both lands and starts a
+run of its own — and the pager's own log line cannot tell you which happened,
+because a coalesced wake is answered with the id of the run that absorbed it.
+Read `diagnostics/wakes` and match by `requestedAt`.
+
 A red dispatch also runs `probe-loopback` and `probe-edge`, which probe the real
 endpoints on their own drill markers. Against a healthy production neither of
 them pages, but if the self-hosted runner is offline `probe-loopback` queues and
@@ -459,7 +471,7 @@ the green run's log, to the second. If that row says `status: coalesced`, the
 drill did not exercise the recovery path, whatever the other rows say and
 however the alert ended.
 
-No drill has yet caught the recovery wake *starting* a run. Three pairs have
+No drill has yet caught the recovery wake *starting* a run. Four pairs have
 closed the alert unattended, and the third proved the raise path did not do it
 — its assignment run had finished two minutes earlier — but in every pair the
 recovery wake was folded into a run that already held the alert. That branch is
