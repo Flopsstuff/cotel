@@ -381,11 +381,28 @@ Drill the scheduled watcher by dispatching **Health probe** three times, with
 | 2 | `http://127.0.0.1:9/v1/traces` | red again → **no** second ticket and **no** still-red wake: `PC_ALERT_MAX_AGE_H=0` makes the open alert the dedup target and `PC_STILL_RED_WAKE=0` silences the wake |
 | 3 | empty (production ingest) | green → **recovery wake** to the alert's assignee, who closes it |
 
-The job takes about 80 seconds on a red dispatch: two probes a minute apart.
-Dispatch 2 is the board's "one ticket per outage" rule under test, and its
-verdict is not the job's colour — the job is red on both 1 and 2 either way.
-Read the pager's own line in the step log (`… is open and still-red wakes are
-off; woke nobody`) and confirm no second issue carries the drill marker.
+Dispatch 2 is the "one ticket per outage" rule under test, and its verdict is
+not the job's colour — the job is red on both 1 and 2 either way. Read the
+pager's own line in the step log (`… is open and still-red wakes are off; woke
+nobody`) and confirm no second issue carries the drill marker.
+
+**Dispatches 2 and 3 only mean something while the alert is still open, and in
+a drill it usually is not.** The assignee is woken by the create, re-probes the
+*real* ingest as the alert tells them to, finds it green, and closes the alert
+— measured at 58 and 85 seconds after the create. One dispatch cannot reach its
+pager step faster than about 80 seconds (queue and checkout, then the 60-second
+re-probe), and `cancel-in-progress` forbids overlapping the next dispatch with
+the current one, so the second red tick arrives *after* the alert is already
+closed and correctly opens a fresh one. That reads exactly like a dedup failure
+and is not one.
+
+A real outage does not have this problem: production is still red when the
+assignee re-probes, so they add evidence instead of closing, and the alert is
+there for the next tick to dedup into. To drill those two legs anyway, the
+assignee has to agree in advance to **leave the alert open for about three
+minutes**. Without that agreement, dispatch 1 is the only leg a drill proves,
+and the dedup and still-red behaviour is covered by
+`scripts/page-cotel-health_test.sh` instead.
 
 A red dispatch also runs `probe-loopback` and `probe-edge`, which probe the real
 endpoints on their own drill markers. Against a healthy production neither of
