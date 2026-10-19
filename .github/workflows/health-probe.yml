@@ -88,6 +88,11 @@ jobs:
       PC_API_URL: ${{ secrets.PAPERCLIP_API_URL }}
       PC_API_TOKEN: ${{ secrets.PAPERCLIP_API_TOKEN }}
       PC_COMPANY_ID: ${{ secrets.PAPERCLIP_COMPANY_ID }}
+      # Cloudflare Access fronts the Paperclip API, so the pager needs this pair
+      # or every call to it comes back 302 and the alert is never created. The
+      # probe itself ignores them — the ingest host is not behind Access.
+      CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+      CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
       # The schedule is the only watcher cotel has, so it is the one caller in
       # this workflow that pages a production marker. A dispatch is a rehearsal
       # and gets its own, for the same reason the other two jobs do.

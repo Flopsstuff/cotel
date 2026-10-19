@@ -556,7 +556,7 @@ rather than reporting an alert nobody was assigned.
 | `PC_ALERT_MAX_AGE_H` | `6` | Hours an open alert stays a dedup target on a red tick. `0` always dedups. `probe-ingest` sets `0` |
 | `PC_STILL_RED_WAKE` | `1` | Whether a red tick wakes the assignee of an already-open alert. `0` silences that wake and exits 0. `probe-ingest` sets `0` |
 | `PC_RUN_ID` | unset | Sent as `X-Paperclip-Run-Id` when set |
-| `CF_ACCESS_CLIENT_ID`, `CF_ACCESS_CLIENT_SECRET` | unset | Same pair as issue-sync, when the API is behind Access |
+| `CF_ACCESS_CLIENT_ID`, `CF_ACCESS_CLIENT_SECRET` | unset | Same pair as issue-sync. **In practice mandatory**: Cloudflare Access fronts the Paperclip API, and without them every call answers 302 and the pager reports `issue search: HTTP 302 … did not return JSON` |
 | `GITHUB_RUN_URL` | unset | Attached to the alert and the wake reason when set |
 | `GITHUB_EVENT_NAME` | unset | Quoted into a new alert's body when set |
 | `GITHUB_ACTOR` | unset | Quoted into a new alert's body when set |
@@ -725,9 +725,17 @@ create an issue, and wake its own agent. An agent key cannot wake anyone else,
 which is why an alert assigned elsewhere is a named pager failure rather than
 something the pager steps over, and why the drill's page arrives on Daedalus.
 
-This is also why no credential has to be minted for the scheduled watcher:
-`PAPERCLIP_API_URL`, `PAPERCLIP_API_TOKEN` and `PAPERCLIP_COMPANY_ID` were
-already repository secrets, and `probe-edge-ingest.sh` itself needs none at
+Four secrets, not three. Alongside `PAPERCLIP_API_URL`,
+`PAPERCLIP_API_TOKEN` and `PAPERCLIP_COMPANY_ID`, a paging job needs
+`CF_ACCESS_CLIENT_ID` / `CF_ACCESS_CLIENT_SECRET`, because Cloudflare Access
+fronts the Paperclip API. A job that sets only the first three probes and fails
+and *looks* like it paged — the pager's failure is a `::warning`, the job is
+already red from the probe, and the only sign is
+`issue search: HTTP 302` in the step log. That is why a drill's verdict is
+whether the page arrived, never the job's colour.
+
+None of them had to be minted for this watcher: all four were already
+repository secrets, and `probe-edge-ingest.sh` itself needs none at
 all. A board API key — instance-admin authority over the whole tracker, handed
 to a public repository's CI — was refused in
 [ADR-0021](../decisions/0021-recovery-wakes-the-alerts-assignee.md), and that
