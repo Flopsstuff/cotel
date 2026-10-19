@@ -52,6 +52,14 @@ Three gaps, none of which it will report:
 - **Itself.** If the tick is dropped, or the runner cannot resolve the name,
   nothing anywhere notices that the watcher is not watching.
 
+These gaps are not an oversight waiting to be closed quietly. They were weighed
+on their own and the blindness is accepted for now, with its price written down:
+see [ADR-0025](../decisions/0025-best-effort-ingest-watcher-in-actions.md). The
+short version is that only `probe-loopback` can see the first two, scheduling it
+without a pager would be the appearance of detection rather than detection, and
+scheduling it *with* one is a decision about board-facing output rather than an
+implementation detail.
+
 ## The vantage points
 
 Production is asked from several places, because each is blind to something the

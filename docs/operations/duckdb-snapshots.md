@@ -89,6 +89,11 @@ the public ingest URL only. See
 something schedules this probe again, a stopped snapshot worker is found by
 running the command above by hand.
 
+That is a standing price, not a pending task:
+[ADR-0025](../decisions/0025-best-effort-ingest-watcher-in-actions.md) records why
+the only job that could watch this on a schedule is still dispatch-only, and
+what has to be granted before it is not.
+
 The claim is deliberately **not** on `/healthz`. That endpoint is the container
 liveness contract: `cotel --healthcheck`, the Docker `HEALTHCHECK` and
 `scripts/wait-for-healthy.sh` all read it, so folding a failed backup into
