@@ -409,6 +409,45 @@ expect "--status without a mirror is exit 4" 4 --status
 assert_contains "--status without a mirror says so" "ABSENT"
 
 echo
+echo "== --max-lag turns the lag into an exit code"
+new_case max-lag-stale
+make_snapshot "$FAKE_REMOTE" 2026-10-10T00-00-00Z
+make_snapshot "$FAKE_REMOTE" 2026-10-16T00-00-00Z
+make_snapshot "$MIRROR" 2026-10-10T00-00-00Z
+expect "a mirror 6d behind is exit 5 against 24h" 5 --status --max-lag 24h
+assert_contains "the stale verdict names the lag and the threshold" "6d0h behind the source, over the 24h threshold"
+assert_contains "the stale verdict still prints the block" "lag          6d0h behind the source"
+
+new_case max-lag-fresh
+make_snapshot "$FAKE_REMOTE" 2026-10-10T00-00-00Z
+make_snapshot "$FAKE_REMOTE" 2026-10-10T06-00-00Z
+make_snapshot "$MIRROR" 2026-10-10T00-00-00Z
+make_snapshot "$MIRROR" 2026-10-10T06-00-00Z
+expect "a current mirror is exit 0 against 24h" 0 --status --max-lag 24h
+assert_contains "the fresh verdict says so" "verdict      fresh — within 24h of the source"
+
+new_case max-lag-boundary
+make_snapshot "$FAKE_REMOTE" 2026-10-10T00-00-00Z
+make_snapshot "$FAKE_REMOTE" 2026-10-10T06-00-00Z
+make_snapshot "$MIRROR" 2026-10-10T00-00-00Z
+expect "a lag exactly at the threshold passes" 0 --status --max-lag 6h
+expect "one second under the lag fails" 5 --status --max-lag 21599s
+
+new_case max-lag-empty-mirror
+make_snapshot "$FAKE_REMOTE" 2026-10-10T00-00-00Z
+expect "an empty mirror is exit 5, not a pass" 5 --status --max-lag 24h
+assert_contains "the empty mirror verdict says why" "holds no complete snapshot"
+
+new_case max-lag-units
+make_snapshot "$FAKE_REMOTE" 2026-10-10T00-00-00Z
+make_snapshot "$FAKE_REMOTE" 2026-10-10T06-00-00Z
+make_snapshot "$MIRROR" 2026-10-10T00-00-00Z
+expect "minutes parse" 5 --status --max-lag 30m
+expect "days parse" 0 --status --max-lag 7d
+expect "bare seconds parse" 0 --status --max-lag 86400
+expect "--max-lag=<duration> parses too" 0 --status --max-lag=1d
+
+echo
 echo "== invocation errors"
 new_case usage
 make_snapshot "$FAKE_REMOTE" 2026-10-10T00-00-00Z
@@ -416,6 +455,12 @@ expect "an unknown flag is exit 64" 64 --mirror-deletions
 expect "--help is exit 0" 0 --help
 assert_contains "--help lists the exit codes" "4   mirror directory missing or unwritable"
 KEEP=not-a-number expect "a non-numeric keep is exit 64" 64
+expect "two modes at once is exit 64" 64 --status --dry-run
+expect "--max-lag without a duration is exit 64" 64 --status --max-lag
+expect "a bad --max-lag duration is exit 64" 64 --status --max-lag 24hours
+expect "a negative --max-lag is exit 64" 64 --status --max-lag -24h
+expect "--max-lag on a tick is exit 64" 64 --max-lag 24h
+assert_contains "--max-lag on a tick says it belongs to --status" "does not apply to a tick"
 
 echo
 echo "passed=$PASS failed=$FAIL"

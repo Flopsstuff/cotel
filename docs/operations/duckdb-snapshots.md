@@ -268,9 +268,10 @@ was chosen on and the risk that is knowingly *not* covered are
 [ADR-0024](../decisions/0024-off-host-snapshot-copy-pi-pull).
 
 ```bash
-scripts/pull-snapshots.sh              # one tick: pull what is missing, prune
-scripts/pull-snapshots.sh --status     # is the mirror current?
-scripts/pull-snapshots.sh --dry-run    # what a tick would do; writes nothing
+scripts/pull-snapshots.sh                        # one tick: pull what is missing, prune
+scripts/pull-snapshots.sh --status               # is the mirror current?
+scripts/pull-snapshots.sh --status --max-lag 24h # same, as an exit code: 0 fresh, 5 stale
+scripts/pull-snapshots.sh --dry-run              # what a tick would do; writes nothing
 ```
 
 The bytes come out through a throwaway `--rm` container with the volume mounted
@@ -312,6 +313,38 @@ a tick, so treat it as the mirror's age rather than as a health signal, and read
 it before relying on the copy. Nothing else will tell you: there is no unit, so
 no alert.
 
+Two numbers bound what that costs, and they are not the same number:
+
+- **What is lost if robmini dies right now** is everything since the newest
+  instant in the mirror - that is `lag`, and it is the time since the last tick.
+  Measured on 2026-10-19: **5 d 18 h**, 23 instants, with the source worker
+  healthy the whole time.
+- **What can never be mirrored** is any instant the source pruned before a tick
+  reached it. The source keeps `COTEL_SNAPSHOT_KEEP=56` at `6h`, so a gap of
+  **more than 14 days** between ticks leaves a permanent hole in the mirror's
+  history - unlike `lag`, running a tick afterwards does not repair it.
+
+### A lag threshold as an exit code
+
+`--max-lag <duration>` makes `--status` answer with a code instead of a number
+to interpret: `0` when the mirror is within the threshold, `5` when it is not
+(and when the mirror holds no complete snapshot at all). It accepts `90s`,
+`30m`, `24h`, `7d` or bare seconds, and it still prints the whole block.
+
+```
+$ scripts/pull-snapshots.sh --status --max-lag 24h
+...
+  lag          6d0h behind the source
+  threshold    24h — lag within this is a pass
+pull-snapshots: FAILED — the mirror is 6d0h behind the source, over the 24h threshold; run a tick
+$ echo $?
+5
+```
+
+This adds no watcher - there is still nothing on a schedule here. What it adds
+is that the check is one command with a verdict, so a person can read it at a
+glance and whatever eventually runs on a schedule needs no parsing.
+
 ### Exit codes
 
 A tick's non-zero exit reaches only whoever ran it - nothing watches this pull -
@@ -324,6 +357,7 @@ so the codes are meant to be read:
 | `2` | The remote listing was empty, or was not snapshot directories at all |
 | `3` | A pulled snapshot failed verification; the partial was deleted and nothing landed |
 | `4` | The mirror directory is missing and uncreatable, or not writable |
+| `5` | `--status --max-lag` only: the mirror is staler than the threshold |
 | `64` | Invalid invocation or configuration - not a tick outcome |
 
 Every pulled directory is verified before it lands: per-file `sha256` against
