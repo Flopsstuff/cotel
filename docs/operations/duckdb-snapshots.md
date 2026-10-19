@@ -89,6 +89,11 @@ the public ingest URL only. See
 something schedules this probe again, a stopped snapshot worker is found by
 running the command above by hand.
 
+That is a standing price, not a pending task:
+[ADR-0025](../decisions/0025-best-effort-ingest-watcher-in-actions.md) records why
+the only job that could watch this on a schedule is still dispatch-only, and
+what has to be granted before it is not.
+
 The claim is deliberately **not** on `/healthz`. That endpoint is the container
 liveness contract: `cotel --healthcheck`, the Docker `HEALTHCHECK` and
 `scripts/wait-for-healthy.sh` all read it, so folding a failed backup into
@@ -376,7 +381,10 @@ source, with the drill in
   the Pi over the existing LAN ssh path, with premises loss accepted as
   uncovered because it is another machine in the same building. That pull is
   **unscheduled** - a mirror is only as current as its last tick, and here the
-  last tick was a person, so read `--status` instead of assuming.
+  last tick was a person, so read `--status` instead of assuming. Measured once,
+  on 2026-10-19: **5d18h and 23 instants behind**, while the worker on the
+  source was healthy the whole time. A green snapshot verdict says the worker
+  runs, not that an off-host copy of its output exists.
 - **`docker volume prune`.** The snapshots volume is only "in use" while the
   container exists, so a prune on a stopped deploy takes the backups with it.
   This is the one new way the volume layout can bite; no code can prevent it.

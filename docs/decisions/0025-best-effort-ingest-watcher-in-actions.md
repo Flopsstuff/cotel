@@ -108,6 +108,49 @@ bound, and the first person to rely on that is the one holding a silent outage.
   DuckDB is unreadable, is indistinguishable from health from outside. Only
   `/healthz` carries that, and nothing asks `/healthz` on a schedule now. The
   dashboard host is likewise unwatched.
+- **That blind half was then weighed on its own, and the blindness stands until
+  a pager for it is granted.** Three states nothing has observed since
+  2026-10-14 share one property: the host is up and answers 401 from outside,
+  so no external vantage point can distinguish them from health. They are a
+  stopped snapshot worker — the one with an irreversible price, a lost
+  restore point — a stale ingest behind a live tunnel, and a dead dashboard.
+  The only vantage point that sees them is the deploy host itself, and this
+  workflow already has it: `probe-loopback` asks `http://127.0.0.1:8080/healthz`
+  from the self-hosted runner, needs no credential, and classifies the
+  `snapshot` object. It is `workflow_dispatch`-only. Putting it on the schedule
+  is three edits, not one — its pager steps hang on `inputs.page`, which
+  `schedule` does not supply, and it does not set the `PC_ALERT_MAX_AGE_H=0` /
+  `PC_STILL_RED_WAKE=0` pair above, so a pager wired up naively would mint a
+  ticket per tick, 96 a day for one outage. Scheduling it *without* a pager was
+  considered and rejected: a red run nobody is subscribed to is the appearance
+  of detection, not detection, and this record already warns against exactly
+  that trade one bullet up. So the choice is binary — page from inside the LAN,
+  or stay blind — and the paging half re-adds board-facing output that was
+  curated away when the previous watcher was retired, which makes it a decision
+  for the CEO rather than an implementation detail. Until it is taken, **a lost
+  restore point is found only by hand**, by running `scripts/probe-healthz.sh`
+  from any machine on the LAN. That is the price, recorded rather than
+  discovered.
+- **Watching the worker is only half of watching the restore point, and the
+  other half is not a watcher question.** What a lost snapshot worker actually
+  costs is bounded by what the off-host copy holds, and that copy decays on its
+  own: [ADR-0024](./0024-off-host-snapshot-copy-pi-pull)'s pull has no
+  schedule, so the mirror is only as current as the last person who ran it.
+  Measured for the first time on 2026-10-19, it was **5d18h and 23 instants
+  behind** a source whose worker had been healthy throughout — a pager on
+  `/api/v1/health` would have been green across that entire window, because
+  nothing was wrong at the end it watches. Granting that pager therefore closes
+  one of two independent ways the restore point rots, and the larger one on this
+  evidence is the unscheduled pull. Read `scripts/pull-snapshots.sh --status`
+  before concluding anything about recoverability from a green probe.
+- **Reaching `/healthz` through Cloudflare Access is closed, and not on
+  technical grounds.** The `CF_ACCESS_CLIENT_ID` / `CF_ACCESS_CLIENT_SECRET`
+  pair still gets HTTP 302 from `https://cotel.aignite.pl/healthz` (runs
+  39204025161 and 39202967426, 2026-10-19). Allowing that token on the
+  application was requested once and withdrawn, on the condition that it is not
+  raised again without an outage of the dashboard host specifically while the
+  ingest name is live. No such outage has occurred. The `probe-edge` job
+  therefore stays dispatch-only and keeps warning rather than failing.
 - **A runner that cannot resolve DNS pages nobody.** Exit 7 is a defect in the
   observer, not evidence about cotel, and on a hosted runner there is no one to
   tell who could fix it. It is a `::warning` and the job stays green.
