@@ -131,18 +131,16 @@ bound, and the first person to rely on that is the one holding a silent outage.
   restore point is found only by hand**, by running `scripts/probe-healthz.sh`
   from any machine on the LAN. That is the price, recorded rather than
   discovered.
-- **Watching the worker is only half of watching the restore point, and the
-  other half is not a watcher question.** What a lost snapshot worker actually
-  costs is bounded by what the off-host copy holds, and that copy decays on its
-  own: [ADR-0024](./0024-off-host-snapshot-copy-pi-pull)'s pull has no
-  schedule, so the mirror is only as current as the last person who ran it.
-  Measured for the first time on 2026-10-19, it was **5d18h and 23 instants
-  behind** a source whose worker had been healthy throughout — a pager on
-  `/api/v1/health` would have been green across that entire window, because
-  nothing was wrong at the end it watches. Granting that pager therefore closes
-  one of two independent ways the restore point rots, and the larger one on this
-  evidence is the unscheduled pull. Read `scripts/pull-snapshots.sh --status`
-  before concluding anything about recoverability from a green probe.
+- **Watching the worker is now the whole of watching the restore point.** This
+  bullet said the opposite a day ago: a lost snapshot worker cost only what the
+  off-host copy did not already hold, and that copy decayed on its own because
+  [ADR-0024](./0024-off-host-snapshot-copy-pi-pull)'s pull had no schedule. The
+  owner rescinded that copy on 2026-10-19 and it is deleted, so the second way
+  the restore point rotted is gone along with the second copy. What remains is
+  one host writing snapshots to its own disk, which makes a pager on
+  `/api/v1/health` the only thing that could notice the restore point stopping
+  being refreshed, and makes running `scripts/probe-healthz.sh` by hand the only
+  thing that does.
 - **Reaching `/healthz` through Cloudflare Access is closed, and not on
   technical grounds.** The `CF_ACCESS_CLIENT_ID` / `CF_ACCESS_CLIENT_SECRET`
   pair still gets HTTP 302 from `https://cotel.aignite.pl/healthz` (runs
