@@ -84,8 +84,10 @@ minutes, best-effort, since 2026-10-19.** `scripts/probe-healthz.sh` reads
 the `snapshot` object — a red verdict pages under the `[cotel-health-probe]`
 marker on a schedule, as an issue whose assignment wakes an agent. It runs on
 the self-hosted runner on the deploy host, which is the only vantage point from
-which `/api/v1/health` is reachable at all. The same probe still works by hand
-from any machine on the LAN. See
+which `/api/v1/health` is reachable at all, and it runs with
+**`SNAPSHOT_CHECK=require`**: on that host the two ambiguous rows in the table
+below are failures rather than a local default, so they page too. The same probe
+still works by hand from any machine on the LAN. See
 [Production health probes](./health-probe#the-vantage-points) and
 [ADR-0026](../decisions/0026-scheduled-loopback-probe-with-a-pager.md).
 
@@ -119,7 +121,11 @@ the alert path.
 The last two rows flip to red under `SNAPSHOT_CHECK=require`, which is the
 caller asserting "snapshots are expected on this instance". Default is `auto`:
 page only on affirmative evidence that the backup is broken. `SNAPSHOT_CHECK=off`
-stops the probe asking at all.
+stops the probe asking at all. The scheduled watcher sets `require`, because on
+the deploy host "the instance makes no claim" is itself the finding — a
+rolled-back binary that predates the contract, a worker that never started, or
+an endpoint that has stopped answering all land in those two rows, and under
+`auto` all three would read as health.
 
 ### The threshold
 

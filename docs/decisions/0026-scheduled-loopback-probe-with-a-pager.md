@@ -42,7 +42,7 @@ watcher was retired. That made it the CEO's call, and the CEO granted it.
 pages — with its own dedup marker, the dedup pair that bounds one outage to one
 ticket, an in-run red confirmation, and a measured staleness threshold.**
 
-Six things had to be true together; the first five copy `probe-ingest`, whose
+Seven things had to be true together; the first five copy `probe-ingest`, whose
 shape the board accepted in the same form.
 
 1. **Own marker: `[cotel-health-probe]`**, this half's historical one and the
@@ -85,15 +85,29 @@ shape the board accepted in the same form.
    landing in that window would otherwise mint a ticket for a routine deploy.
    The streak cannot live between runs — dropped ticks mean "two runs in a row"
    is not a quantity this job can count.
-6. **The ingest staleness threshold is 24 hours on the schedule, 6 by hand.**
+6. **The ingest staleness threshold is 10 hours on the schedule, 6 by hand.**
    Measured, not assumed; see below.
+7. **`SNAPSHOT_CHECK=require`**, not the default `auto`. The probe sorts the
+   snapshot claim into three classes, and the two strict ones are not in
+   question: `ok` is green and `red` — the worker reported a failure, or its
+   newest restore point is older than its own 12h window — pages under either
+   setting. What the setting decides is the third, `unverified`: the instance
+   makes no claim at all, because snapshots are disabled, because the worker has
+   never run, or because `/api/v1/health` could not be read. `auto` stays green
+   there, which is right for a local checkout, where snapshots ship disabled and
+   a pager would cry wolf on every developer. On the deploy host the same
+   silence means a rolled-back binary that predates the contract, a worker that
+   failed to start, or an endpoint that has stopped answering — and `auto` would
+   report all three as health. This watcher was granted to stop exactly that, so
+   it asserts what is true of this host: snapshots are expected here.
 
 A dispatch keeps everything it had: the drill marker, the run id as the call id,
 and the 6h threshold. Only the scheduled event gets the production marker and
 the longer window, by the same `github.event_name == 'schedule'` conditional
-`probe-ingest` already uses.
+`probe-ingest` already uses. `SNAPSHOT_CHECK` is not latched to the event — a
+dispatch on this host is asking the same question about the same instance.
 
-### Why 24 hours, and where the number came from
+### Why 10 hours, and where the number came from
 
 `scripts/probe-healthz.sh` exits **3** when `newest_span_age_seconds` exceeds
 `STALE_AFTER_SECONDS`, and the job shipped with 6 hours — a threshold written
@@ -108,12 +122,25 @@ gap  6h  2026-10-15 22:00 -> 04:00
 gap  6h  2026-10-15 10:00 -> 16:00
 ```
 
-Ordinary quiet nights on this box reach six and seven hours of ingest silence.
-With a 6h window a scheduled pager would mint "stale ingest" tickets several
-times a week on nothing at all — precisely the noise the board retired the
-previous watcher for. A full day with no span is an assertion: the longest
-silence ever measured here, 12 hours, was a genuine outage. So exit 3 stays a
-paging class, with a threshold that has evidence under it.
+The threshold has to clear the quiet nights and still catch the stalls, and
+those two numbers are seven hours apart: ordinary overnight silence on this box
+reaches six and seven hours, and the only genuine stall ever recorded here ran
+twelve. A 6h window would mint "stale ingest" tickets several times a week on
+nothing at all — precisely the noise the previous watcher was retired for. A
+24h window was the first answer here and it was the wrong one, for the opposite
+reason: it clears every quiet night, but it also clears the 2026-10-14 outage,
+the single measured instance of the failure class this threshold exists to
+catch. A backstop that cannot catch the one red in its own evidence is not
+detection.
+
+**10 hours** sits between the two measured ends: 2026-10-14 would have paged
+after ten hours, and no quiet night on record reaches it. The residual risk is
+named rather than hidden — a genuinely idle day, a holiday or a weekend with no
+agent running, can cross ten hours with nothing wrong, and that will page. The
+dedup pair bounds the cost of being wrong to **one** ticket, closed by hand, and
+a false page on a quiet day is a better failure than silence through a real
+stall. If idle days turn out to page more than rarely, raise the number with the
+histogram that showed it rather than by feel.
 
 This does not touch `SNAPSHOT_STALE_AFTER_SECONDS` (12h). The snapshot worker
 ticks on its own timer and does not care how much traffic arrives, so its window

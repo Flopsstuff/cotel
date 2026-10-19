@@ -91,7 +91,8 @@ as a drill.
 | Catches | DNS, a blanked tunnel token, the ingest route not served, Access appearing in front of ingest | process dead, crash loop, 503 DuckDB, stale/empty ingest, a snapshot worker that has stopped producing restore points | the dashboard host through Cloudflare |
 | Blind to | the database and ingest freshness: this check stops at the auth boundary; and its own dropped ticks | **its own host being down** — with the runner off the job queues, producing no colour at all; and its own dropped ticks | nothing in the path, but see the Access caveat below |
 | Access service token | **not needed** | not needed | required |
-| Ingest staleness window | n/a — never reads `/healthz` | **24 h** on a schedule, 6 h on a dispatch | 6 h |
+| Ingest staleness window | n/a — never reads `/healthz` | **10 h** on a schedule, 6 h on a dispatch | 6 h |
+| Snapshot claim | n/a — never reads `/healthz` | **`SNAPSHOT_CHECK=require`**: "no claim" is red, because snapshots are expected on this host | `auto` — and `require` must never be set here, see the Access caveat |
 | Pages | **production** `[cotel-ingest-edge]` on a schedule, `[cotel-ingest-edge-drill]` on a dispatch | **production** `[cotel-health-probe]` on a schedule, `[cotel-health-probe-drill]` on a dispatch | `[cotel-health-probe-drill-edge]` — drill only |
 
 **Neither scheduled job may be moved to the other's runner.** `probe-ingest`
@@ -153,12 +154,12 @@ it to **24**, and that number is measured rather than chosen: see
 A present JSON `null` is an empty database (never ingested), which is not the
 same as `0` (ingested just now) and not the same as a missing key.
 
-### The staleness threshold is 24 hours on the schedule
+### The staleness threshold is 10 hours on the schedule
 
-Exit 3 — "ingest stale" — is a paging class, so its threshold decides how often
-a quiet night mints a ticket. An hourly span histogram over one week of
-production (`/api/v1/history?granularity=hour&range=week`) says 6 hours is not
-an assertion about this instance:
+Exit 3 — "ingest stale" — is a paging class, so its threshold decides both how
+often a quiet night mints a ticket and whether a real stall is caught at all. An
+hourly span histogram over one week of production
+(`/api/v1/history?granularity=hour&range=week`) puts both ends on the record:
 
 ```
 gap 12h  2026-10-14 09:00 -> 21:00   (the tunnel outage — a real red)
@@ -169,13 +170,18 @@ gap  6h  2026-10-15 10:00 -> 16:00
 
 Ordinary silence here reaches six and seven hours overnight, so a scheduled
 pager on the 6h window would have paged several times that week on nothing. A
-full day with no span is an assertion — the longest silence ever measured on
-this box, 12 hours, was the real tunnel outage. So the scheduled job sets
-`STALE_AFTER_SECONDS=86400` and a dispatch keeps `21600`, where a human is
+full day, the first number tried here, fails the other way: it clears every
+quiet night but also clears the 2026-10-14 outage, which is the only measured
+instance of the thing this threshold is for. So the scheduled job sets
+`STALE_AFTER_SECONDS=36000` — ten hours, above every quiet night on record and
+below the one real stall — and a dispatch keeps `21600`, where a human is
 reading the answer and a tighter question is more useful.
 
-Moving this number is a decision about alert noise, and it needs the same
-histogram taken again — not a guess. `SNAPSHOT_STALE_AFTER_SECONDS` is
+What that costs is named rather than hidden: a genuinely idle day — a holiday,
+a weekend with nothing running — can cross ten hours with nothing wrong, and it
+will page. One ticket, not a stream, because the dedup pair bounds it; close it
+by hand. If that starts happening more than rarely, raise the number with a
+fresh histogram rather than by feel. `SNAPSHOT_STALE_AFTER_SECONDS` is
 unaffected either way: that worker ticks on its own timer and does not care how
 much traffic arrives.
 
@@ -230,7 +236,7 @@ a probe-configuration problem), and the ingest probe, which never reads
 
 | Variable | Default | Role |
 |---|---|---|
-| `SNAPSHOT_CHECK` | `auto` | `auto` pages on affirmative failure only; `require` also pages when the instance makes no snapshot claim; `off` never asks |
+| `SNAPSHOT_CHECK` | `auto` | `auto` pages on affirmative failure only; `require` also pages when the instance makes no snapshot claim; `off` never asks. `probe-loopback` sets **`require`** — it only ever asks the deploy host, where snapshots are expected, so "no claim" is a failure there and not a local default |
 | `SNAPSHOT_STALE_AFTER_SECONDS` | `43200` | How old the newest snapshot may be. Two `COTEL_SNAPSHOT_INTERVAL` periods at the shipped `6h`; move it with the interval |
 | `API_HEALTH_URL` | derived from the `/healthz` URL | Override when the snapshot report is not at the same entry point |
 

@@ -205,14 +205,23 @@ jobs:
       cancel-in-progress: true
     env:
       HEALTHZ_URL: ${{ inputs.loopback_url || 'http://127.0.0.1:8080/healthz' }}
-      # A day on the schedule, six hours by hand. Measured over a week on this
-      # instance, ordinary ingest silence reaches six and seven hours overnight,
-      # so a 6h window would page a quiet night several times a week; the
-      # longest silence ever measured here, 12h, was a real outage. A dispatch
-      # keeps the tighter window because a human is reading that answer. The
-      # snapshot window is unaffected — that worker ticks on its own timer and
-      # does not care how much traffic arrives.
-      STALE_AFTER_SECONDS: ${{ github.event_name == 'schedule' && '86400' || '21600' }}
+      # Ten hours on the schedule, six by hand. The window has to sit above the
+      # quiet nights and below the outages, and both ends are measured on this
+      # instance: ordinary overnight silence reaches six and seven hours, while
+      # the only real stall ever recorded here ran twelve. A day would clear
+      # every quiet night and also clear that stall, which is the one thing this
+      # threshold exists to catch. A dispatch keeps the tighter window because a
+      # human is reading that answer. The snapshot window is unaffected — that
+      # worker ticks on its own timer and does not care how much traffic
+      # arrives.
+      STALE_AFTER_SECONDS: ${{ github.event_name == 'schedule' && '36000' || '21600' }}
+      # The default, `auto`, pages only on an affirmative snapshot failure and
+      # stays green when the instance makes no claim at all — right for a local
+      # checkout where snapshots ship disabled, wrong here. On the deploy host
+      # an unreadable `/api/v1/health`, a missing `snapshot` field or a worker
+      # that never started are failures, and this is the watcher that exists to
+      # report them. `require` is that assertion.
+      SNAPSHOT_CHECK: require
       CONNECT_TIMEOUT: "15"
       PC_API_URL: ${{ secrets.PAPERCLIP_API_URL }}
       PC_API_TOKEN: ${{ secrets.PAPERCLIP_API_TOKEN }}
