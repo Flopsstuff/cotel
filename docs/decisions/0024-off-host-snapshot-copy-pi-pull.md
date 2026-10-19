@@ -121,7 +121,7 @@ container of the image cotel's own runtime is built on, which is already on that
   that can be committed, and outside `~/ops/reports/`, which is swept on a 31-day
   retention rule that has nothing to do with this data.
 - **The mirror does not mirror deletions.** It prunes on its own count
-  (`COTEL_SNAPSHOT_MIRROR_KEEP`, default 56, never below one), and it never deletes a
+  (`SNAPSHOT_MIRROR_KEEP`, default 56, never below one), and it never deletes a
   local snapshot because the source stopped having it. A sync that propagated source
   deletions would faithfully reproduce the one accident ADR-0023 named as newly
   dangerous - `docker volume prune` on a stopped deploy - into the copy that exists to
