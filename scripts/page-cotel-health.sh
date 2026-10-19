@@ -37,9 +37,10 @@
 # GITHUB_RUN_URL, GITHUB_EVENT_NAME, GITHUB_ACTOR and HEALTHZ_URL are quoted
 # into a new alert when set, so the reader can place the run without Actions.
 #
-# Callers outside GitHub Actions — the systemd timer on the Pi is the
-# authoritative one — override three things, because the defaults below name
-# Actions as both the origin of the alert and the way to re-check it:
+# Callers outside GitHub Actions — a host wrapper run by hand, now that no
+# timer outside Actions pages production — override three things, because the
+# defaults below name Actions as both the origin of the alert and the way to
+# re-check it:
 #   PC_SOURCE_LINE    who opened the alert, and that a red run is not the page
 #   PC_REPROBE_HINT   how the woken agent re-probes before acting
 #   PC_CALL_ID        the unique thing making this call, for the recovery

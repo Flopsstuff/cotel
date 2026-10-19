@@ -162,3 +162,8 @@ container of the image cotel's own runtime is built on, which is already on that
 - **The source keeps its own watcher.** The 10-minute tick already pages when snapshots
   stop happening on robmini; this ADR adds no claim to `/api/v1/health`, because the
   mirror is not something production can observe.
+  **No longer true as of 2026-10-14:** that tick was retired, and the watcher that
+  replaced it ([ADR-0025](./0025-best-effort-ingest-watcher-in-actions)) asks the public
+  ingest only and never reaches `/api/v1/health`. A snapshot worker that stops is now
+  found by running the probe by hand. The decision below stands; only this consequence
+  changed.
