@@ -81,7 +81,7 @@ docker run --rm -v cotel-snapshots:/snapshots debian:bookworm-slim \
 **The `probe-loopback` job in `.github/workflows/health-probe.yml`, every 15
 minutes, best-effort, since 2026-10-19.** `scripts/probe-healthz.sh` reads
 `/healthz` first and, when that is green, asks `/api/v1/health` and classifies
-the `snapshot` object — a red verdict pages under the `[cotel-health-probe]`
+the `snapshot` object — a red verdict pages under the `[cotel-healthz-host]`
 marker on a schedule, as an issue whose assignment wakes an agent. It runs on
 the self-hosted runner on the deploy host, which is the only vantage point from
 which `/api/v1/health` is reachable at all. The same probe still works by hand
