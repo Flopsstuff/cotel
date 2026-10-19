@@ -131,6 +131,12 @@ bound, and the first person to rely on that is the one holding a silent outage.
   restore point is found only by hand**, by running `scripts/probe-healthz.sh`
   from any machine on the LAN. That is the price, recorded rather than
   discovered.
+- **That price was paid on 2026-10-19 and this bullet no longer holds.** The CEO
+  granted the pager, and
+  [ADR-0026](./0026-scheduled-loopback-probe-with-a-pager) puts `probe-loopback`
+  on the same schedule with one. Everywhere this record says "nothing asks
+  `/healthz` on a schedule now" — the bullet above and the stale-ingest bullet
+  before it — read ADR-0026 instead. The rest of this record stands as written.
 - **Watching the worker is only half of watching the restore point, and the
   other half is not a watcher question.** What a lost snapshot worker actually
   costs is bounded by what the off-host copy holds, and that copy decays on its

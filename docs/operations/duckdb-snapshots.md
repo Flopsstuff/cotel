@@ -78,21 +78,26 @@ docker run --rm -v cotel-snapshots:/snapshots debian:bookworm-slim \
 
 ## Who is watching it
 
-**Nobody is, as of 2026-10-14.** `scripts/probe-healthz.sh` reads `/healthz`
-first and, when that is green, asks `/api/v1/health` and classifies the
-`snapshot` object — a red verdict pages under the `[cotel-health-probe]`
-marker, as an issue whose assignment wakes an agent. That still works, from any
-machine on the LAN, but **no schedule runs it**: the 10-minute timer that did
-was retired by board order, and the one scheduled watcher cotel has left asks
-the public ingest URL only. See
-[Production health probes](./health-probe#what-this-watcher-cannot-see). Until
-something schedules this probe again, a stopped snapshot worker is found by
-running the command above by hand.
+**The `probe-loopback` job in `.github/workflows/health-probe.yml`, every 15
+minutes, best-effort, since 2026-10-19.** `scripts/probe-healthz.sh` reads
+`/healthz` first and, when that is green, asks `/api/v1/health` and classifies
+the `snapshot` object — a red verdict pages under the `[cotel-healthz-host]`
+marker on a schedule, as an issue whose assignment wakes an agent. It runs on
+the self-hosted runner on the deploy host, which is the only vantage point from
+which `/api/v1/health` is reachable at all. The same probe still works by hand
+from any machine on the LAN. See
+[Production health probes](./health-probe#the-vantage-points) and
+[ADR-0026](../decisions/0026-scheduled-loopback-probe-with-a-pager.md).
 
-That is a standing price, not a pending task:
-[ADR-0025](../decisions/0025-best-effort-ingest-watcher-in-actions.md) records why
-the only job that could watch this on a schedule is still dispatch-only, and
-what has to be granted before it is not.
+Two caveats on what that buys. GitHub **drops** scheduled ticks on public
+repositories rather than delaying them, so the detection delay is unbounded and
+a green workflow file is not evidence anything ran — measure it with
+`gh run list --repo Flopsstuff/cotel --workflow=health-probe.yml --event=schedule`.
+And a green verdict here is a statement about the *worker*, not about
+recoverability: the off-host mirror has no schedule of its own and decays
+independently, so read `scripts/pull-snapshots.sh --status` before concluding
+anything from it
+([ADR-0024](../decisions/0024-off-host-snapshot-copy-pi-pull.md)).
 
 The claim is deliberately **not** on `/healthz`. That endpoint is the container
 liveness contract: `cotel --healthcheck`, the Docker `HEALTHCHECK` and
