@@ -30,6 +30,10 @@
 # cotel-health-probe. PC_RUN_ID, when set, is sent as X-Paperclip-Run-Id.
 # PC_ALERT_MAX_AGE_H (default 6) is how long an open alert stays a dedup
 # target on the raise path; 0 disables that window.
+# PC_STILL_RED_WAKE (default 1) is whether a red tick wakes the assignee of an
+# already-open alert. Set it to 0 where the owner asked for exactly one ticket
+# per outage and no further wakes; the resolve path is unaffected, and is then
+# the only thing that re-arms the pager.
 # GITHUB_RUN_URL, GITHUB_EVENT_NAME, GITHUB_ACTOR and HEALTHZ_URL are quoted
 # into a new alert when set, so the reader can place the run without Actions.
 #
@@ -399,6 +403,10 @@ case "$ACTION" in
                 STALE_ID="$EXISTING_ID"
                 STALE_IDENT="$EXISTING_IDENT"
             else
+                if [ "${PC_STILL_RED_WAKE:-1}" = "0" ]; then
+                    echo "page-cotel-health: ${EXISTING_IDENT:-$EXISTING_ID} ${EXISTING_ID} is open and still-red wakes are off; woke nobody"
+                    exit 0
+                fi
                 # Bucketed on a coarse window rather than on this run, so a
                 # multi-day outage spends about four heartbeats a day instead of
                 # twenty-four. The comment this replaces was refused by the same

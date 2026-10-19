@@ -1107,6 +1107,83 @@ if bad:
 PY
 pass "an explicit subject and lead beat the verdict classifier"
 
+# 19. PC_STILL_RED_WAKE=0 silences the still-red wake. A caller told to file one
+# ticket per outage and nothing more sets it; the create and resolve paths are
+# untouched, so a failed create is still retried on the next tick.
+write_fixture <<'JSON'
+[
+  {
+    "id": "alert-id",
+    "identifier": "ALT-1",
+    "title": "cotel prod /healthz is red [cotel-health-probe]",
+    "status": "todo",
+    "assigneeAgentId": "agent-on-call"
+  }
+]
+JSON
+reset_log
+out="$(PC_STILL_RED_WAKE=0 run_page 200 raise "$PROBE_FILE" 2>"$TMP/err")" \
+    || { fail "still-red wake off — exit $?"; cat "$TMP/err"; }
+case "$out" in
+    "page-cotel-health: ALT-1 alert-id is open and still-red wakes are off; woke nobody")
+        pass "PC_STILL_RED_WAKE=0 leaves the open alert alone and exits 0"
+        ;;
+    *) fail "PC_STILL_RED_WAKE=0 leaves the open alert alone — output: $out" ;;
+esac
+assert_log_lacks "PC_STILL_RED_WAKE=0 sends no wake" "/wakeup"
+assert_log_lacks "PC_STILL_RED_WAKE=0 opens no second alert" "POST http://paperclip.test/api/companies/company-1/issues"
+
+# The default is the behaviour every existing caller already has.
+reset_log
+out="$(run_page 200 raise "$PROBE_FILE" 2>"$TMP/err")" \
+    || { fail "still-red wake default — exit $?"; cat "$TMP/err"; }
+case "$out" in
+    "page-cotel-health: woke agent-on-call for ALT-1 alert-id (run run-7)")
+        pass "the still-red wake is on when the flag is unset"
+        ;;
+    *) fail "the still-red wake is on when the flag is unset — output: $out" ;;
+esac
+
+# With no alert open the flag changes nothing: the create still happens, which
+# is what makes a failed create retry on the next red tick rather than being
+# swallowed by an alert that was never opened.
+write_fixture <<'JSON'
+[]
+JSON
+reset_log
+out="$(PC_STILL_RED_WAKE=0 run_page 200 raise "$PROBE_FILE" 2>"$TMP/err")" \
+    || { fail "still-red wake off, no alert — exit $?"; cat "$TMP/err"; }
+case "$out" in
+    "page-cotel-health: opened ALT-9 new-id") pass "PC_STILL_RED_WAKE=0 still creates the first alert" ;;
+    *) fail "PC_STILL_RED_WAKE=0 still creates the first alert — output: $out" ;;
+esac
+assert_log_has "PC_STILL_RED_WAKE=0 creates" "POST http://paperclip.test/api/companies/company-1/issues"
+
+# And the resolve path keeps its wake: with still-red wakes off, that wake is
+# the only thing that closes the alert and re-arms the pager for the next
+# outage, because an open alert dedups every later red tick.
+write_fixture <<'JSON'
+[
+  {
+    "id": "alert-id",
+    "identifier": "ALT-1",
+    "title": "cotel prod /healthz is red [cotel-health-probe]",
+    "status": "todo",
+    "assigneeAgentId": "agent-on-call"
+  }
+]
+JSON
+reset_log
+printf '%s\n' "probe-edge-ingest: OK — HTTP 401 from the ingest handler" >"$TMP/green.out"
+out="$(PC_STILL_RED_WAKE=0 run_page 200 resolve "$TMP/green.out" 2>"$TMP/err")" \
+    || { fail "resolve with still-red wake off — exit $?"; cat "$TMP/err"; }
+case "$out" in
+    "page-cotel-health: woke agent-on-call for ALT-1 alert-id (run run-7)")
+        pass "PC_STILL_RED_WAKE=0 does not silence the recovery wake"
+        ;;
+    *) fail "PC_STILL_RED_WAKE=0 does not silence the recovery wake — output: $out" ;;
+esac
+
 echo
 echo "passed=$PASS failed=$FAIL"
 if [ "$FAIL" -ne 0 ]; then

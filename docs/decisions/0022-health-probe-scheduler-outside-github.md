@@ -1,10 +1,21 @@
 # ADR 0022 — The health probe's scheduler lives outside this repo
 
 **Date:** 2026-10-05
-**Status:** Accepted
+**Status:** Superseded by [ADR-0025](./0025-best-effort-ingest-watcher-in-actions)
 **Deciders:** Prospero (CEO, mechanism choice), Daedalus (CTO, implementation)
 
 ---
+
+> **Superseded by [ADR-0025](./0025-best-effort-ingest-watcher-in-actions),
+> which puts the schedule back in this repository.** Nothing below about
+> `systemd` or about GitHub dropping ticks turned out to be wrong — the timer
+> ticked exactly as described. What was wrong was its vantage point: on
+> 2026-10-14 the Pi went down together with the production it watched, sharing
+> that LAN, uplink and power outlet, and the board retired the timer. With a
+> watcher inside that network ruled out, a best-effort Actions schedule is the
+> only remaining option that costs no credential and no board action, and the
+> unbounded detection delay described below is accepted explicitly rather than
+> fixed.
 
 ## Context
 
