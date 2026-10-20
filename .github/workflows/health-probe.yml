@@ -4,9 +4,9 @@ name: Health probe
 # monitoring**. GitHub schedules public repositories on a best-effort basis and
 # *drops* ticks rather than delaying them — measured in this repository over a
 # full day, 4 runs out of the 91 expected (4.4%), about one look every 5.7
-# hours — so the detection delay either one buys is unbounded. They are strictly better than nothing, and that is the
-# whole of what they promise. See docs/operations/health-probe.md, ADR-0025 and
-# ADR-0026.
+# hours — so the detection delay either one buys is unbounded. They are
+# strictly better than nothing, and that is the whole of what they promise. See
+# docs/operations/health-probe.md, ADR-0025 and ADR-0026.
 #
 # `probe-ingest` asks the public OTLP ingest URL from outside every network
 # cotel lives in. It is `ubuntu-latest` and must never be self-hosted: an

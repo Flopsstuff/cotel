@@ -192,8 +192,11 @@ bound, and the first person to rely on that is the one holding a silent outage.
   the restore point rotted is gone along with the second copy. What remains is
   one host writing snapshots to its own disk, which makes a pager on
   `/api/v1/health` the only thing that could notice the restore point stopping
-  being refreshed, and makes running `scripts/probe-healthz.sh` by hand the only
-  thing that does.
+  being refreshed. Running `scripts/probe-healthz.sh` by hand was the only
+  thing that did it until the grant above: the scheduled `probe-loopback` run
+  asks the same endpoint with `SNAPSHOT_CHECK=require`, so a stalled snapshot
+  now pages — as often as GitHub delivers a tick, which is the measured 4.4% of
+  them.
 - **Reaching `/healthz` through Cloudflare Access is closed, and not on
   technical grounds.** The `CF_ACCESS_CLIENT_ID` / `CF_ACCESS_CLIENT_SECRET`
   pair still gets HTTP 302 from `https://cotel.aignite.pl/healthz` (runs
