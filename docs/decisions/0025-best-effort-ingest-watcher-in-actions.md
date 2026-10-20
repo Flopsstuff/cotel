@@ -85,6 +85,23 @@ bound, and the first person to rely on that is the one holding a silent outage.
 
 - **The detection delay is unbounded**, and no amount of tuning the cron
   changes that. 15 minutes is a ceiling on how often it *could* look.
+- **Measured on this watcher, over its first day: 4 ticks against 91 expected,
+  4.4%.** The window was 2026-10-19 05:30Z to 2026-10-20 04:06Z, the ticks
+  landed at 11:07, 17:28, 21:42 and 00:42Z, and the gaps between them were
+  6.4 h, 4.2 h and 3.0 h. Registration lag does not explain it: counting only
+  from the first tick gives 3 of 67, the same 4.5%. So the real cadence of this
+  watcher is **roughly one look every 5.7 hours**, not every 15 minutes, and
+  the worst gap observed so far is 6.4 hours.
+
+  This is worse as a ratio than the `cron: "17 * * * *"` sample quoted above
+  (1 of 9, 11%) and slightly better in absolute terms (one look per 5.7 h
+  against one per 9 h), which is the only comparison that matters for
+  detection. **It does not reopen the decision.** The acceptance bar this
+  watcher was built against is catching a silent outage *the same day*, after
+  six days of blindness was the original failure; a worst case of 6.4 hours
+  clears that bar. What it does invalidate is the number a reader infers from
+  the cron expression, so quote the measured cadence and not `*/15` wherever
+  this watcher's latency is described.
 - **Whether it ran at all is a thing to measure, repeatedly.** The one-line
   check above belongs in any review of this watcher; empty output is the
   answer, not an error.
@@ -121,7 +138,12 @@ bound, and the first person to rely on that is the one holding a silent outage.
   is three edits, not one — its pager steps hang on `inputs.page`, which
   `schedule` does not supply, and it does not set the `PC_ALERT_MAX_AGE_H=0` /
   `PC_STILL_RED_WAKE=0` pair above, so a pager wired up naively would mint a
-  ticket per tick, 96 a day for one outage. Scheduling it *without* a pager was
+  ticket per tick. That was first written here as 96 a day for one outage,
+  which is the nominal figure and about 24 times the real one: at the delivery
+  rate measured above it is nearer 4 a day. The pair is still required, because
+  the requirement is one ticket per outage and not a tolerable number of them,
+  but the case for it rests on the rule rather than on the scare figure.
+  Scheduling it *without* a pager was
   considered and rejected: a red run nobody is subscribed to is the appearance
   of detection, not detection, and this record already warns against exactly
   that trade one bullet up. So the choice is binary — page from inside the LAN,
@@ -143,8 +165,9 @@ bound, and the first person to rely on that is the one holding a silent outage.
   == 'schedule'`: `schedule` supplies no inputs, so moving only the job's `if:`
   would have produced a watcher that runs, goes red in Actions, and pages
   nobody. **Two**, `PC_ALERT_MAX_AGE_H=0` and `PC_STILL_RED_WAKE=0`, the same
-  pair the ingest half carries — without them one outage mints up to 96 tickets
-  a day at `*/15`. **Three**, a production marker of its own, distinct from
+  pair the ingest half carries — without them one outage mints a ticket per
+  tick, nominally 96 a day at `*/15` and about 4 at the delivery rate measured
+  above. **Three**, a production marker of its own, distinct from
   `[cotel-ingest-edge]`, so that neither half's green tick closes the other
   half's alert; the dispatch keeps paging a drill marker. **Four**, the snapshot
   alert's wording is left alone — `scripts/page-cotel-health.sh` already titles
@@ -161,18 +184,16 @@ bound, and the first person to rely on that is the one holding a silent outage.
   what the external ingest half is for. And **GitHub still drops scheduled
   ticks**, for this half exactly as for the other, so the detection delay stays
   unbounded and "did it run" stays a measurement.
-- **Watching the worker is only half of watching the restore point, and the
-  other half is not a watcher question.** What a lost snapshot worker actually
-  costs is bounded by what the off-host copy holds, and that copy decays on its
-  own: [ADR-0024](./0024-off-host-snapshot-copy-pi-pull)'s pull has no
-  schedule, so the mirror is only as current as the last person who ran it.
-  Measured for the first time on 2026-10-19, it was **5d18h and 23 instants
-  behind** a source whose worker had been healthy throughout — a pager on
-  `/api/v1/health` would have been green across that entire window, because
-  nothing was wrong at the end it watches. Granting that pager therefore closes
-  one of two independent ways the restore point rots, and the larger one on this
-  evidence is the unscheduled pull. Read `scripts/pull-snapshots.sh --status`
-  before concluding anything about recoverability from a green probe.
+- **Watching the worker is now the whole of watching the restore point.** This
+  bullet said the opposite a day ago: a lost snapshot worker cost only what the
+  off-host copy did not already hold, and that copy decayed on its own because
+  [ADR-0024](./0024-off-host-snapshot-copy-pi-pull)'s pull had no schedule. The
+  owner rescinded that copy on 2026-10-19 and it is deleted, so the second way
+  the restore point rotted is gone along with the second copy. What remains is
+  one host writing snapshots to its own disk, which makes a pager on
+  `/api/v1/health` the only thing that could notice the restore point stopping
+  being refreshed, and makes running `scripts/probe-healthz.sh` by hand the only
+  thing that does.
 - **Reaching `/healthz` through Cloudflare Access is closed, and not on
   technical grounds.** The `CF_ACCESS_CLIENT_ID` / `CF_ACCESS_CLIENT_SECRET`
   pair still gets HTTP 302 from `https://cotel.aignite.pl/healthz` (runs

@@ -18,6 +18,11 @@ jobs:
   deploy:
     name: Deploy to self-hosted runner
     runs-on: [self-hosted, flopsstuff, docker]
+    # A build that hangs has to fail rather than hold `deploy-main`. One held it
+    # for nine hours, and every push behind it sat `pending` with no job at all,
+    # which looks exactly like an idle queue: nothing shipped for five days and
+    # no run ever went red to say so.
+    timeout-minutes: 20
     env:
       COMPOSE_PROJECT_NAME: cotel
       CLOUDFLARE_TUNNEL_TOKEN: ${{ secrets.CLOUDFLARE_TUNNEL_TOKEN }}
@@ -28,6 +33,36 @@ jobs:
       COTEL_DATA_VOLUME: ${{ vars.COTEL_DATA_VOLUME }}
     steps:
       - uses: actions/checkout@v5
+
+      # Docker Desktop's `desktop` credential store is tied to the logged-in GUI
+      # session. Invoked from the runner's launchd session its helper blocks in
+      # open(2) and never returns; buildkit re-spawns it on every retry, and one
+      # such call also stalls image resolution for any other build on the host.
+      # The same call from an interactive shell on that host answers in
+      # milliseconds, which is why the smoke build on a hosted runner and a hand
+      # build on this one both pass while every deploy wedges before the first
+      # layer. The host stores no registry credentials, so the job builds
+      # against a copy of the config with no credential store in it. Registry
+      # auth, if it is ever needed, belongs in an explicit `docker login` with a
+      # repository secret rather than in the keychain of whoever happens to be
+      # logged into the deploy host.
+      - name: Point docker at a credential-store-free config
+        run: |
+          src="${DOCKER_CONFIG:-$HOME/.docker}"
+          dst="$RUNNER_TEMP/docker-config"
+          # Read the active context before the switch: the copy below carries the
+          # context definitions, not the record of which one is current.
+          context="$(docker context show)"
+          rm -rf "$dst"
+          mkdir -p "$dst"
+          # `docker compose` is a user-scoped plugin on this host, with no
+          # system-wide copy to fall back on, so the new config dir has to reach
+          # the same plugin and context directories the real one does.
+          for dir in contexts cli-plugins; do
+            if [ -d "$src/$dir" ]; then ln -s "$src/$dir" "$dst/$dir"; fi
+          done
+          printf '{"currentContext":"%s"}\n' "$context" > "$dst/config.json"
+          echo "DOCKER_CONFIG=$dst" >> "$GITHUB_ENV"
 
       - name: Build image
         run: docker compose build --pull

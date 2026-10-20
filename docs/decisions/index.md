@@ -31,6 +31,6 @@ New ADRs go in this directory as `NNNN-short-title.md`, numbered sequentially.
 | [ADR-0021](./0021-recovery-wakes-the-alerts-assignee) | Recovery wakes the alert's assignee, and dedup is time-bounded | Accepted |
 | [ADR-0022](./0022-health-probe-scheduler-outside-github) | The health probe's scheduler lives outside this repo | Superseded by ADR-0025 |
 | [ADR-0023](./0023-production-database-snapshots) | Snapshots: `EXPORT DATABASE` to Parquet, on a timer, from inside cotel | Accepted |
-| [ADR-0024](./0024-off-host-snapshot-copy-pi-pull) | The off-host copy is a Pi-side pull, and it cannot be an rsync of the volume | Accepted |
+| [ADR-0024](./0024-off-host-snapshot-copy-pi-pull) | The off-host copy is a Pi-side pull, and it cannot be an rsync of the volume | Rescinded by the owner 2026-10-19 |
 | [ADR-0025](./0025-best-effort-ingest-watcher-in-actions) | cotel is watched by a best-effort ingest probe in GitHub Actions | Accepted |
 | [ADR-0026](./0026-scheduled-loopback-probe-with-a-pager) | The deploy host asks `/healthz` on a schedule, and it pages | Accepted |

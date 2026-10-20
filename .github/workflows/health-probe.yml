@@ -2,9 +2,9 @@ name: Health probe
 
 # Two jobs here are scheduled, and both are **best-effort watchers, not
 # monitoring**. GitHub schedules public repositories on a best-effort basis and
-# *drops* ticks rather than delaying them — measured in this repository, one run
-# out of the nine expected over nine hours — so the detection delay either one
-# buys is unbounded. They are strictly better than nothing, and that is the
+# *drops* ticks rather than delaying them — measured in this repository over a
+# full day, 4 runs out of the 91 expected (4.4%), about one look every 5.7
+# hours — so the detection delay either one buys is unbounded. They are strictly better than nothing, and that is the
 # whole of what they promise. See docs/operations/health-probe.md, ADR-0025 and
 # ADR-0026.
 #
@@ -57,8 +57,6 @@ on:
       - "scripts/probe-edge-ingest_test.sh"
       - "scripts/page-cotel-health.sh"
       - "scripts/page-cotel-health_test.sh"
-      - "scripts/pull-snapshots.sh"
-      - "scripts/pull-snapshots_test.sh"
       - ".github/workflows/health-probe.yml"
 
 permissions:
@@ -77,8 +75,6 @@ jobs:
         run: bash scripts/probe-edge-ingest_test.sh
       - name: Run pager tests
         run: bash scripts/page-cotel-health_test.sh
-      - name: Run snapshot mirror tests
-        run: bash scripts/pull-snapshots_test.sh
 
   probe-ingest:
     name: Probe the public OTLP ingest
@@ -235,7 +231,10 @@ jobs:
       # These two are a pair. `0` switches the staleness window off, so an open
       # alert is always the dedup target and one outage mints exactly one
       # ticket; `PC_STILL_RED_WAKE=0` drops the per-tick wake that would
-      # otherwise land 96 times a day while that ticket stands. What it costs is
+      # otherwise land on every tick while that ticket stands — nominally 96 a
+      # day, around 4 at the delivery rate actually measured. The pair is
+      # required by the one-ticket-per-outage rule, not by the size of that
+      # number. What it costs is
       # that the recovery wake is now the only thing that re-arms this watcher —
       # an alert nobody closes makes the next outage silent.
       PC_ALERT_MAX_AGE_H: "0"
@@ -247,7 +246,8 @@ jobs:
       # A coarse bucket rather than this run id, which is the default. With the
       # staleness window off an alert can stand for a long time, and a per-run
       # key would make every green tick in the meantime mint another recovery
-      # wake — four an hour. A dispatch keeps the run id: each drill is its own
+      # wake — nominally four an hour, fewer at the delivery rate actually
+      # measured. A dispatch keeps the run id: each drill is its own
       # call and wants its own recovery.
       - name: Bucket the recovery key for the scheduled run
         if: github.event_name == 'schedule'

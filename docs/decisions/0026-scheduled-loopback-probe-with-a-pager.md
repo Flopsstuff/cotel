@@ -15,9 +15,9 @@ share that blindness, and they are the three nothing has observed since the Pi
 timer was retired on 2026-10-14:
 
 - **A snapshot worker that has stopped producing restore points.** This is the
-  one with an irreversible price: what is lost is lost, and the off-host mirror
-  decays on its own schedule ([ADR-0024](./0024-off-host-snapshot-copy-pi-pull)'s
-  pull has none).
+  one with an irreversible price: what is lost is lost, and there is no second
+  copy behind it — the off-host mirror was rescinded on 2026-10-19
+  ([ADR-0024](./0024-off-host-snapshot-copy-pi-pull)).
 - **A stale ingest behind a live tunnel.** The instance answers 401 from outside
   while accepting no spans, or while its DuckDB is unreadable.
 - **A dead dashboard.** `cotel.aignite.pl` is a different host, and the edge
@@ -197,9 +197,11 @@ is independent of the instance's traffic shape.
   host; what remains unwatched is its path through Cloudflare.
 - **ADR-0025's blind half is closed**, and its consequence bullets that read
   "nothing asks `/healthz` on a schedule now" are lifted by this record. Its
-  other half stands: the off-host snapshot mirror still has no schedule, so a
-  green probe here is not a statement about recoverability. Read
-  `scripts/pull-snapshots.sh --status` before making one.
+  other half no longer stands the way it was written: the off-host snapshot
+  mirror it told you to check was rescinded by the owner on 2026-10-19 and its
+  tooling is deleted ([ADR-0024](./0024-off-host-snapshot-copy-pi-pull)), so the
+  deploy host is the only holder of the restore point and this job's `snapshot`
+  object is the only thing that watches it on a schedule.
 - **No new credential, and nothing for the board to do.** This job already had
   every secret it needs; the change is an event name, a marker, three
   environment variables and one more probe call.

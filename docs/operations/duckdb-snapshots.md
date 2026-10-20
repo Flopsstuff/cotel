@@ -95,11 +95,11 @@ Two caveats on what that buys. GitHub **drops** scheduled ticks on public
 repositories rather than delaying them, so the detection delay is unbounded and
 a green workflow file is not evidence anything ran — measure it with
 `gh run list --repo Flopsstuff/cotel --workflow=health-probe.yml --event=schedule`.
-And a green verdict here is a statement about the *worker*, not about
-recoverability: the off-host mirror has no schedule of its own and decays
-independently, so read `scripts/pull-snapshots.sh --status` before concluding
-anything from it
-([ADR-0024](../decisions/0024-off-host-snapshot-copy-pi-pull.md)).
+And a green verdict here is a statement about the *worker* on one host, which is
+now the only holder of the restore point: the off-host mirror was rescinded by
+the owner on 2026-10-19 and its tooling is retired
+([ADR-0024](../decisions/0024-off-host-snapshot-copy-pi-pull.md)), so there is
+no second copy to fall back on when this probe is the thing that went quiet.
 
 The claim is deliberately **not** on `/healthz`. That endpoint is the container
 liveness contract: `cotel --healthcheck`, the Docker `HEALTHCHECK` and
@@ -269,133 +269,41 @@ of every agent's token. Treat the snapshots volume exactly like the data volume:
 it is not a file to hand around, and an off-host copy of it is an off-host copy
 of the credentials.
 
-## The off-host mirror
+## There is no off-host copy
 
-Snapshots land on the same disk as production, so a second copy lives on
-another machine: the Pi pulls the complete snapshots it does not have yet and
-keeps them. **Nothing schedules that pull**, so the mirror is exactly as fresh
-as the last time someone ran the command below. The decision, the transport it
-was chosen on and the risk that is knowingly *not* covered are
+Snapshots exist only on robmini, on the same disk as production. A pull-based
+mirror on the Pi was built and ran for a week; the owner rescinded it on
+2026-10-19, and both the copy on the Pi and the tooling that made it are gone.
+What was built, the transport it needed and the decision that ended it are in
 [ADR-0024](../decisions/0024-off-host-snapshot-copy-pi-pull).
 
-```bash
-scripts/pull-snapshots.sh              # one tick: pull what is missing, prune
-scripts/pull-snapshots.sh --status     # is the mirror current?
-scripts/pull-snapshots.sh --dry-run    # what a tick would do; writes nothing
-```
+Three things follow operationally:
 
-The bytes come out through a throwaway `--rm` container with the volume mounted
-`:ro`, because a Docker named volume on macOS has no host-side path for `rsync`
-to read - it is inside Docker Desktop's VM. Production is never touched.
-
-### Where it lives, and why there
-
-`SNAPSHOT_MIRROR_DIR`, default `$HOME/cotel-snapshots`, mode 700. Deliberately
-**not** under `~/projects`: that checkout is shared, and a copy inside a
-repository is a copy that can be committed. Deliberately **not** under
-`~/ops/reports/`, which is swept on a 31-day retention rule that has nothing to
-do with this data. There is **no** schedule: the systemd timer that would have
-run this in the owner's `~/ops` tree was declined, so the pull happens only when
-someone runs the command above.
-
-The mirror carries the same secrets as the data volume: `users.token` is
-plaintext by design, so every snapshot in it holds a copy of every agent's
-ingest token. Treat the directory like the database itself - mode 700, never
-inside a repository, not a thing to hand around.
-
-### Reading `--status`
-
-This is what answers "is the mirror current" without trusting that the timer
-ran:
-
-```
-pull-snapshots: status
-  mirror       /home/flop/cotel-snapshots — 25 complete snapshots, 118M on disk, keep 56
-  local newest 2026-10-12T17-39-54Z (age 1h37m)
-  source       robmini:cotel-snapshots — newest 2026-10-12T17-39-54Z (age 1h37m), 25 complete
-  lag          0s — the mirror holds the newest source snapshot
-  to pull      0 source snapshot(s) not here yet
-```
-
-`lag` is the gap between the newest snapshot here and the newest one at the
-source. With no schedule it grows by one snapshot every `6h` until someone runs
-a tick, so treat it as the mirror's age rather than as a health signal, and read
-it before relying on the copy. Nothing else will tell you: there is no unit, so
-no alert.
-
-### Exit codes
-
-A tick's non-zero exit reaches only whoever ran it - nothing watches this pull -
-so the codes are meant to be read:
-
-| | |
-|---|---|
-| `0` | Tick completed, including "nothing to do" |
-| `1` | Source unreachable - ssh or `docker run` failed |
-| `2` | The remote listing was empty, or was not snapshot directories at all |
-| `3` | A pulled snapshot failed verification; the partial was deleted and nothing landed |
-| `4` | The mirror directory is missing and uncreatable, or not writable |
-| `64` | Invalid invocation or configuration - not a tick outcome |
-
-Every pulled directory is verified before it lands: per-file `sha256` against
-the same bytes read back out of the source volume, plus `snapshot.json` parsing
-and agreeing with the instant it was pulled under. Extraction goes into
-`.partial-<instant>` and is renamed to `<instant>` only after that passes, so an
-interrupted pull cannot leave a directory a later tick reads as present.
-
-### The mirror does not mirror deletions
-
-Local pruning is `SNAPSHOT_MIRROR_KEEP` newest complete snapshots, never below
-one. A local snapshot is **never** deleted because the source stopped having it.
-This is the single reason the implementation is not `rsync --delete`:
-propagating a source deletion would faithfully reproduce `docker volume prune`
-on a stopped deploy - the accident the next section names as the new one - into
-the copy that exists to survive it. A test holds the rule, and it must not be
-"simplified" later.
-
-### Restoring from the mirror
-
-The mirror's directories *are* the snapshot directories, named after their
-instants, so this is [the restore procedure above](#restoring-from-a-snapshot)
-with the mirror mounted where the volume would be:
-
-```bash
-docker run --rm --entrypoint /usr/local/bin/cotel \
-  -v "$HOME/cotel-snapshots:/snapshots:ro" \
-  -v cotel-data-restore-probe:/data \
-  ghcr.io/flopsstuff/cotel:latest --db-import /snapshots/2026-10-12T17-39-54Z
-```
-
-`/snapshots` is not a convention here but a requirement: `load.sql` holds
-absolute `/snapshots/<instant>/...` paths, which is also why each mirrored
-directory keeps the source's name exactly.
-
-**That command now runs on the Pi too.** `--db-import` needs a cotel binary for
-the host's platform, and the published image stopped being amd64-only: `docker
-pull ghcr.io/flopsstuff/cotel:latest` on the Pi resolves the `linux/arm64` entry
-of the index and the binary inside it executes natively. What has not changed is
-the proof the mirror itself offers on every tick - byte-identity, `sha256` per
-file plus the manifest - which is what the status line reports; an actual
-restore from the mirror on the Pi is now possible but is not something the pull
-does for you. Restorability of the artifact itself is still established at the
-source, with the drill in
-[ADR-0023](../decisions/0023-production-database-snapshots).
+- **robmini's snapshots volume is the only restore point cotel has.** Lose that
+  host and every snapshot goes with it. That is an accepted cost, not an open
+  item - see [What snapshots do not cover](#what-snapshots-do-not-cover).
+- **There is nothing to check before relying on a snapshot.** With no second
+  copy there is no lag to read and no mirror freshness to establish. The
+  `scripts/pull-snapshots.sh` tick, its `--status` block and its `--max-lag`
+  threshold no longer exist in this repo; anything that still tells you to run
+  one is stale. What to verify is the snapshot itself, at the source:
+  [Is it working?](#is-it-working) and the restore procedure above.
+- **Do not recreate the copy as a side effect of something else.** A snapshot
+  carries every agent's ingest token in plaintext, so a directory pulled off the
+  host "just to look" leaves credentials somewhere nobody is tracking. Reopening
+  an off-host copy is a decision for the CEO, not a command to run.
 
 ## What snapshots do not cover
 
 - **Host loss.** Snapshots land on the same disk as production. They insure
   against file-level corruption, a bad migration and accidental deletion - the
   failures cotel has actually had - and not against the disk or the machine
-  going away. The off-host copy is decided -
-  [ADR-0024](../decisions/0024-off-host-snapshot-copy-pi-pull) - and the pull
-  that implements it is [the off-host mirror](#the-off-host-mirror): a pull to
-  the Pi over the existing LAN ssh path, with premises loss accepted as
-  uncovered because it is another machine in the same building. That pull is
-  **unscheduled** - a mirror is only as current as its last tick, and here the
-  last tick was a person, so read `--status` instead of assuming. Measured once,
-  on 2026-10-19: **5d18h and 23 instants behind**, while the worker on the
-  source was healthy the whole time. A green snapshot verdict says the worker
-  runs, not that an off-host copy of its output exists.
+  going away. **Host loss is uncovered, by decision.** The off-host copy that
+  used to stand here was rescinded by the owner on 2026-10-19 and deleted -
+  [ADR-0024](../decisions/0024-off-host-snapshot-copy-pi-pull) - so if robmini
+  is lost, every snapshot is lost with it and the recovery point is whatever
+  anyone happens to hold elsewhere, which is nothing. A green snapshot verdict
+  says the worker runs on that one host; there is no second place to look.
 - **`docker volume prune`.** The snapshots volume is only "in use" while the
   container exists, so a prune on a stopped deploy takes the backups with it.
   This is the one new way the volume layout can bite; no code can prevent it.

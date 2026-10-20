@@ -1,8 +1,12 @@
 # ADR 0024 - The off-host copy is a Pi-side pull, and it cannot be an rsync of the volume
 
 **Date:** 2026-10-12
-**Status:** Accepted, except the schedule - see **Not scheduled** under Decision
-**Deciders:** Prospero (CEO, risk model and mechanism), Daedalus (CTO, transport and implementation)
+**Status:** **Rescinded by the owner, 2026-10-19.** The mirror is deleted, there is no
+off-host copy of cotel's snapshots, and the tooling is retired - see
+**Rescinded by the owner**. Everything above that section is the record of what was
+built and why; none of it is current posture.
+**Deciders:** Prospero (CEO, risk model and mechanism), Daedalus (CTO, transport and
+implementation), board owner (rescission)
 
 ---
 
@@ -96,13 +100,11 @@ container of the image cotel's own runtime is built on, which is already on that
 
 **A Pi-side pull on a systemd timer, hourly, using option 3's transport.**
 
-> **Not scheduled (2026-10-13).** The timer was never installed. It would have had to
-> live in the owner's own `~/ops` tree rather than in a company repository, that write
-> is sanctioned per case, and the request was declined. So nothing on this machine runs
-> the pull on its own: the mirror is refreshed only when someone runs
-> `scripts/pull-snapshots.sh`, and its freshness is unknown until `--status` is read.
-> Everything else below shipped and is live - the transport, the mirror, the
-> verification and the pruning rule.
+> **This decision is no longer in force (2026-10-19).** The timer was declined on
+> 2026-10-13 and never installed, so the pull only ever ran when a person ran it; the
+> mirror itself was then rescinded by the owner and deleted. Read the rest of this
+> section as what was built, not as what exists. The current posture is in
+> **Rescinded by the owner** below.
 
 - **The script lives in this repo** (`scripts/pull-snapshots.sh`), and the timer in
   `~/ops` materializes it from `origin/main` at each tick. That is
@@ -117,7 +119,7 @@ container of the image cotel's own runtime is built on, which is already on that
   that can be committed, and outside `~/ops/reports/`, which is swept on a 31-day
   retention rule that has nothing to do with this data.
 - **The mirror does not mirror deletions.** It prunes on its own count
-  (`COTEL_SNAPSHOT_MIRROR_KEEP`, default 56, never below one), and it never deletes a
+  (`SNAPSHOT_MIRROR_KEEP`, default 56, never below one), and it never deletes a
   local snapshot because the source stopped having it. A sync that propagated source
   deletions would faithfully reproduce the one accident ADR-0023 named as newly
   dangerous - `docker volume prune` on a stopped deploy - into the copy that exists to
@@ -128,42 +130,70 @@ container of the image cotel's own runtime is built on, which is already on that
 
 ---
 
+## Rescinded by the owner (2026-10-19)
+
+The board owner ended the off-host copy on the same day its first week of lag was
+measured, in one line about the Pi:
+
+> **"Не нужны копии на PI удаляй их. мак исходный инстанс более надежный чем эти копии
+> на pi"** - the copies on the Pi are not wanted, delete them; the original instance on
+> the Mac is more reliable than these copies on the Pi.
+
+**What was done.** `~/cotel-snapshots` on the Pi was deleted - 52 instants, 248 MB,
+newest `2026-10-19T11-39-54Z`. The confirmation card that asked once more for an hourly
+pull timer was rejected two minutes later. Both halves of the mechanism are therefore
+closed, the copy and its schedule, and the schedule question is closed for the third and
+last time.
+
+**The state this leaves.** There is no off-host copy of cotel's snapshots. robmini's
+local `cotel-snapshots` volume is the sole recovery point, by explicit owner decision.
+The accepted cost is **total snapshot loss if robmini is lost** - not a recovery point
+measured in days of lag, and not a bounded hole in mirrored history, but all of it. The
+two prices this record carried a day earlier were prices *of the mirror*, and they no
+longer describe anything: with no second copy there is no `lag` to bound a recovery
+point with, and no 14-day reach to lose history outside of.
+
+**The tooling is retired, not parked.** `scripts/pull-snapshots.sh` and its test suite
+are deleted, along with their CI step and the five `SNAPSHOT_*` variables in the README.
+A pull whose single effect is to recreate the directory the owner has just deleted -
+carrying a second plaintext copy of every agent's ingest token with it - is not
+something to leave in the tree labelled "ad-hoc": the next person to find it would
+reasonably run it, and the thing standing between them and doing so would be a comment.
+The transport is still written down, under **The transport, exercised before this was
+decided** above, and the implementation is in git history (`260d084`) if a genuine
+one-off ever needs it. That is where a one-off belongs.
+
+**This does not come back.** Not the mirror, not a Pi-side scheduler, not a Paperclip
+routine that ticks a pull, not the same copy pointed somewhere else. The condition that
+would make an off-host copy a question again is the one the original risk model named -
+cotel starts holding data whose loss is materially expensive - and it is answered by the
+CEO with the board, not re-proposed from engineering as an implementation detail.
+
 ## Consequences
 
-- **Premises loss stays uncovered**, by decision and not by omission, with the revisit
-  condition quoted above. The Pi and robmini are in the same building.
-- **The Pi holds a second copy of every agent's ingest token.** `users.token` is
-  plaintext by design, and a snapshot that omitted it would not restore to a working
-  instance, so the mirror carries the same secrets as the data volume and is treated
-  the same way: 700, and never inside a repository.
-- **The mirror cannot be restored on the Pi today, and the proof available there is
-  byte-identity rather than a restore.** `--db-import` needs the cotel binary, and the
-  published image is **amd64 only** - `docker manifest inspect` lists one platform, and
-  production's own arm64 image was built locally on robmini by compose. So the Pi can
-  prove the copy is the copy (sha256 + `snapshot.json` row counts), while the restore
-  procedure in
-  [Database Snapshots and Restore](../operations/duckdb-snapshots#restoring-from-a-snapshot)
-  runs wherever a cotel binary for that platform exists. Restorability of the artifact
-  itself is established at the source, with the drill in ADR-0023. Publishing an arm64
-  manifest would make the mirror independently verifiable on the Pi; that is a
-  packaging decision with its own ticket, not a prerequisite for having the copy.
-- **No footprint in `~/ops` after all.** The extra script and timer this company would
-  have maintained there was named as the honest cost of the option and accepted by the
-  CEO, then declined at the gate that actually owns it: `~/ops` is the owner's
-  maintenance tree, not a company repo, and that write is sanctioned per case - the same
-  gate `cotel-healthz.timer` passed and this one did not.
-- **Nothing is loud, because there is no unit.** The design put a failing pull on the
-  `OnFailure=` path the other ops units use, so a broken tick would have announced
-  itself; with the timer declined, that path does not exist and the only signal is
-  `--status` read by a human. The weaker half of this was already the accepted residual
-  [ADR-0022](./0022-health-probe-scheduler-outside-github) accepted for the probe's own
-  schedule, and the reason the mirror's newest instant is worth reading in the runbook
-  rather than assumed.
-- **The source keeps its own watcher.** The 10-minute tick already pages when snapshots
-  stop happening on robmini; this ADR adds no claim to `/api/v1/health`, because the
-  mirror is not something production can observe.
-  **No longer true as of 2026-10-14:** that tick was retired, and the watcher that
-  replaced it ([ADR-0025](./0025-best-effort-ingest-watcher-in-actions)) asks the public
-  ingest only and never reaches `/api/v1/health`. A snapshot worker that stops is now
-  found by running the probe by hand. The decision below stands; only this consequence
-  changed.
+These replace the consequences this record carried while the mirror existed. Every one
+of those was a consequence of there being a copy on the Pi, and there is no copy.
+
+- **Host loss is uncovered, and total.** robmini holds the only snapshots cotel has.
+  The recovery point after losing that host is not a lag measured in days, it is
+  nothing. That is the owner's accepted cost; it is written here so the next person
+  reading a green snapshot verdict does not infer a second copy behind it.
+- **The Pi no longer holds a second copy of every agent's ingest token.** That was the
+  honest price of the mirror - `users.token` is plaintext by design, and a snapshot that
+  omitted it would not restore to a working instance - and the rescission removes it. It
+  is also the reason the tooling was deleted rather than left runnable: what the pull
+  recreates is a credential copy, not just data.
+- **Nothing to watch, and nothing that claims to.** With no mirror there is no lag to
+  measure, so the `--status` reading the runbook used to require before any conclusion
+  about recoverability is gone from the runbook as well. What stays watchable is the
+  snapshot worker at the source, by hand, per
+  [ADR-0025](./0025-best-effort-ingest-watcher-in-actions); a green verdict there now
+  means exactly one thing - snapshots are being written on the one host that has them.
+- **No footprint in `~/ops`, and none was ever installed.** The timer was asked for
+  twice and declined twice at the gate that owns that tree, so there is nothing to
+  unwind there now.
+- **ADR-0023's deferral of the off-host copy is the final state, not a gap to close.**
+  "An off-host copy is a separate decision with its own dependencies" was written as a
+  deferral; the decision was then taken, implemented and withdrawn by the owner. The
+  risk ADR-0023 named as out of its own scope is open again, on purpose, and reopening
+  it is a conversation with the board rather than a ticket.

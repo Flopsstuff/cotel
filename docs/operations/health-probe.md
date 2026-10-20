@@ -19,7 +19,8 @@ off its run queues instead of failing. See
 
 **Both are best-effort watchers, not monitoring.** GitHub schedules public
 repositories on a best-effort basis and *drops* ticks rather than delaying them
-— measured in this repository, one run out of the nine expected over nine hours
+— measured in this repository over a full day, 4 runs out of the 91 expected
+(4.4%), about one look every 5.7 hours
 — so **the detection delay is unbounded**, and a green workflow file is not
 evidence that anything ran. They are strictly better than never looking, and
 that is the whole of what they promise. See
