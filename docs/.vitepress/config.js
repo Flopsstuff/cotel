@@ -66,6 +66,7 @@ export default defineConfig({
             { text: 'ADR-0023 - Production Database Snapshots', link: '/decisions/0023-production-database-snapshots' },
             { text: 'ADR-0024 - Off-Host Snapshot Copy is a Pi-Side Pull', link: '/decisions/0024-off-host-snapshot-copy-pi-pull' },
             { text: 'ADR-0025 - Best-Effort Ingest Watcher in Actions', link: '/decisions/0025-best-effort-ingest-watcher-in-actions' },
+            { text: 'ADR-0026 - The Deploy Host Asks /healthz on a Schedule', link: '/decisions/0026-scheduled-loopback-probe-with-a-pager' },
           ],
         },
       ],

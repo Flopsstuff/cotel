@@ -153,6 +153,37 @@ bound, and the first person to rely on that is the one holding a silent outage.
   restore point is found only by hand**, by running `scripts/probe-healthz.sh`
   from any machine on the LAN. That is the price, recorded rather than
   discovered.
+- **That price was paid on 2026-10-19 and this bullet no longer holds.** The CEO
+  granted the pager, and
+  [ADR-0026](./0026-scheduled-loopback-probe-with-a-pager) puts `probe-loopback`
+  on the same schedule with one. Everywhere this record says "nothing asks
+  `/healthz` on a schedule now" — the bullet above and the stale-ingest bullet
+  before it — read ADR-0026 instead. The rest of this record stands as written.
+
+  The grant came with four conditions, and they are acceptance criteria rather
+  than advice. **One**, both pager steps fire on `inputs.page || github.event_name
+  == 'schedule'`: `schedule` supplies no inputs, so moving only the job's `if:`
+  would have produced a watcher that runs, goes red in Actions, and pages
+  nobody. **Two**, `PC_ALERT_MAX_AGE_H=0` and `PC_STILL_RED_WAKE=0`, the same
+  pair the ingest half carries — without them one outage mints a ticket per
+  tick, nominally 96 a day at `*/15` and about 4 at the delivery rate measured
+  above. **Three**, a production marker of its own, distinct from
+  `[cotel-ingest-edge]`, so that neither half's green tick closes the other
+  half's alert; the dispatch keeps paging a drill marker. **Four**, the snapshot
+  alert's wording is left alone — `scripts/page-cotel-health.sh` already titles
+  a snapshot failure `prod database snapshot` and leads with "the application is
+  alive; its backup is not".
+
+  Three things stay unwatched afterwards. The **dashboard host through
+  Cloudflare Access** — a working process behind a broken edge still reads
+  green, and the request for an Access token to close that was withdrawn, so
+  `probe-edge` remains a dispatch-only drill. **A deploy host that is off
+  produces no colour at all** rather than red: the run sits in the queue, and
+  `timeout-minutes` does not bound queue time. Measured on 2026-10-19, deploy
+  `3a6997f7` waited in the queue from 05:26Z to 11:27Z, six hours. That case is
+  what the external ingest half is for. And **GitHub still drops scheduled
+  ticks**, for this half exactly as for the other, so the detection delay stays
+  unbounded and "did it run" stays a measurement.
 - **Watching the worker is now the whole of watching the restore point.** This
   bullet said the opposite a day ago: a lost snapshot worker cost only what the
   off-host copy did not already hold, and that copy decayed on its own because
@@ -161,8 +192,11 @@ bound, and the first person to rely on that is the one holding a silent outage.
   the restore point rotted is gone along with the second copy. What remains is
   one host writing snapshots to its own disk, which makes a pager on
   `/api/v1/health` the only thing that could notice the restore point stopping
-  being refreshed, and makes running `scripts/probe-healthz.sh` by hand the only
-  thing that does.
+  being refreshed. Running `scripts/probe-healthz.sh` by hand was the only
+  thing that did it until the grant above: the scheduled `probe-loopback` run
+  asks the same endpoint with `SNAPSHOT_CHECK=require`, so a stalled snapshot
+  now pages — as often as GitHub delivers a tick, which is the measured 4.4% of
+  them.
 - **Reaching `/healthz` through Cloudflare Access is closed, and not on
   technical grounds.** The `CF_ACCESS_CLIENT_ID` / `CF_ACCESS_CLIENT_SECRET`
   pair still gets HTTP 302 from `https://cotel.aignite.pl/healthz` (runs

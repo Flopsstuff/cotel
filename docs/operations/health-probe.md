@@ -1,16 +1,29 @@
 # Production health probes
 
-One scheduled watcher asks production one question: the `probe-ingest` job in
-`.github/workflows/health-probe.yml` requests the **public OTLP ingest URL**
-from a GitHub-hosted runner every 15 minutes, and pages a Paperclip agent when
-two looks a minute apart are both red.
+Two scheduled watchers ask production two different questions, both in
+`.github/workflows/health-probe.yml`, both every 15 minutes, and both paging a
+Paperclip agent when two looks a minute apart are red:
 
-**It is a best-effort watcher, not monitoring.** GitHub schedules public
+- **`probe-ingest`** requests the **public OTLP ingest URL** from a
+  GitHub-hosted runner — production as the internet sees it.
+- **`probe-loopback`** requests **`/healthz` on the deploy host** from the
+  self-hosted runner that lives there — the process, the database, ingest
+  freshness and the snapshot worker, none of which is visible from outside.
+
+Neither is sufficient alone, and that is structural rather than a staffing
+accident: each is blind to exactly what the other sees. `probe-ingest` stops at
+the auth boundary and cannot tell a silent instance from a healthy one;
+`probe-loopback` cannot report its own host being down, because with the runner
+off its run queues instead of failing. See
+[ADR-0026](../decisions/0026-scheduled-loopback-probe-with-a-pager.md).
+
+**Both are best-effort watchers, not monitoring.** GitHub schedules public
 repositories on a best-effort basis and *drops* ticks rather than delaying them
-— measured in this repository, one run out of the nine expected over nine hours
+— measured in this repository over a full day, 4 runs out of the 91 expected
+(4.4%), about one look every 5.7 hours
 — so **the detection delay is unbounded**, and a green workflow file is not
-evidence that anything ran. It is strictly better than never looking, and that
-is the whole of what it promises. See
+evidence that anything ran. They are strictly better than never looking, and
+that is the whole of what they promise. See
 [ADR-0025](../decisions/0025-best-effort-ingest-watcher-in-actions.md).
 
 The 10-minute systemd timer on the Pi that used to own this was **retired on
@@ -18,8 +31,13 @@ The 10-minute systemd timer on the Pi that used to own this was **retired on
 with the production it watched, so it went down *with* cotel — which is the
 failure it existed to report. `~/ops/cotel-healthz.sh` is still on that machine
 and `--probe-only` still works by hand, but nothing ticks it, and nothing else
-in `~/ops` watches cotel either. Any scheduled observation of cotel has to come
-from outside that network, which is what this job is.
+in `~/ops` watches cotel either. The board's order out of that retirement is
+about the **vantage point**, not about `/healthz`: an observer that shares the
+LAN, the uplink and the power outlet with production cannot report production
+going down. `probe-ingest` satisfies it by running outside that network
+entirely. `probe-loopback` satisfies it from the other side — it runs *on* the
+deploy host, so it makes no claim about that host being reachable and leaves
+that question to `probe-ingest`.
 
 A watcher of some kind is needed because a dead or silent cotel otherwise has
 no one looking at all: `Deploy` only runs on a push to `main`, the Cloudflare
@@ -36,68 +54,84 @@ gh run list --repo Flopsstuff/cotel --workflow=health-probe.yml --event=schedule
 ```
 
 Empty output means no scheduled run has happened, however healthy the workflow
-looks. That is the measurement of this watcher, and it is worth repeating
-occasionally rather than assuming the first result holds.
+looks. That is the measurement of both watchers, and it is worth repeating
+occasionally rather than assuming the first result holds. Narrow it per job with
+`--json name,conclusion,createdAt` and read which of the two actually ran: one
+of them being green says nothing about the other having ticked.
 
-## What this watcher cannot see
+## What these watchers cannot see
 
-Three gaps, none of which it will report:
+- **Itself.** If the tick is dropped, nothing anywhere notices that the watcher
+  is not watching. This is the gap that neither job closes for the other, and
+  the only remedy available is the measurement above.
+- **The dashboard's path through Cloudflare.** `cotel.aignite.pl` is a different
+  host behind Cloudflare Access, and no scheduled job asks for it *through*
+  Access. A dead dashboard *process* is caught — `probe-loopback` asks
+  `/healthz` on the host — but a working process behind a broken edge is not.
+  See [the Access caveat](#the-access-caveat-the-dispatched-dashboard-edge-job).
+- **A runner that cannot resolve the name.** Exit 7 is a defect in the observer,
+  not evidence about cotel; it warns and stays green rather than paging.
 
-- **A silent stale ingest behind a live tunnel.** The check stops at the auth
-  boundary, so an instance that answers 401 while accepting no spans, or whose
-  DuckDB is unreadable, is indistinguishable from health from outside. Only
-  `/healthz` carries that, and nothing asks `/healthz` on a schedule now.
-- **A dead dashboard with a live ingest.** `cotel.aignite.pl` is a different
-  host behind Cloudflare Access and is not probed on any schedule.
-- **Itself.** If the tick is dropped, or the runner cannot resolve the name,
-  nothing anywhere notices that the watcher is not watching.
-
-These gaps are not an oversight waiting to be closed quietly. They were weighed
-on their own and the blindness is accepted for now, with its price written down:
-see [ADR-0025](../decisions/0025-best-effort-ingest-watcher-in-actions.md). The
-short version is that only `probe-loopback` can see the first two, scheduling it
-without a pager would be the appearance of detection rather than detection, and
-scheduling it *with* one is a decision about board-facing output rather than an
-implementation detail.
+Two gaps that used to be on this list — a silent stale ingest behind a live
+tunnel, and a snapshot worker that has stopped producing restore points — were
+closed on 2026-10-19 by putting `probe-loopback` on the schedule with a pager;
+see [ADR-0026](../decisions/0026-scheduled-loopback-probe-with-a-pager.md).
 
 ## The vantage points
 
 Production is asked from several places, because each is blind to something the
-others see. Only the first column is scheduled; the other two run on a
-dispatch, as drills.
+others see. The first two columns are scheduled; the third runs on a dispatch,
+as a drill.
 
-| | `probe-ingest` (**scheduled**) | `probe-loopback` (dispatch) | `probe-edge` (dispatch) |
+| | `probe-ingest` (**scheduled**) | `probe-loopback` (**scheduled**) | `probe-edge` (dispatch) |
 |---|---|---|---|
-| Scheduled | **yes, `*/15 * * * *`, best-effort** | no | no |
-| Runner | `ubuntu-latest` — never self-hosted | `[self-hosted, flopsstuff, docker]` — the deploy host | `ubuntu-latest` |
+| Scheduled | **yes, `*/15 * * * *`, best-effort** | **yes, the same `*/15`, best-effort** | no |
+| Runner | `ubuntu-latest` — never self-hosted | `[self-hosted, flopsstuff, docker]` — the deploy host, never hosted | `ubuntu-latest` |
 | Target | `https://otlp.aignite.pl/v1/traces` (internet) | `http://127.0.0.1:8080/healthz` | `https://cotel.aignite.pl/healthz` |
 | Cloudflare in the path | yes (DNS + tunnel) | no | yes (tunnel + Access) |
 | Catches | DNS, a blanked tunnel token, the ingest route not served, Access appearing in front of ingest | process dead, crash loop, 503 DuckDB, stale/empty ingest, a snapshot worker that has stopped producing restore points | the dashboard host through Cloudflare |
-| Blind to | the database and ingest freshness: this check stops at the auth boundary; and its own dropped ticks | **its own host being down** — with the runner off the job queues, producing no colour at all | nothing in the path, but see the Access caveat below |
+| Blind to | the database and ingest freshness: this check stops at the auth boundary; and its own dropped ticks | **its own host being down** — with the runner off the job queues, producing no colour at all; and its own dropped ticks | nothing in the path, but see the Access caveat below |
 | Access service token | **not needed** | not needed | required |
-| Pages | **production** `[cotel-ingest-edge]` on a schedule, `[cotel-ingest-edge-drill]` on a dispatch | `[cotel-health-probe-drill]` — drill only | `[cotel-health-probe-drill-edge]` — drill only |
+| Ingest staleness window | n/a — never reads `/healthz` | **10 h** on a schedule, 6 h on a dispatch | 6 h |
+| Snapshot claim | n/a — never reads `/healthz` | **`SNAPSHOT_CHECK=require`**: "no claim" is red, because snapshots are expected on this host | `auto` — and `require` must never be set here, see the Access caveat |
+| Pages | **production** `[cotel-ingest-edge]` on a schedule, `[cotel-ingest-edge-drill]` on a dispatch | **production** `[cotel-health-probe]` on a schedule, `[cotel-health-probe-drill]` on a dispatch | `[cotel-health-probe-drill-edge]` — drill only |
 
-`probe-ingest` runs on `ubuntu-latest` and must never be moved to the
-self-hosted runner. An external vantage point is the entire reason this job
-exists, and the self-hosted alternative is worse than it looks: a job on the
-deploy host cannot report that host being off, because GitHub queues the run
-rather than failing it, and `timeout-minutes` does **not** bound queue time — it
-starts counting once a runner picks the job up. An absent host yields no colour
-at all, and the only trace is a run sitting in `queued`, which is also what a
-busy runner looks like.
+**Neither scheduled job may be moved to the other's runner.** `probe-ingest`
+exists to hold an external vantage point, and the self-hosted alternative is
+worse than it looks: a job on the deploy host cannot report that host being off,
+because GitHub queues the run rather than failing it, and `timeout-minutes` does
+**not** bound queue time — it starts counting once a runner picks the job up. An
+absent host yields no colour at all, and the only trace is a run sitting in
+`queued`, which is also what a busy runner looks like. `probe-loopback` is the
+mirror image: `127.0.0.1:8080` and the derived `/api/v1/health` are reachable
+from that host and nowhere else, so on a hosted runner it would have nothing to
+ask. The pair is the design, not redundancy.
 
-Every prober uses a **different dedup marker** on purpose. On a single marker
-they would fight: a green tick on one would ask for the close of the alert
-another had just raised. A dispatch is separated from the schedule for the
-stronger version of the same reason — a drill must not touch a real alert; see
+**A marker names a subject, not a prober.** The two scheduled halves ask about
+different things, so they page different markers: on a single one they would
+fight, a green tick from one asking for the close of the alert the other had
+just raised — and they genuinely go red independently, as the 2026-10-14 tunnel
+outage showed, red from the internet while `/healthz` answered 200 on the LAN
+throughout. Both markers open at once is two findings, not a duplicate. A
+dispatch is separated from the schedule for the stronger version of the same
+reason — a drill must not touch a real alert; see
 [Running a drill](#running-a-drill).
 
-The `[cotel-health-probe]` marker, and the `/healthz` probe behind it, belong to
-no scheduled caller any more. `scripts/probe-healthz.sh` is still here, still
-tested, and still the right thing to run by hand or from a future scheduled
-caller; what follows describes it on that basis.
+Two probers on the *same* subject share its marker, which is why the scheduled
+`/healthz` job pages under `[cotel-health-probe]` — this half's historical
+marker and `page-cotel-health.sh`'s default. `~/ops/cotel-healthz.sh` on the Pi
+still pages by hand under that same marker, exactly as it shares
+`[cotel-ingest-edge]` with the scheduled `probe-ingest`. Sharing is the point:
+one outage stays one ticket no matter which prober saw it first, where a second
+name for the same subject would let one outage raise two.
 
-## What the `/healthz` probe checks (nothing runs it on a schedule)
+The one precondition for reusing it is that nothing is standing under it: an
+inherited open alert would dedup the first real outage onto a ticket nobody is
+working. Every alert under that marker was closed when the schedule was turned
+on; `scripts/page-cotel-health.sh` only ever treats an *open* issue carrying the
+exact `[marker]` as a dedup target, so a closed one costs nothing.
+
+## What the `/healthz` probe checks
 
 `scripts/probe-healthz.sh` classifies failure modes with distinct text, because
 they send the on-call looking in different places:
@@ -114,9 +148,43 @@ they send the on-call looking in different places:
 
 A 200 with `ok: true` is not enough. Staleness is a body field
 (`newest_span_age_seconds`); the endpoint keeps 200 on a quiet instance so the
-container HEALTHCHECK does not flap. The probe applies its own threshold:
-**6 hours**. A present JSON `null` is an empty database (never ingested), which
-is not the same as `0` (ingested just now) and not the same as a missing key.
+container HEALTHCHECK does not flap. The probe applies its own threshold,
+`STALE_AFTER_SECONDS`, defaulting to **6 hours** — but the scheduled job raises
+it to **24**, and that number is measured rather than chosen: see
+[the staleness threshold](#the-staleness-threshold-is-24-hours-on-the-schedule).
+A present JSON `null` is an empty database (never ingested), which is not the
+same as `0` (ingested just now) and not the same as a missing key.
+
+### The staleness threshold is 10 hours on the schedule
+
+Exit 3 — "ingest stale" — is a paging class, so its threshold decides both how
+often a quiet night mints a ticket and whether a real stall is caught at all. An
+hourly span histogram over one week of production
+(`/api/v1/history?granularity=hour&range=week`) puts both ends on the record:
+
+```
+gap 12h  2026-10-14 09:00 -> 21:00   (the tunnel outage — a real red)
+gap  6h  2026-10-17 04:00 -> 10:00
+gap  6h  2026-10-15 22:00 -> 04:00
+gap  6h  2026-10-15 10:00 -> 16:00
+```
+
+Ordinary silence here reaches six and seven hours overnight, so a scheduled
+pager on the 6h window would have paged several times that week on nothing. A
+full day, the first number tried here, fails the other way: it clears every
+quiet night but also clears the 2026-10-14 outage, which is the only measured
+instance of the thing this threshold is for. So the scheduled job sets
+`STALE_AFTER_SECONDS=36000` — ten hours, above every quiet night on record and
+below the one real stall — and a dispatch keeps `21600`, where a human is
+reading the answer and a tighter question is more useful.
+
+What that costs is named rather than hidden: a genuinely idle day — a holiday,
+a weekend with nothing running — can cross ten hours with nothing wrong, and it
+will page. One ticket, not a stream, because the dedup pair bounds it; close it
+by hand. If that starts happening more than rarely, raise the number with a
+fresh histogram rather than by feel. `SNAPSHOT_STALE_AFTER_SECONDS` is
+unaffected either way: that worker ticks on its own timer and does not care how
+much traffic arrives.
 
 If `last_ingest_at` / `newest_span_age_seconds` are absent, the probe degrades
 to liveness (HTTP 200) so it keeps working before that contract is on
@@ -155,9 +223,10 @@ Exit **6** and not 5 because the retired `~/ops/cotel-healthz.sh` spends 5 on
 "the LAN half is green and the public ingest half is not", and the exit codes
 are a contract any future caller reads.
 
-This verdict pages under the `/healthz` marker, but not in its words: the alert
-is titled `cotel prod database snapshot is red` and leads with "the application
-is alive; its backup is not". See [the two halves are classified
+This verdict pages under the `/healthz` caller's marker —
+`[cotel-health-probe]` on the schedule — but not in its words: the alert is
+titled `cotel prod database snapshot is red` and leads with "the application is
+alive; its backup is not". See [the two halves are classified
 apart](#the-two-halves-are-classified-apart-and-page-apart).
 
 Two vantage points this must not be turned on for: anything reaching cotel
@@ -168,7 +237,7 @@ a probe-configuration problem), and the ingest probe, which never reads
 
 | Variable | Default | Role |
 |---|---|---|
-| `SNAPSHOT_CHECK` | `auto` | `auto` pages on affirmative failure only; `require` also pages when the instance makes no snapshot claim; `off` never asks |
+| `SNAPSHOT_CHECK` | `auto` | `auto` pages on affirmative failure only; `require` also pages when the instance makes no snapshot claim; `off` never asks. `probe-loopback` sets **`require`** — it only ever asks the deploy host, where snapshots are expected, so "no claim" is a failure there and not a local default |
 | `SNAPSHOT_STALE_AFTER_SECONDS` | `43200` | How old the newest snapshot may be. Two `COTEL_SNAPSHOT_INTERVAL` periods at the shipped `6h`; move it with the interval |
 | `API_HEALTH_URL` | derived from the `/healthz` URL | Override when the snapshot report is not at the same entry point |
 
@@ -211,9 +280,11 @@ Two deliberate narrownesses:
   check could not write anything.
 
 This probe is blind to what `/healthz` sees: it stops at the auth boundary and
-says nothing about the database or ingest freshness. Both used to run on one
-tick; this is the one that survives, so that blindness is now a standing gap —
-see [What this watcher cannot see](#what-this-watcher-cannot-see).
+says nothing about the database or ingest freshness. That is not a standing gap
+any more — `probe-loopback` ticks on the same schedule and covers exactly it —
+but it is still a reason never to read a green ingest tick as a verdict on the
+instance. See [What these watchers cannot see](#what-these-watchers-cannot-see)
+for what neither of them covers.
 
 ### How the scheduled job runs it
 
@@ -269,8 +340,8 @@ that answers while the backup has stopped. So when the caller passes no
 
 | Verdict | Title | Lead says |
 |---|---|---|
-| `no current database snapshot`, or `snapshots are required …` | `cotel prod database snapshot is red [cotel-health-probe]` | the application is alive, the backup is not; read the `snapshot` object in `/api/v1/health` and the worker's logs; do **not** restart cotel |
-| anything else | `cotel prod /healthz is red [cotel-health-probe]` | the `/healthz` probe is red |
+| `no current database snapshot`, or `snapshots are required …` | `cotel prod database snapshot is red [<marker>]` | the application is alive, the backup is not; read the `snapshot` object in `/api/v1/health` and the worker's logs; do **not** restart cotel |
+| anything else | `cotel prod /healthz is red [<marker>]` | the `/healthz` probe is red |
 
 An explicit `PC_ALERT_SUBJECT`/`PC_ALERT_LEAD` always wins over the
 classification — that is how the ingest job keeps its own words.
@@ -280,13 +351,21 @@ ticks of that probe — in either order, snapshot then `/healthz` or the reverse
 still dedup into one ticket. Were the subject part of the dedup key, one
 watcher's consecutive reds would mint an alert each.
 
-One asymmetry the retired timer had and the scheduled job does not: while its
-LAN half was red, its ingest half did not page, because a dead process makes
-the public path unreachable as a consequence and a second alert would send its
-reader hunting Cloudflare for a dead container. Nothing probes `/healthz` on a
-schedule now, so there is no suppression to apply — which also means a red
-ingest alert no longer implies anything about the process. Its description says
-so, and tells the reader to check `/healthz` before touching the tunnel.
+One asymmetry the retired timer had and neither scheduled job does: that timer
+ran both halves in one process, so while its LAN half was red its ingest half
+did not page — a dead process makes the public path unreachable as a consequence
+and a second alert would send its reader hunting Cloudflare for a dead
+container. **The two jobs here cannot suppress each other**, and not by
+oversight: they run on different runners, keep no shared state, and their ticks
+are dropped independently, so neither can know the other's verdict for this
+minute. A dead process therefore pages twice, once per marker.
+
+Read that pair as one finding with two symptoms rather than two incidents. Which
+one to trust about *what* is fixed: `[cotel-health-probe]` is the one that sees
+the process, so start there; the ingest alert's own description already tells its
+reader to check `/healthz` before touching the tunnel. The reverse case is not
+redundancy at all — an ingest alert alone, with `/healthz` green, is the
+2026-10-14 tunnel shape and is exactly why the external half exists.
 
 ### The Access caveat (the dispatched dashboard-edge job)
 
@@ -307,27 +386,29 @@ what would close one.** That was the earlier reading of it — that a meaningful
 check from outside the LAN had to wait for the token to be allowed on
 `cotel.aignite.pl`. It does not: the ingest host answers 401 to anyone, and that
 401 proves DNS, tunnel, process and route, which is exactly what a probe on the
-LAN cannot see. The scheduled job above uses it and asks for no credential.
-What an Access-allowed token would add is narrower: the *dashboard* host's view
-through Cloudflare, and the database and freshness fields that only `/healthz`
-carries. Worth having, not worth blocking on.
+LAN cannot see. The scheduled ingest job uses that and asks for no credential,
+and the database and freshness fields that only `/healthz` carries are now
+watched from the host itself. What an Access-allowed token would add is
+narrower still: the *dashboard* host's view through Cloudflare. Worth having,
+not worth blocking on.
 
 ## Schedule
 
-`cron: "*/15 * * * *"` in `.github/workflows/health-probe.yml`, on the
-`probe-ingest` job. Nothing else — not in this repo, not in `~/ops`, not in a
-Paperclip routine — probes cotel on any schedule.
+`cron: "*/15 * * * *"` in `.github/workflows/health-probe.yml`, driving both
+`probe-ingest` and `probe-loopback`. Nothing else — not in this repo, not in
+`~/ops`, not in a Paperclip routine — probes cotel on any schedule.
 
 **The interval is not the detection delay, and there is no bound on the
 detection delay.** GitHub drops scheduled ticks on public repositories, so the
 cadence set here is a ceiling on how often it *could* look, not a floor on how
-often it does. 15 minutes is chosen because the cadence is free — a dropped
-tick costs nothing and a kept one costs a single HTTP request — so the only
-thing it trades against is nothing at all.
+often it does. 15 minutes is chosen because the cadence is free — a dropped tick
+costs nothing, and a kept one costs a couple of HTTP requests and a minute on a
+runner we own — so the only thing it trades against is nothing at all.
 
-What the schedule does bound is the alarm it can raise: one red tick is
-confirmed by a second look 60 seconds later inside the same run, so a blinked
-Cloudflare 5xx wakes nobody, and a confirmed red opens exactly one ticket.
+What the schedule does bound is the alarm it can raise: in each job one red tick
+is confirmed by a second look 60 seconds later inside the same run, so a blinked
+Cloudflare 5xx or a container restarting through a deploy wakes nobody, and a
+confirmed red opens exactly one ticket per marker.
 
 Verify the cadence rather than believing it:
 
@@ -367,18 +448,30 @@ a red run against a dead endpoint; leave **page** unchecked unless you intend to
 open a Paperclip alert — see [Running a drill](#running-a-drill) for what a
 dispatch with **page** checked does.
 
-A dispatch is the only way `probe-loopback` and `probe-edge` run at all, and it
-is also how `probe-ingest` is rehearsed. The `test` job still runs on every pull
-request and on pushes that touch the probe scripts, so the classification and
-pager tests remain a merge gate.
+A dispatch is the only way `probe-edge` runs at all; for the two scheduled jobs
+it is the rehearsal path, and it pins drill markers so a rehearsal cannot touch
+a real alert. The `test` job still runs on every pull request and on pushes that
+touch the probe scripts, so the classification and pager tests remain a merge
+gate.
+
+Because the dispatch inputs set a job's *whole* configuration, a dispatch is not
+a faithful replay of a scheduled tick: on a dispatch `probe-loopback` keeps the
+6h staleness window and the run id as its recovery key, where the schedule uses
+24h and an hourly bucket. The pager path, the dedup pair and the in-run red
+confirmation are identical, which is what a drill is testing.
 
 ## Running a drill
 
-Every rehearsal pages a **drill** marker, never a production one. The production
-marker `[cotel-ingest-edge]` belongs to `probe-ingest` **on a schedule only**;
-the same job on a dispatch pins `[cotel-ingest-edge-drill]`, and the other two
-jobs pin `[cotel-health-probe-drill]` and `[cotel-health-probe-drill-edge]`
-unconditionally. `[cotel-health-probe]` has no caller at all now.
+Every rehearsal pages a **drill** marker, never a production one. The two
+production markers belong to a schedule only: `[cotel-ingest-edge]` to
+`probe-ingest` and `[cotel-health-probe]` to `probe-loopback`. Dispatched, the
+same jobs pin `[cotel-ingest-edge-drill]` and `[cotel-health-probe-drill]`, and
+`probe-edge` pins `[cotel-health-probe-drill-edge]` unconditionally.
+
+**Check the marker in the alert's title, not the job you dispatched.** A drill
+that mints `[cotel-health-probe]` means the conditional broke and the drill just
+filed a production outage; that is the one failure mode in this section worth
+looking for every time.
 
 Drill the scheduled watcher by dispatching **Health probe** three times, with
 **page** checked each time:
@@ -433,14 +526,14 @@ because a coalesced wake is answered with the id of the run that absorbed it.
 Read `diagnostics/wakes` and match by `requestedAt`.
 
 A red dispatch also runs `probe-loopback` and `probe-edge`, which probe the real
-endpoints on their own drill markers. Against a healthy production neither of
-them pages, but if the self-hosted runner is offline `probe-loopback` queues and
-the *run* never concludes — read `probe-ingest` on its own rather than the run's
-overall conclusion.
+endpoints on their own drill markers (an `ingest_url` override reaches neither of
+them). Against a healthy production neither pages, but if the self-hosted runner
+is offline `probe-loopback` queues and the *run* never concludes — read
+`probe-ingest` on its own rather than the run's overall conclusion.
 
 The one thing to put back afterwards is the drill alert: it is a real issue
-someone has to close. There is no shared failure streak left to reset — the
-scheduled job keeps no state between runs.
+someone has to close. There is no shared failure streak left to reset — neither
+scheduled job keeps state between runs.
 
 Dedup is per marker, so the sets never see each other: a red drill cannot
 attach itself to a standing real alert, and — the half that actually bites — a
@@ -457,6 +550,11 @@ dispatch twice with **page** checked, once with
 assignment wakes its assignee), then once with the default (green — wakes that
 assignee again, who closes the alert from their own run). Never break production
 to get a red run.
+
+The red leg now takes a minute longer than it used to: this job confirms a red
+with a second probe 60 seconds later, so nothing pages until both looks fail.
+The step log says so (`first probe exited N; looking again in 60s …`), and a
+drill that pages immediately means the confirmation was skipped.
 
 **Leave a gap between the red and green dispatches.** Wait for the alert's
 *assignment* run to finish before dispatching the green one. Back to back, the recovery wake is
@@ -516,12 +614,12 @@ drill is over, and say in the close that they were drill artifacts.
 A red GitHub Actions run is **not** the page. Notifications on the Fl0p account
 are unproven (no `notifications` API scope, no public mailbox, agent identities
 are not GitHub users), and this company has already watched red Actions sit
-unnoticed. The scheduled job going red is therefore not how anyone finds out;
+unnoticed. A scheduled job going red is therefore not how anyone finds out;
 the Paperclip alert it opens is.
 
 On red, the prober opens a Paperclip issue titled `cotel <subject> is red
-[<marker>]` — `public ingest at <host>` from the scheduled job, `prod /healthz`
-by default — assigned to Daedalus. That assignment
+[<marker>]` — `public ingest at <host>` from the ingest job, `prod /healthz` or
+`prod database snapshot` from the loopback one — assigned to Daedalus. That assignment
 is the wake, and it is the only tracker issue the pager ever creates. A later
 tick searches `q=<marker>` and acts on the open issue whose **title** contains
 it. Search also matches comments and descriptions, so the first hit is not the
@@ -602,9 +700,9 @@ rather than reporting an alert nobody was assigned.
 | `PC_API_TOKEN` | required | Agent API key. Create-only on issues |
 | `PC_COMPANY_ID` | required | Company the alert is opened in |
 | `PC_ASSIGNEE_AGENT_ID` | Daedalus | Assignee of a new alert. The assignment is the wake |
-| `PC_ORIGIN_ID` | `cotel-health-probe` | Dedup marker. `probe-ingest` sets `cotel-ingest-edge` on a schedule and `cotel-ingest-edge-drill` on a dispatch; the other two jobs pin `cotel-health-probe-drill{,-edge}`. Nothing uses the default |
-| `PC_ALERT_MAX_AGE_H` | `6` | Hours an open alert stays a dedup target on a red tick. `0` always dedups. `probe-ingest` sets `0` |
-| `PC_STILL_RED_WAKE` | `1` | Whether a red tick wakes the assignee of an already-open alert. `0` silences that wake and exits 0. `probe-ingest` sets `0` |
+| `PC_ORIGIN_ID` | `cotel-health-probe` | Dedup marker. `probe-ingest` sets `cotel-ingest-edge` on a schedule and `cotel-ingest-edge-drill` on a dispatch; `probe-loopback` sets `cotel-health-probe` on a schedule and `cotel-health-probe-drill` on a dispatch; `probe-edge` pins `cotel-health-probe-drill-edge`. The default is the `/healthz` subject's marker, shared by the scheduled job and `~/ops/cotel-healthz.sh` on the Pi |
+| `PC_ALERT_MAX_AGE_H` | `6` | Hours an open alert stays a dedup target on a red tick. `0` always dedups. Both scheduled jobs set `0` |
+| `PC_STILL_RED_WAKE` | `1` | Whether a red tick wakes the assignee of an already-open alert. `0` silences that wake and exits 0. Both scheduled jobs set `0` |
 | `PC_RUN_ID` | unset | Sent as `X-Paperclip-Run-Id` when set |
 | `CF_ACCESS_CLIENT_ID`, `CF_ACCESS_CLIENT_SECRET` | unset | Same pair as issue-sync. **In practice mandatory**: Cloudflare Access fronts the Paperclip API, and without them every call answers 302 and the pager reports `issue search: HTTP 302 … did not return JSON` |
 | `GITHUB_RUN_URL` | unset | Attached to the alert and the wake reason when set |
@@ -612,16 +710,16 @@ rather than reporting an alert nobody was assigned.
 | `GITHUB_ACTOR` | unset | Quoted into a new alert's body when set |
 | `HEALTHZ_URL` | unset | Named in the alert so the assignee re-probes the same URL |
 | `GITHUB_RUN_ID` | unset | Fallback for `PC_CALL_ID` |
-| `PC_CALL_ID` | `GITHUB_RUN_ID`, then `manual` | Unique half of the recovery idempotency key. `probe-ingest` sends an hourly bucket (`ingest-<epoch/3600>`) rather than its run id: with the staleness window off an alert can stand for a long time, and a per-run key would make every green tick in the meantime mint another recovery wake |
+| `PC_CALL_ID` | `GITHUB_RUN_ID`, then `manual` | Unique half of the recovery idempotency key. Both scheduled jobs send an hourly bucket (`ingest-<epoch/3600>`, `health-probe-<epoch/3600>`) rather than the run id: with the staleness window off an alert can stand for a long time, and a per-run key would make every green tick in the meantime mint another recovery wake. A dispatch keeps the run id — each drill is its own call |
 | `PC_SOURCE_LINE` | names Actions | First paragraph of a new alert: who opened it. Override it if you are not the workflow |
-| `PC_REPROBE_HINT` | names an Actions dispatch | How the woken agent re-probes. `probe-ingest` replaces it with `bash scripts/probe-edge-ingest.sh`, which runs from any machine with internet |
-| `PC_ALERT_SUBJECT` | classified from the verdict: `prod database snapshot` on a snapshot failure, else `prod /healthz` | What is red, in the title and in every wake reason. `probe-ingest` sets `public ingest at <host>` |
+| `PC_REPROBE_HINT` | names a dispatch of `probe-loopback` | How the woken agent re-probes. Correct as-is only for `probe-loopback`'s own alerts; `probe-ingest` replaces it with `bash scripts/probe-edge-ingest.sh`, which runs from any machine with internet |
+| `PC_ALERT_SUBJECT` | classified from the verdict: `prod database snapshot` on a snapshot failure, else `prod /healthz` | What is red, in the title and in every wake reason. Correct as-is for `probe-loopback`; `probe-ingest` sets `public ingest at <host>` |
 | `PC_ALERT_LEAD` | classified the same way | First line of a new alert's description. `probe-ingest` says spans are being dropped, that this check never reached `/healthz`, and that the watcher is best-effort |
 
 **`PC_ALERT_MAX_AGE_H=0` and `PC_STILL_RED_WAKE=0` are a pair, and they put the
 whole burden on the recovery wake.** Together they give exactly one ticket per
-outage and no further wakes while it stands, which is what the scheduled job is
-asked for. The cost is that the open alert then dedups *every* later red tick
+outage and no further wakes while it stands, which is what both scheduled jobs
+are asked for. The cost is that the open alert then dedups *every* later red tick
 forever, so until it is closed the **next** outage wakes nobody. The recovery
 wake is the only thing that re-arms the pager — which is why the green path is
 not optional on a watcher that only has to detect failure, and why an alert
@@ -688,12 +786,14 @@ nothing but that host can reach. The description names the URL that was probed
 so the agent re-checks the same endpoint.
 
 **Which re-probe depends on what paged.** The default text in
-`page-cotel-health.sh` names a dispatch of the loopback half, which runs on the
-host that may itself be the thing that is down and would then queue forever.
-That is wrong for every caller, and the scheduled ingest job overrides it: its
-alerts say to run `bash scripts/probe-edge-ingest.sh` from any machine with
-internet, which needs no credential and no runner. Any new caller must override
-it too — the defaults are not neutral.
+`page-cotel-health.sh` names a dispatch of the loopback half. That is right for
+exactly one caller — `probe-loopback`'s own alerts, where the host is
+demonstrably up because it just ran the probe — and wrong for every other, since
+that runner may *be* the dead host and a dispatch would then queue forever. The
+scheduled ingest job therefore overrides it: its alerts say to run
+`bash scripts/probe-edge-ingest.sh` from any machine with internet, which needs
+no credential and no runner. Any new caller must decide this deliberately — the
+defaults are not neutral, they are one caller's.
 
 That costs the woken agent one extra probe, by design. A live re-probe is better
 evidence than a payload minted ten minutes earlier, and it needs no passthrough
@@ -727,10 +827,10 @@ Three more details matter in operation:
   heartbeat. A caller that ticks repeatedly while an alert stands wants neither
   extreme: the same key forever means one wake per alert, and a dropped wake
   then leaves a resolved alert standing, while a per-run key means a wake per
-  tick. So the scheduled job passes an hourly bucket
-  (`ingest-<epoch/3600>`). The still-red wake buckets on a 6h window —
+  tick. So each scheduled job passes an hourly bucket — `ingest-<epoch/3600>`
+  and `health-probe-<epoch/3600>`. The still-red wake buckets on a 6h window —
   `cotel-health-still-red:<alert id>:<epoch/21600>` — for the callers that
-  leave it on; this one does not.
+  leave it on; neither of these does.
 - **An alert assigned to anyone else is a pager failure, by name.** An agent
   API key may wake only its own agent, so the pager reports
   `alert wake: HTTP 403, alert <IDENT> is assigned to an agent this credential
@@ -757,15 +857,20 @@ step log, not the red X that the dead URL was always going to produce.
 
 The loopback job also checks for `jq` and `python3` on every run — that runner
 is a developer machine, not a managed image, so a missing interpreter surfaces
-in a drill rather than during an incident.
+on a green tick rather than during an incident. It is a `::warning`, so it does
+not redden the job; grep the scheduled runs for it rather than waiting to be
+told.
 
 Paperclip budget is spent only on a state change: the create on the first
 confirmed red, a create when the open alert has aged out of the dedup window
-(not on the scheduled job, which has that window off), and a wake on a
+(not on either scheduled job — both have that window off), and a wake on a
 recovery. A green tick with no open alert spends nothing — it costs one search.
-A scheduled Paperclip routine that fires regardless of health was a rejected
-alternative on cost (~24 full agent runs a day); see
-[ADR-0025](../decisions/0025-best-effort-ingest-watcher-in-actions.md).
+Two scheduled markers means the ceiling is two tickets at once rather than one,
+and that ceiling is exactly what the dedup pair buys. A scheduled Paperclip
+routine that fires regardless of health was a rejected alternative on cost (~24
+full agent runs a day); see
+[ADR-0025](../decisions/0025-best-effort-ingest-watcher-in-actions.md) and
+[ADR-0026](../decisions/0026-scheduled-loopback-probe-with-a-pager.md).
 
 ### Credentials
 
@@ -784,9 +889,9 @@ fails to page, and *looks* like it paged — the pager's failure is a
 `issue search: HTTP 302` in the step log. That is why a drill's verdict is
 whether the page arrived, never the job's colour.
 
-None of them had to be minted for this watcher: all five were already
-repository secrets, and `probe-edge-ingest.sh` itself needs none at
-all. A board API key — instance-admin authority over the whole tracker, handed
+None of them had to be minted for either watcher: all five were already
+repository secrets, and neither `probe-edge-ingest.sh` nor the loopback
+`/healthz` probe needs any of them. A board API key — instance-admin authority over the whole tracker, handed
 to a public repository's CI — was refused in
 [ADR-0021](../decisions/0021-recovery-wakes-the-alerts-assignee.md), and that
 refusal stands.
@@ -821,8 +926,10 @@ bash scripts/probe-edge-ingest_test.sh
 # wake and its off switch, per-call failure labels, caller overrides
 bash scripts/page-cotel-health_test.sh
 
-# whether the scheduled watcher has actually been ticking
+# whether the scheduled watchers have actually been ticking, and which of them
 gh run list --repo Flopsstuff/cotel --workflow=health-probe.yml --event=schedule --limit 5
+gh run view <run id> --repo Flopsstuff/cotel --json jobs \
+  --jq '.jobs[] | {name, conclusion}'
 ```
 
 `probe-healthz.sh` exit codes: `0` healthy, `1` unreachable, `2` HTTP non-200,

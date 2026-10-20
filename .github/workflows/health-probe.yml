@@ -1,27 +1,33 @@
 name: Health probe
 
-# One job here is scheduled, and it is a **best-effort watcher, not
-# monitoring**: `probe-ingest` asks the public OTLP ingest URL from outside
-# every network cotel lives in. GitHub schedules public repositories on a
-# best-effort basis and *drops* ticks rather than delaying them — measured in
-# this repository, one run out of the nine expected over nine hours — so the
-# detection delay it buys is unbounded. It is strictly better than nothing,
-# and that is the whole of what it promises. See
-# docs/operations/health-probe.md and ADR-0025.
+# Two jobs here are scheduled, and both are **best-effort watchers, not
+# monitoring**. GitHub schedules public repositories on a best-effort basis and
+# *drops* ticks rather than delaying them — measured in this repository over a
+# full day, 4 runs out of the 91 expected (4.4%), about one look every 5.7
+# hours — so the detection delay either one buys is unbounded. They are
+# strictly better than nothing, and that is the whole of what they promise. See
+# docs/operations/health-probe.md, ADR-0025 and ADR-0026.
 #
-# That job is `ubuntu-latest` and must never be self-hosted. An observer inside
-# the network it observes shares the uplink and the power outlet with it and
-# goes down alongside it, which is why the 10-minute timer that used to own the
-# production marker was retired.
+# `probe-ingest` asks the public OTLP ingest URL from outside every network
+# cotel lives in. It is `ubuntu-latest` and must never be self-hosted: an
+# observer inside the network it observes shares the uplink and the power outlet
+# with it and goes down alongside it, which is why the 10-minute timer that used
+# to own the production `/healthz` marker was retired.
 #
-# The other two jobs are dispatch-only drills of the pager and page *drill*
-# markers, never production.
+# `probe-loopback` asks `/healthz` on the deploy host, which is the only vantage
+# point that can see a 503 database, a stale ingest and a missing snapshot. It
+# must stay self-hosted for the same reason, and it pays for that with the
+# opposite blindness: it cannot report its own host being down. The two
+# blindnesses are complementary, which is why neither job is sufficient alone.
+#
+# `probe-edge` remains a dispatch-only drill and pages a *drill* marker, never
+# production.
 on:
   schedule:
-    # The cadence is free — a dropped tick costs nothing, a kept one costs one
-    # HTTP request — so it is set to the floor a reader would tolerate rather
-    # than to a budget. It does not bound the detection delay; nothing that
-    # runs here can.
+    # The cadence is free — a dropped tick costs nothing, a kept one costs a
+    # couple of HTTP requests and a minute on a runner we own — so it is set to
+    # the floor a reader would tolerate rather than to a budget. It does not
+    # bound the detection delay; nothing that runs here can.
     - cron: "*/15 * * * *"
   workflow_dispatch:
     inputs:
@@ -180,38 +186,76 @@ jobs:
 
   probe-loopback:
     name: Probe /healthz on the deploy host
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: [self-hosted, flopsstuff, docker]
     # This job cannot report its own host being down: with the runner offline
     # the run sits in the queue, and timeout-minutes does not bound queue time
     # — it starts counting once a runner picks the job up. So an absent host
-    # produces no colour at all, which is why the Pi timer probes this host
-    # over the LAN instead. The cap only bounds a job that is running and stuck
-    # (6h by default), and the concurrency group keeps a re-dispatch superseding
-    # the last queued attempt instead of stacking them.
+    # produces no colour at all, which is what `probe-ingest` is for. The cap
+    # only bounds a job that is running and stuck (6h by default), and the
+    # concurrency group keeps each tick superseding the last queued attempt
+    # instead of stacking them.
     timeout-minutes: 5
     concurrency:
       group: health-probe-loopback
       cancel-in-progress: true
     env:
       HEALTHZ_URL: ${{ inputs.loopback_url || 'http://127.0.0.1:8080/healthz' }}
-      STALE_AFTER_SECONDS: "21600"
+      # Ten hours on the schedule, six by hand. The window has to sit above the
+      # quiet nights and below the outages, and both ends are measured on this
+      # instance: ordinary overnight silence reaches six and seven hours, while
+      # the only real stall ever recorded here ran twelve. A day would clear
+      # every quiet night and also clear that stall, which is the one thing this
+      # threshold exists to catch. A dispatch keeps the tighter window because a
+      # human is reading that answer. The snapshot window is unaffected — that
+      # worker ticks on its own timer and does not care how much traffic
+      # arrives.
+      STALE_AFTER_SECONDS: ${{ github.event_name == 'schedule' && '36000' || '21600' }}
+      # The default, `auto`, pages only on an affirmative snapshot failure and
+      # stays green when the instance makes no claim at all — right for a local
+      # checkout where snapshots ship disabled, wrong here. On the deploy host
+      # an unreadable `/api/v1/health`, a missing `snapshot` field or a worker
+      # that never started are failures, and this is the watcher that exists to
+      # report them. `require` is that assertion.
+      SNAPSHOT_CHECK: require
       CONNECT_TIMEOUT: "15"
       PC_API_URL: ${{ secrets.PAPERCLIP_API_URL }}
       PC_API_TOKEN: ${{ secrets.PAPERCLIP_API_TOKEN }}
       PC_COMPANY_ID: ${{ secrets.PAPERCLIP_COMPANY_ID }}
       # A dispatched run is an exercise and gets its own dedup marker, so a
       # drill can neither mint an alert that reads like an outage nor act on a
-      # standing real one. Set explicitly rather than left to the script
-      # default: inheriting the default is what made the drills invisible.
-      PC_ORIGIN_ID: cotel-health-probe-drill
+      # standing real one. The scheduled marker is this half's historical one,
+      # distinct from the ingest half's: on a shared marker a green tick from
+      # one half would ask for the close of an alert the other had just raised.
+      PC_ORIGIN_ID: ${{ github.event_name == 'schedule' && 'cotel-health-probe' || 'cotel-health-probe-drill' }}
+      # These two are a pair. `0` switches the staleness window off, so an open
+      # alert is always the dedup target and one outage mints exactly one
+      # ticket; `PC_STILL_RED_WAKE=0` drops the per-tick wake that would
+      # otherwise land on every tick while that ticket stands — nominally 96 a
+      # day, around 4 at the delivery rate actually measured. The pair is
+      # required by the one-ticket-per-outage rule, not by the size of that
+      # number. What it costs is
+      # that the recovery wake is now the only thing that re-arms this watcher —
+      # an alert nobody closes makes the next outage silent.
+      PC_ALERT_MAX_AGE_H: "0"
+      PC_STILL_RED_WAKE: "0"
       GITHUB_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
       - uses: actions/checkout@v5
 
+      # A coarse bucket rather than this run id, which is the default. With the
+      # staleness window off an alert can stand for a long time, and a per-run
+      # key would make every green tick in the meantime mint another recovery
+      # wake — nominally four an hour, fewer at the delivery rate actually
+      # measured. A dispatch keeps the run id: each drill is its own
+      # call and wants its own recovery.
+      - name: Bucket the recovery key for the scheduled run
+        if: github.event_name == 'schedule'
+        run: echo "PC_CALL_ID=health-probe-$(( $(date -u +%s) / 3600 ))" >> "$GITHUB_ENV"
+
       # The pager is the only thing here that wakes anyone, and this runner is
       # a developer Mac rather than a managed image. Check its interpreters on
-      # every run, so a missing one surfaces during a drill rather than when an
+      # every run, so a missing one surfaces on a green tick rather than when an
       # incident needs them.
       - name: Check pager prerequisites
         run: |
@@ -227,12 +271,26 @@ jobs:
           set -o pipefail
           mkdir -p "$RUNNER_TEMP"
           PROBE_OUT="$RUNNER_TEMP/probe-loopback.out"
-          set +e
-          scripts/probe-healthz.sh | tee "$PROBE_OUT"
-          rc=${PIPESTATUS[0]}
-          set -e
+          probe() {
+            set +e
+            scripts/probe-healthz.sh | tee "$PROBE_OUT"
+            PROBE_RC=${PIPESTATUS[0]}
+            set -e
+          }
+          # A push to `main` is a deploy here and the container restarts for a
+          # few seconds, so a tick landing in that window sees a dead process
+          # and would otherwise mint a ticket for a routine deploy. The streak
+          # lives inside this one run because there is nowhere between runs to
+          # keep it: ticks are dropped, so "two runs in a row" is not a quantity
+          # this job can count.
+          probe
+          if [ "$PROBE_RC" != "0" ]; then
+            echo "first probe exited ${PROBE_RC}; looking again in 60s and paging only if that is red too"
+            sleep 60
+            probe
+          fi
           echo "PROBE_OUT=$PROBE_OUT" >> "$GITHUB_ENV"
-          echo "PROBE_RC=$rc" >> "$GITHUB_ENV"
+          echo "PROBE_RC=$PROBE_RC" >> "$GITHUB_ENV"
           # The pager puts this in the alert description, as the command the
           # woken agent re-runs. This job scopes it to the step above.
           echo "HEALTHZ_URL=$HEALTHZ_URL" >> "$GITHUB_ENV"
@@ -240,7 +298,7 @@ jobs:
       # Paging failures are a warning, never the job's verdict: this job's
       # red/green must mean "production is red/green" and nothing else.
       - name: Page Paperclip on red
-        if: env.PROBE_RC != '0' && inputs.page
+        if: env.PROBE_RC != '0' && (github.event_name == 'schedule' || inputs.page)
         env:
           CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
           CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
@@ -248,8 +306,12 @@ jobs:
           scripts/page-cotel-health.sh raise "$PROBE_OUT" \
             || echo "::warning title=Pager failed::could not raise the Paperclip alert; nobody was woken for this red probe"
 
+      # Not optional, even though this watcher only has to detect failure: with
+      # the staleness window off, the open alert dedups every later red tick, so
+      # until it is closed the *next* outage wakes nobody. One wake on recovery
+      # is what re-arms the pager.
       - name: Wake the alert's assignee on green
-        if: env.PROBE_RC == '0' && inputs.page
+        if: env.PROBE_RC == '0' && (github.event_name == 'schedule' || inputs.page)
         env:
           CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
           CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
