@@ -32,6 +32,9 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: '22'
+          # Without this, setup-node prefers the runner image's cached 22.x,
+          # which lags the security releases this pin exists to pick up.
+          check-latest: true
           cache: npm
           cache-dependency-path: docs/package-lock.json
 
