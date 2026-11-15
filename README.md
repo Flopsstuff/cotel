@@ -4,8 +4,8 @@
 
 Self-hosted telemetry for Claude Code: sessions, tokens and spend for every sender — people, AI agents and hosts. One Docker container, OTLP ingest on `:4318`, dashboard on `:8080`. No cloud dependencies, no sign-up.
 
-- **Usage by actor** — every sender is an actor with its own token, page and spend; nothing is pooled into one anonymous total.
-- **Cost by model** — per-span cost from a built-in Claude price table (Claude 5.5 and 5.2 included), repriceable after the fact with `--backfill-cost`.
+- **Usage by actor** — every sender that identifies itself (actor token or Paperclip agent id) is an actor with its own page and spend; only senders that don't land together on Anonymous.
+- **Cost by model** — per-span cost from a built-in Claude price table (Claude 5.5 and 5.2 included), repriceable after the fact with `--backfill-cost-apply` (`--backfill-cost` previews).
 - **Ingest keys for agent fleets** — one shared `cotel_ik_…` key authorizes ingest for many senders that share one set of OTLP headers.
 - **Paperclip agents, natively** — attributed by `paperclip.agent.id`; one Agent observability setting with an ingest key, no per-agent env. See [Paperclip agents](docs/operations/actors-and-auth.md#paperclip-agents).
 
