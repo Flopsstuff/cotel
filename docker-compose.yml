@@ -49,7 +49,8 @@ volumes:
   # database the binary cannot open otherwise means overwriting the only copy of
   # it in place — the evidence and the fallback both. The default is a restored
   # copy rather than the name compose derives on its own (`cotel_cotel-data`),
-  # because that one holds a database the binary can no longer open. Compose
+  # because that one held a database the binary could no longer open (deleted
+  # 2026-11-15, see docs/operations/duckdb-recovery.md). Compose
   # warns that it did not create a hand-made volume; that warning is expected.
   cotel-data:
     name: ${COTEL_DATA_VOLUME:-cotel-data-repaired-20261004}

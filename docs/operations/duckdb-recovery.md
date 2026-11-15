@@ -249,7 +249,7 @@ it at the same moment.
 |---|---|---|---|
 | `cotel-data-repaired-20261004` | live production, mounted at `/data`, the compose default | 146 MB | never, it is prod |
 | `cotel-snapshots` | the timed Parquet snapshots written by the running service, the actual backup | bounded by `COTEL_SNAPSHOT_KEEP` | never; it is the only restore point here |
-| `cotel_cotel-data` | the damaged original, untouched: the only artifact that reproduces the `abort()` | 147 MB | a landed upstream fix *and* a DuckDB in cotel proven not to hit it, see below |
+| `cotel_cotel-data` | the damaged original, untouched: the only artifact that reproduced the `abort()` | 147 MB | deleted 2026-11-15 by the owner's decision, before either release condition below held; see below |
 | `cotel-data-backup-20261004` | byte-identical copy of the damaged original, from step 2 | 147 MB | immediately, see below. For the 2026-10-04 recovery: deleted 2026-10-13, hash-verified against the original first |
 
 Delete by name, never with `docker volume prune`. Prune takes every volume no
@@ -321,7 +321,17 @@ same two hashes were confirmed a second time, so the 2026-10-04 recovery now lea
 `cotel-data-repaired-20261004`, `cotel_cotel-data` and `cotel-snapshots`. A
 `…-backup-…` volume appearing after that date is not this one: classify it.
 
+On 2026-11-15 `cotel_cotel-data` was deleted as well (next section), so the host
+now holds only the live volume and `cotel-snapshots`.
+
 ### The damaged original has two separate lifetimes
+
+> **Deleted 2026-11-15.** The owner decided the damaged original was no longer
+> worth keeping and had `cotel_cotel-data` removed, with neither release condition
+> below met. The rest of this section is the reasoning that held it until then,
+> kept so that what the deletion gave up is on record: the only file that aborted
+> DuckDB 1.1.3 on open is gone, and the [synthetic reproducer](#the-synthetic-reproducer)
+> is now the only way left to chase this defect.
 
 As a **data fallback** it expires on its own. Its newest span was 2026-09-27 and raw
 spans are purged at `COTEL_RETENTION_RAW_DAYS` (default 30), so from roughly
@@ -338,8 +348,8 @@ indexed table, then a large replace transaction. `internal/storage/schema.sql` d
 exactly that — line 53 adds `spans.user_id VARCHAR`, and line 74 puts an ART index
 on that same added column.
 
-Therefore: **hold `cotel_cotel-data` indefinitely**, mounted read-only only. Both
-release conditions have to hold, and each one has a trap:
+Therefore the policy was: **hold `cotel_cotel-data` indefinitely**, mounted
+read-only only, until both release conditions held. Each one has a trap:
 
 - **A landed fix upstream, not a closed issue.** duckdb#25360 is not ours — it was
   filed by an unaffiliated reporter, against a ~19 GB database, and we have never
