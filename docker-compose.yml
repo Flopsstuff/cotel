@@ -40,8 +40,8 @@ services:
       # the default outside this compose file; here they are always on, because
       # a deploy without a recovery point is how production ended up with none.
       COTEL_SNAPSHOT_DIR: ${COTEL_SNAPSHOT_DIR:-/snapshots}
-      COTEL_SNAPSHOT_INTERVAL: ${COTEL_SNAPSHOT_INTERVAL:-6h}
-      COTEL_SNAPSHOT_KEEP: ${COTEL_SNAPSHOT_KEEP:-56}
+      COTEL_SNAPSHOT_INTERVAL: ${COTEL_SNAPSHOT_INTERVAL:-24h}
+      COTEL_SNAPSHOT_KEEP: ${COTEL_SNAPSHOT_KEEP:-14}
 
 volumes:
   # Named explicitly so the deploy can be pointed at a different volume without

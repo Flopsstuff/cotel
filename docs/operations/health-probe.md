@@ -205,7 +205,7 @@ host. `API_HEALTH_URL` overrides the derivation.
 | `snapshot` object | Verdict |
 |---|---|
 | `status: "error"` | red, exit 6, with `last_error` quoted |
-| `status: "ok"` and `last_run_at` older than `SNAPSHOT_STALE_AFTER_SECONDS` (default 12 h) | red, exit 6 |
+| `status: "ok"` and `last_run_at` older than `SNAPSHOT_STALE_AFTER_SECONDS` (default 48 h) | red, exit 6 |
 | `status: "ok"` and `last_run_at` absent or unparseable | red, exit 6 |
 | `status: "unknown"` | not asserted; said on the green line |
 | no `snapshot` field, or `/api/v1/health` not readable | not asserted; said on the green line |
@@ -238,7 +238,7 @@ a probe-configuration problem), and the ingest probe, which never reads
 | Variable | Default | Role |
 |---|---|---|
 | `SNAPSHOT_CHECK` | `auto` | `auto` pages on affirmative failure only; `require` also pages when the instance makes no snapshot claim; `off` never asks. `probe-loopback` sets **`require`** — it only ever asks the deploy host, where snapshots are expected, so "no claim" is a failure there and not a local default |
-| `SNAPSHOT_STALE_AFTER_SECONDS` | `43200` | How old the newest snapshot may be. Two `COTEL_SNAPSHOT_INTERVAL` periods at the shipped `6h`; move it with the interval |
+| `SNAPSHOT_STALE_AFTER_SECONDS` | `172800` | How old the newest snapshot may be. Two `COTEL_SNAPSHOT_INTERVAL` periods at the shipped `24h`; move it with the interval |
 | `API_HEALTH_URL` | derived from the `/healthz` URL | Override when the snapshot report is not at the same entry point |
 
 What counts as red, why the threshold is two intervals, and how to check it by

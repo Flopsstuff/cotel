@@ -210,3 +210,24 @@ first of which is fatal on its own:
   Parquet, so a snapshot outlives the engine version that wrote it. That is the
   property the native-file copy does not have, and the reason this ADR exists rather
   than a cron line in a README.
+
+---
+
+## Amendment, 2026-11-15: one snapshot a day, fourteen kept
+
+**Decider:** Flop (board)
+
+The cadence moves from `6h` × 56 to `24h` × 14 (`COTEL_SNAPSHOT_INTERVAL=24h`,
+`COTEL_SNAPSHOT_KEEP=14`). The reach this ADR argued for is unchanged - fourteen
+days, past the six an unnoticed failure has already lasted. What changes is the
+recovery point: a restore now loses up to a day of telemetry instead of six
+hours, which the owner accepts for this service. The probe's
+`SNAPSHOT_STALE_AFTER_SECONDS` moves with it, from 12 h to 48 h (two intervals,
+for the reason given in [the snapshots runbook](../operations/duckdb-snapshots.md#the-threshold)).
+
+The prune rule keeps the N *newest* snapshots, so on the first daily export after
+this change a volume full of 6-hourly snapshots would shrink to the 14 newest -
+about three days of reach - and take two weeks to grow back. To keep the reach
+through the switch, thin an existing 6-hourly backlog to the newest snapshot of
+each UTC day before the first daily export, so the fourteen kept are fourteen
+days.

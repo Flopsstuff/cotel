@@ -14,13 +14,14 @@ import (
 	"time"
 )
 
-// Snapshot defaults. 6h × 56 kept snapshots is 14 days of reach: the September
+// Snapshot defaults. 24h × 14 kept snapshots is 14 days of reach: the September
 // 2026 corruption went unnoticed for six days, so depth past the moment someone
-// notices is worth more than a tighter recovery point. At the measured 4.2 MiB
-// per snapshot that whole window costs ~235 MB.
+// notices is what matters. One a day was chosen by the owner on 2026-11-15 over
+// the original 6h × 56: a restore loses at most a day of telemetry, which is
+// acceptable here, for a quarter of the snapshots (~60 MB at 4.2 MiB each).
 const (
-	DefaultSnapshotKeep     = 56
-	DefaultSnapshotInterval = 6 * time.Hour
+	DefaultSnapshotKeep     = 14
+	DefaultSnapshotInterval = 24 * time.Hour
 )
 
 // SnapshotManifestName is written last in a snapshot directory, and nothing
