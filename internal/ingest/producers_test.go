@@ -60,8 +60,14 @@ func ingestSpans(t *testing.T, svc, spanName string, attrs ...kv) []storage.Span
 	h := ingest.New(store)
 	req := httptest.NewRequest(http.MethodPost, "/v1/traces", bytes.NewBufferString(payload))
 	req.Header.Set("Content-Type", "application/json")
-	h.ServeHTTP(httptest.NewRecorder(), req)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
 	h.Flush()
+	// A dropped span is still a successful request; without this a rejected
+	// request would pass every "nothing stored" assertion.
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", w.Code, w.Body.String())
+	}
 	return store.spans
 }
 
