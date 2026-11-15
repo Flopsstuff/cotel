@@ -100,13 +100,13 @@ Use one when many senders must share one set of headers. Paperclip is the case i
 | Identifies | One actor | Nobody |
 | Authorizes | OTLP ingest | OTLP ingest only (`/v1/traces`, `/v1/logs`) — never export/import or the dashboard |
 | Sent as | `Authorization: Bearer …`, or `X-Cotel-Actor-Token: …` next to an ingest key | `Authorization: Bearer …` |
-| Stored | Plaintext, retrievable any time | Hashed; only a 12-character prefix such as `cotel_ik_ab1` is kept |
+| Stored | Plaintext, retrievable any time | Plaintext, retrievable any time |
 
 ### Creating and revoking an ingest key
 
 Open **Setup** → **Settings** tab → **Ingest keys**.
 
-- **Create:** give the key a name that says who uses it (e.g. `paperclip`) and create it. The full key is shown **once**, right after creation. Copy it then; cotel stores only its hash and cannot show it again. The list afterwards shows each key's name, prefix and creation time.
+- **Create:** give the key a name that says who uses it (e.g. `paperclip`) and click **Generate key**; the name is required. The new key is shown with a ready-to-paste snippet. The list shows each key's name, the start of the key with a **Copy** button for the full value, and its creation time.
 - **Revoke:** deletes the key. Every sender using it gets `401 Unauthorized` on its next request. To replace a key without a gap, create the new one, update the shared headers, then revoke the old one.
 
 There is no last-used time: ingest does not write to the database to record which key a request used.
@@ -246,7 +246,7 @@ Because actor tokens are stored in plaintext, anyone with filesystem access to t
 - Cloudflare Access or equivalent to restrict dashboard access to trusted operators.
 - Rotate any actor token that may have been exposed.
 
-Ingest keys are the exception: only a hash and a 12-character display prefix are stored, so the database file does not reveal them.
+Ingest keys are stored the same way, in plaintext, so the same protections apply to them.
 
 ## References
 

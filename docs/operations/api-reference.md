@@ -254,9 +254,9 @@ returns one actor in the same shape and accepts `range`. See
 ## Ingest keys
 
 Shared credentials that authorize OTLP ingest without identifying an actor
-([ADR-0028](../decisions/0028-ingest-keys-and-actor-tokens.md)). The key itself
-is stored hashed, so it appears in exactly one response: the one that creates
-it. An ingest key authorizes `/v1/*` ingest only; it cannot call these
+([ADR-0028](../decisions/0028-ingest-keys-and-actor-tokens.md)). Like actor
+tokens, keys are stored in plaintext and every response carries the full key in
+`token`. An ingest key authorizes `/v1/*` ingest only; it cannot call these
 endpoints or any other `/api/v1/` endpoint. See
 [Ingest keys](./actors-and-auth.md#ingest-keys-one-key-for-many-senders) for
 how senders use them.
@@ -268,27 +268,21 @@ Every key, oldest first. Not paginated, and it takes no parameters.
 ```json
 {
   "ingest_keys": [
-    { "id": "…", "name": "paperclip", "prefix": "cotel_ik_ab1", "created_at": "2026-11-15T10:02:11Z" }
+    { "id": "…", "name": "paperclip", "token": "cotel_ik_ab1…", "created_at": "2026-11-15T10:02:11Z" }
   ]
 }
 ```
-
-`prefix` is the first 12 characters of the key, kept so a key can be told apart
-in the list. It is not enough to authenticate with.
 
 ### `POST /ingest-keys`
 
 Creates a key. Body: `{"name": "paperclip"}`. The name is trimmed, must not be
 empty and is at most 100 characters; otherwise `400`.
 
-Answers `201` with the row and the full key in `token`:
+Answers `201` with the new key, in the same shape as a list item:
 
 ```json
-{ "id": "…", "name": "paperclip", "prefix": "cotel_ik_ab1", "created_at": "2026-11-15T10:02:11Z", "token": "cotel_ik_ab1…" }
+{ "id": "…", "name": "paperclip", "token": "cotel_ik_ab1…", "created_at": "2026-11-15T10:02:11Z" }
 ```
-
-`token` is never returned again. A lost key cannot be recovered; create a new
-one and revoke the old.
 
 ### `DELETE /ingest-keys/{id}`
 

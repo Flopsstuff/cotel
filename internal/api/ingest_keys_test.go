@@ -48,8 +48,8 @@ func TestIngestKeys_CreateListDelete(t *testing.T) {
 		t.Fatalf("create: status = %d, want 201 (%s)", w.Code, w.Body.String())
 	}
 	var created struct {
-		ID, Name, Prefix, Token string
-		CreatedAt               string `json:"created_at"`
+		ID, Name, Token string
+		CreatedAt       string `json:"created_at"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &created); err != nil {
 		t.Fatalf("create body: %v", err)
@@ -59,9 +59,6 @@ func TestIngestKeys_CreateListDelete(t *testing.T) {
 	}
 	if !regexp.MustCompile(`^cotel_ik_[0-9a-f]{64}$`).MatchString(created.Token) {
 		t.Errorf("token = %q", created.Token)
-	}
-	if created.Prefix != created.Token[:12] {
-		t.Errorf("prefix = %q, want %q", created.Prefix, created.Token[:12])
 	}
 	if ts, err := time.Parse(time.RFC3339, created.CreatedAt); err != nil || ts.Location() != time.UTC {
 		t.Errorf("created_at = %q, want RFC3339 UTC (err %v)", created.CreatedAt, err)
@@ -79,12 +76,10 @@ func TestIngestKeys_CreateListDelete(t *testing.T) {
 		t.Fatalf("list: %d keys, want 1", len(keys))
 	}
 	item := keys[0].(map[string]any)
-	if item["id"] != created.ID || item["name"] != "Paperclip" || item["prefix"] != created.Prefix ||
+	// The list returns the token so it can be copied again, like an actor token.
+	if item["id"] != created.ID || item["name"] != "Paperclip" || item["token"] != created.Token ||
 		item["created_at"] != created.CreatedAt {
 		t.Errorf("list item = %v", item)
-	}
-	if _, leaked := item["token"]; leaked {
-		t.Error("list exposes the plaintext token")
 	}
 
 	if w := doIngestKeys(t, h, http.MethodDelete, "/api/v1/ingest-keys/"+created.ID, ""); w.Code != http.StatusNoContent {

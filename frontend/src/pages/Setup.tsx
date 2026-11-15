@@ -1,6 +1,6 @@
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { Check, Copy, Settings, Download, Plus, Trash2, AlertTriangle } from 'lucide-react'
+import { Check, Copy, Settings, Download, Plus, Trash2 } from 'lucide-react'
 import { unzipSync } from 'fflate'
 import { TabBar } from '../components/TabBar'
 import { SegmentedControl } from '../components/SegmentedControl'
@@ -573,6 +573,8 @@ function Modal({ titleId, children, onClose }: { titleId: string; children: Reac
 function IngestKeysSection() {
   const { data, error, isLoading, mutate } = useIngestKeys()
   const [name, setName] = useState('')
+  const [nameMissing, setNameMissing] = useState(false)
+  const nameRef = useRef<HTMLInputElement>(null)
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
   const [created, setCreated] = useState<CreatedIngestKey | null>(null)
@@ -583,7 +585,12 @@ function IngestKeysSection() {
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault()
     const trimmed = name.trim()
-    if (!trimmed) return
+    if (!trimmed) {
+      // The button stays clickable; an empty name is answered here, visibly.
+      setNameMissing(true)
+      nameRef.current?.focus()
+      return
+    }
     setCreating(true)
     setCreateError(null)
     try {
@@ -637,17 +644,25 @@ function IngestKeysSection() {
         <label className={styles.srOnly} htmlFor="ingest-key-name">Key name</label>
         <input
           id="ingest-key-name"
-          className={styles.textInput}
+          ref={nameRef}
+          className={`${styles.textInput} ${nameMissing ? styles.textInputInvalid : ''}`}
           placeholder="Key name, e.g. paperclip-acme"
           value={name}
-          onChange={(e) => setName(e.target.value)}
+          onChange={(e) => { setName(e.target.value); if (e.target.value.trim()) setNameMissing(false) }}
           disabled={creating}
           maxLength={100}
+          aria-invalid={nameMissing}
+          aria-describedby={nameMissing ? 'ingest-key-name-error' : undefined}
         />
-        <button type="submit" className={styles.primaryBtn} disabled={creating || !name.trim()}>
+        <button type="submit" className={styles.primaryBtn} disabled={creating}>
           {creating ? <><span className={styles.spinner} />Generating…</> : <><Plus size={14} />Generate key</>}
         </button>
       </form>
+      {nameMissing && (
+        <div id="ingest-key-name-error" className={styles.fieldError}>
+          Enter a name for the key, e.g. the company or fleet that will use it.
+        </div>
+      )}
       {createError && (
         <div className={styles.alertWrap}>
           <InlineAlert kind="error" message={createError} />
@@ -661,10 +676,6 @@ function IngestKeysSection() {
             <button type="button" className={styles.secondaryBtn} onClick={() => setCreated(null)}>
               Done
             </button>
-          </div>
-          <div className={styles.warningBanner}>
-            <AlertTriangle size={15} />
-            <span>Copy this key now. You won't see it again.</span>
           </div>
           <div className={styles.codeBlock}>
             <CopyButton text={created.token} />
@@ -707,7 +718,10 @@ function IngestKeysSection() {
                   <tr key={k.id} className={styles.tr}>
                     <td className={styles.td}>{k.name}</td>
                     <td className={styles.td}>
-                      <code className={styles.code}>{k.prefix}…</code>
+                      <span className={styles.keyCell}>
+                        <code className={styles.code} title={k.token}>{k.token.slice(0, 16)}…</code>
+                        <CopyButton text={k.token} />
+                      </span>
                     </td>
                     <td className={styles.td}>{formatDate(k.created_at)}</td>
                     <td className={`${styles.td} ${styles.tdActions}`}>
@@ -732,7 +746,7 @@ function IngestKeysSection() {
         <Modal titleId="revoke-key-title" onClose={closeRevoke}>
           <h2 className={styles.dialogTitle} id="revoke-key-title">Revoke ingest key?</h2>
           <p className={styles.dialogBody}>
-            <strong>{revoking.name}</strong> (<code className={styles.code}>{revoking.prefix}…</code>)
+            <strong>{revoking.name}</strong> (<code className={styles.code}>{revoking.token.slice(0, 16)}…</code>)
             stops working immediately for every sender that uses it. This cannot be undone.
           </p>
           {revokeError && (

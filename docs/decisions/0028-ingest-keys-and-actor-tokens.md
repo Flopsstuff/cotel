@@ -62,11 +62,13 @@ falls through to allow-anonymous like any request without one.
 
 ### Storage and scope
 
-- Schema v12 adds `ingest_keys (id, name, token_hash UNIQUE, prefix,
-  created_at)`. The key is stored **hashed**; only a 12-character display prefix
-  (e.g. `cotel_ik_ab1`) is kept in clear. The full value is shown once, when the
-  key is created, and cannot be retrieved afterwards. Revoking a key deletes its
-  row.
+- Schema v12 adds `ingest_keys (id, name, token UNIQUE, created_at)`. The key
+  is stored in **plaintext** and can be copied from the dashboard at any time,
+  exactly like an actor token. A first draft stored only a hash and showed the
+  key once; the owner rejected that on review: a key that cannot be copied again
+  into the next sender's configuration is a chore, and the database file already
+  holds every actor token in clear, so hashing one more secret buys nothing.
+  Revoking a key deletes its row.
 - An ingest key authorizes **OTLP ingest only** (`/v1/traces`, `/v1/logs`). It
   never opens export/import or the dashboard API.
 - Management is in the dashboard API: `GET`, `POST /api/v1/ingest-keys` and

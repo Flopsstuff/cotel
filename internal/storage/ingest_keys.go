@@ -2,7 +2,6 @@ package storage
 
 import (
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/hex"
 	"strings"
 	"time"
@@ -13,17 +12,13 @@ import (
 // this one first.
 const IngestKeyPrefix = "cotel_ik_"
 
-// ingestKeyDisplayLen is how many leading plaintext characters are kept as the
-// key's display prefix (e.g. "cotel_ik_ab1").
-const ingestKeyDisplayLen = 12
-
 // IngestKey is a shared key that authorizes OTLP ingest without identifying an
-// actor. Only the sha256 of its plaintext is stored; the plaintext is returned
-// once, by CreateIngestKey.
+// actor. Like actor tokens it is stored in plaintext and always retrievable, so
+// an operator can copy it again into another sender's configuration.
 type IngestKey struct {
 	ID        string
 	Name      string
-	Prefix    string
+	Token     string
 	CreatedAt time.Time
 }
 
@@ -35,38 +30,31 @@ func generateIngestKey() (string, error) {
 	return IngestKeyPrefix + hex.EncodeToString(b[:]), nil
 }
 
-func hashIngestKey(plaintext string) string {
-	sum := sha256.Sum256([]byte(plaintext))
-	return hex.EncodeToString(sum[:])
-}
-
-// CreateIngestKey stores a new ingest key under name and returns its record and
-// plaintext. The plaintext is not recoverable afterwards.
-func (db *DB) CreateIngestKey(name string) (IngestKey, string, error) {
-	plaintext, err := generateIngestKey()
+// CreateIngestKey stores a new ingest key under name and returns it.
+func (db *DB) CreateIngestKey(name string) (IngestKey, error) {
+	token, err := generateIngestKey()
 	if err != nil {
-		return IngestKey{}, "", err
+		return IngestKey{}, err
 	}
 	id := generateID()
 	if _, err := db.rw.Exec(
-		`INSERT INTO ingest_keys (id, name, token_hash, prefix) VALUES (?, ?, ?, ?)`,
-		id, name, hashIngestKey(plaintext), plaintext[:ingestKeyDisplayLen],
+		`INSERT INTO ingest_keys (id, name, token) VALUES (?, ?, ?)`, id, name, token,
 	); err != nil {
-		return IngestKey{}, "", err
+		return IngestKey{}, err
 	}
 	var k IngestKey
 	if err := db.rw.QueryRow(
-		`SELECT id, name, prefix, created_at FROM ingest_keys WHERE id = ?`, id,
-	).Scan(&k.ID, &k.Name, &k.Prefix, &k.CreatedAt); err != nil {
-		return IngestKey{}, "", err
+		`SELECT id, name, token, created_at FROM ingest_keys WHERE id = ?`, id,
+	).Scan(&k.ID, &k.Name, &k.Token, &k.CreatedAt); err != nil {
+		return IngestKey{}, err
 	}
-	return k, plaintext, nil
+	return k, nil
 }
 
 // ListIngestKeys returns every ingest key, oldest first.
 func (db *DB) ListIngestKeys() ([]IngestKey, error) {
 	rows, err := db.rw.Query(
-		`SELECT id, name, prefix, created_at FROM ingest_keys ORDER BY created_at ASC, id ASC`,
+		`SELECT id, name, token, created_at FROM ingest_keys ORDER BY created_at ASC, id ASC`,
 	)
 	if err != nil {
 		return nil, err
@@ -75,7 +63,7 @@ func (db *DB) ListIngestKeys() ([]IngestKey, error) {
 	out := []IngestKey{}
 	for rows.Next() {
 		var k IngestKey
-		if err := rows.Scan(&k.ID, &k.Name, &k.Prefix, &k.CreatedAt); err != nil {
+		if err := rows.Scan(&k.ID, &k.Name, &k.Token, &k.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, k)
@@ -109,7 +97,7 @@ func (db *DB) IsIngestKey(plaintext string) (bool, error) {
 	}
 	var n int
 	if err := db.rw.QueryRow(
-		`SELECT count(*) FROM ingest_keys WHERE token_hash = ?`, hashIngestKey(plaintext),
+		`SELECT count(*) FROM ingest_keys WHERE token = ?`, plaintext,
 	).Scan(&n); err != nil {
 		return false, err
 	}

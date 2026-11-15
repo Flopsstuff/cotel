@@ -11,53 +11,38 @@ import (
 
 var ingestKeyRe = regexp.MustCompile(`^cotel_ik_[0-9a-f]{64}$`)
 
-func TestCreateIngestKey_StoresHashOnly(t *testing.T) {
+func TestCreateIngestKey_RetrievableToken(t *testing.T) {
 	db := openTestActorDB(t)
 
-	k, plaintext, err := db.CreateIngestKey("paperclip")
+	k, err := db.CreateIngestKey("paperclip")
 	if err != nil {
 		t.Fatalf("CreateIngestKey: %v", err)
 	}
-	if !ingestKeyRe.MatchString(plaintext) {
-		t.Fatalf("plaintext %q does not match %s", plaintext, ingestKeyRe)
+	if !ingestKeyRe.MatchString(k.Token) {
+		t.Fatalf("token %q does not match %s", k.Token, ingestKeyRe)
 	}
 	if k.ID == "" || k.Name != "paperclip" || k.CreatedAt.IsZero() {
 		t.Fatalf("record = %+v", k)
 	}
-	if k.Prefix != plaintext[:12] || len(k.Prefix) != 12 {
-		t.Fatalf("prefix = %q, want %q", k.Prefix, plaintext[:12])
-	}
-
-	// The row holds the sha256 of the plaintext and never the plaintext itself.
-	var hash, prefix string
-	if err := db.rw.QueryRow(
-		`SELECT token_hash, prefix FROM ingest_keys WHERE id = ?`, k.ID,
-	).Scan(&hash, &prefix); err != nil {
-		t.Fatalf("read row: %v", err)
-	}
-	if hash != hashIngestKey(plaintext) {
-		t.Fatalf("token_hash = %q, want sha256 of plaintext", hash)
-	}
-	n := queryInt64(t, db, `SELECT count(*) FROM ingest_keys
-		WHERE id = ? OR name = ? OR token_hash = ? OR prefix = ?`,
-		plaintext, plaintext, plaintext, plaintext)
-	if n != 0 {
-		t.Fatalf("plaintext found stored in ingest_keys (%d rows)", n)
+	// The token is kept so it can be copied again later, like an actor token.
+	keys, err := db.ListIngestKeys()
+	if err != nil || len(keys) != 1 || keys[0].Token != k.Token {
+		t.Fatalf("list = %+v (err %v), want the created token back", keys, err)
 	}
 }
 
 func TestCreateIngestKey_Unique(t *testing.T) {
 	db := openTestActorDB(t)
-	_, a, err := db.CreateIngestKey("same")
+	a, err := db.CreateIngestKey("same")
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, b, err := db.CreateIngestKey("same")
+	b, err := db.CreateIngestKey("same")
 	if err != nil {
 		t.Fatalf("second key with the same name: %v", err)
 	}
-	if a == b {
-		t.Fatal("two keys share a plaintext")
+	if a.Token == b.Token {
+		t.Fatal("two keys share a token")
 	}
 }
 
@@ -74,7 +59,7 @@ func TestListIngestKeys(t *testing.T) {
 
 	var want []string
 	for _, name := range []string{"first", "second", "third"} {
-		k, _, err := db.CreateIngestKey(name)
+		k, err := db.CreateIngestKey(name)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -104,7 +89,8 @@ func TestListIngestKeys(t *testing.T) {
 
 func TestDeleteIngestKey(t *testing.T) {
 	db := openTestActorDB(t)
-	k, plaintext, err := db.CreateIngestKey("doomed")
+	k, err := db.CreateIngestKey("doomed")
+	plaintext := k.Token
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +114,8 @@ func TestDeleteIngestKey(t *testing.T) {
 
 func TestIsIngestKey(t *testing.T) {
 	db := openTestActorDB(t)
-	_, plaintext, err := db.CreateIngestKey("live")
+	live, err := db.CreateIngestKey("live")
+	plaintext := live.Token
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +132,6 @@ func TestIsIngestKey(t *testing.T) {
 		{"unknown key", "cotel_ik_" + repeatHex("0"), false},
 		{"prefix only", "cotel_ik_", false},
 		{"display prefix", plaintext[:12], false},
-		{"hash of the key", hashIngestKey(plaintext), false},
 		{"key with trailing space", plaintext + " ", false},
 		{"no prefix", plaintext[len("cotel_ik_"):], false},
 	}
@@ -205,7 +191,7 @@ func TestSchemaV12_FromV11(t *testing.T) {
 			t.Fatalf("open #%d: v11 actor lost (%d rows)", i+1, n)
 		}
 		if i == 0 {
-			if _, _, err := db.CreateIngestKey("fleet"); err != nil {
+			if _, err := db.CreateIngestKey("fleet"); err != nil {
 				t.Fatalf("CreateIngestKey on migrated db: %v", err)
 			}
 		}
@@ -230,7 +216,8 @@ func TestSchemaV12_ReapplyKeepsKeys(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, plaintext, err := db.CreateIngestKey("keep")
+	kept, err := db.CreateIngestKey("keep")
+	plaintext := kept.Token
 	if err != nil {
 		t.Fatal(err)
 	}

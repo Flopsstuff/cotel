@@ -620,3 +620,25 @@
   opacity: 0.6;
   cursor: not-allowed;
 }
+
+.textInputInvalid,
+.textInputInvalid:focus {
+  border-color: var(--color-danger);
+  box-shadow: 0 0 0 1px var(--color-danger);
+}
+
+.fieldError {
+  margin-top: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--color-danger);
+}
+
+.keyCell {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.keyCell .copyBtn {
+  position: static;
+}

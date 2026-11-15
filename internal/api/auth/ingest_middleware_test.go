@@ -170,7 +170,8 @@ func TestIngestMiddleware_RealStorage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	key, plaintext, err := db.CreateIngestKey("paperclip")
+	key, err := db.CreateIngestKey("paperclip")
+	plaintext := key.Token
 	if err != nil {
 		t.Fatal(err)
 	}

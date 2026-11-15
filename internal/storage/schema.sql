@@ -149,16 +149,14 @@ WHERE NOT EXISTS (SELECT 1 FROM actors u WHERE u.name = t.actor_id)
 -- Migration v6 → v7: add deleted_at for soft-delete support.
 ALTER TABLE actors ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ DEFAULT NULL;
 
--- v12: shared ingest keys (ADR-0028). One key authorizes OTLP ingest for a whole
--- fleet (e.g. Paperclip, which sends one header set for every agent); identity
--- still comes from an actor token in X-Cotel-Actor-Token. Only the sha256 of
--- the plaintext is stored; prefix is its first 12 chars, for display. Revoking a
--- key deletes the row.
+-- v12: shared ingest keys (ADR-0028). One key authorizes OTLP ingest for a
+-- whole fleet (e.g. Paperclip, which sends one header set for every agent);
+-- identity still comes from an actor token in X-Cotel-Actor-Token. Stored in
+-- plaintext and always retrievable, like actor tokens. Revoking deletes the row.
 CREATE TABLE IF NOT EXISTS ingest_keys (
     id         VARCHAR PRIMARY KEY,
     name       VARCHAR NOT NULL,
-    token_hash VARCHAR NOT NULL UNIQUE,
-    prefix     VARCHAR NOT NULL,
+    token      VARCHAR NOT NULL UNIQUE,
     created_at TIMESTAMPTZ DEFAULT now()
 );
 

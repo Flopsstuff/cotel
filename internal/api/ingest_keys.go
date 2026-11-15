@@ -16,7 +16,7 @@ const maxIngestKeyName = 100
 
 // IngestKeyStore is the write-capable interface used by the ingest key endpoints.
 type IngestKeyStore interface {
-	CreateIngestKey(name string) (storage.IngestKey, string, error)
+	CreateIngestKey(name string) (storage.IngestKey, error)
 	ListIngestKeys() ([]storage.IngestKey, error)
 	DeleteIngestKey(id string) error
 }
@@ -27,24 +27,20 @@ func (h *Handler) SetIngestKeyStore(s IngestKeyStore) *Handler {
 	return h
 }
 
+// ingestKeyItem is one key as the list and create endpoints return it. The
+// token is included, like an actor's: keys are retrievable by design (ADR-0028).
 type ingestKeyItem struct {
 	ID        string `json:"id"`
 	Name      string `json:"name"`
-	Prefix    string `json:"prefix"`
+	Token     string `json:"token"`
 	CreatedAt string `json:"created_at"`
-}
-
-// ingestKeyCreated is the create response: the only place the plaintext appears.
-type ingestKeyCreated struct {
-	ingestKeyItem
-	Token string `json:"token"`
 }
 
 func toIngestKeyItem(k storage.IngestKey) ingestKeyItem {
 	return ingestKeyItem{
 		ID:        k.ID,
 		Name:      k.Name,
-		Prefix:    k.Prefix,
+		Token:     k.Token,
 		CreatedAt: k.CreatedAt.UTC().Format(time.RFC3339),
 	}
 }
@@ -119,12 +115,12 @@ func (h *Handler) createIngestKey(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "name must be at most 100 characters", http.StatusBadRequest)
 		return
 	}
-	k, token, err := h.ingestKeyStore.CreateIngestKey(name)
+	k, err := h.ingestKeyStore.CreateIngestKey(name)
 	if err != nil {
 		jsonError(w, "create failed", http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	_ = json.NewEncoder(w).Encode(ingestKeyCreated{ingestKeyItem: toIngestKeyItem(k), Token: token})
+	_ = json.NewEncoder(w).Encode(toIngestKeyItem(k))
 }

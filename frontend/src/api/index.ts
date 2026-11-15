@@ -232,12 +232,12 @@ export function useSettings() {
 }
 
 // Ingest keys authorize OTLP ingest for many senders at once; each sender names
-// itself with its actor token in X-Cotel-Actor-Token. The list carries only the
-// key's prefix: the full key is returned once, by createIngestKey.
+// itself with its actor token in X-Cotel-Actor-Token. Like actor tokens, the
+// full key is always returned so it can be copied again.
 export interface IngestKey {
   id: string
   name: string
-  prefix: string
+  token: string
   created_at: string
 }
 
@@ -245,9 +245,7 @@ export interface IngestKeysResponse {
   ingest_keys: IngestKey[]
 }
 
-export interface CreatedIngestKey extends IngestKey {
-  token: string
-}
+export type CreatedIngestKey = IngestKey
 
 export const INGEST_KEYS_URL = '/api/v1/ingest-keys'
 
