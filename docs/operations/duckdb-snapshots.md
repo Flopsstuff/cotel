@@ -129,8 +129,8 @@ an endpoint that has stopped answering all land in those two rows, and under
 
 ### The threshold
 
-`SNAPSHOT_STALE_AFTER_SECONDS` defaults to **43200 s (12 h)** — two
-`COTEL_SNAPSHOT_INTERVAL` periods at the shipped `6h`. Two and not one because
+`SNAPSHOT_STALE_AFTER_SECONDS` defaults to **172800 s (48 h)** — two
+`COTEL_SNAPSHOT_INTERVAL` periods at the shipped `24h`. Two and not one because
 a cycle is scheduled *from* the last one, so a single interval leaves no room
 for the export itself and a tick landing just before the next run would be red
 every time. If you change `COTEL_SNAPSHOT_INTERVAL`, change this with it: the
@@ -159,7 +159,7 @@ from it, so there is no second address to keep in step on the host. A green line
 names the snapshot it found:
 
 ```
-probe-healthz: OK — HTTP 200 ingest age 2s (threshold 21600s) url=http://robmini.local:8080/healthz | snapshot last run 2026-10-06T17:39:54Z (age 909s, threshold 43200s) dir=/snapshots/2026-10-06T17-39-54Z
+probe-healthz: OK — HTTP 200 ingest age 2s (threshold 21600s) url=http://robmini.local:8080/healthz | snapshot last run 2026-10-06T17:39:54Z (age 909s, threshold 172800s) dir=/snapshots/2026-10-06T17-39-54Z
 ```
 
 ## Restoring from a snapshot

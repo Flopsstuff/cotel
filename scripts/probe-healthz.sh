@@ -25,7 +25,7 @@
 #   CF_ACCESS_CLIENT_ID      optional Cloudflare Access service token
 #   CF_ACCESS_CLIENT_SECRET  optional; sent only when both are set
 #   SNAPSHOT_CHECK           auto (default) | require | off
-#   SNAPSHOT_STALE_AFTER_SECONDS  default 43200 (2x the shipped 6h interval)
+#   SNAPSHOT_STALE_AFTER_SECONDS  default 172800 (2x the shipped 24h interval)
 #   API_HEALTH_URL           override; derived from the /healthz URL otherwise
 #
 # Exit codes:
@@ -48,7 +48,7 @@ URL="${1:-${HEALTHZ_URL:-https://cotel.aignite.pl/healthz}}"
 STALE_AFTER_SECONDS="${STALE_AFTER_SECONDS:-21600}"
 CONNECT_TIMEOUT="${CONNECT_TIMEOUT:-15}"
 SNAPSHOT_CHECK="${SNAPSHOT_CHECK:-auto}"
-SNAPSHOT_STALE_AFTER_SECONDS="${SNAPSHOT_STALE_AFTER_SECONDS:-43200}"
+SNAPSHOT_STALE_AFTER_SECONDS="${SNAPSHOT_STALE_AFTER_SECONDS:-172800}"
 
 if ! [ "$STALE_AFTER_SECONDS" -gt 0 ] 2>/dev/null; then
     echo "probe-healthz: FAILED — STALE_AFTER_SECONDS must be a positive integer, got '${STALE_AFTER_SECONDS}'"

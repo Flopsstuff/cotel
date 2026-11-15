@@ -70,11 +70,11 @@ Restart Claude Code. Telemetry starts flowing immediately.
 | `COTEL_RETENTION_AGGREGATE_DAYS` | `90` | Daily aggregate retention in days |
 | `COTEL_RETENTION_INTERVAL` | `6h` | Retention worker tick interval |
 | `COTEL_SNAPSHOT_DIR` | _(unset - snapshots off)_ | Where the snapshot worker exports the whole database (compose sets `/snapshots`); empty disables snapshots. See [Database Snapshots and Restore](./operations/duckdb-snapshots) |
-| `COTEL_SNAPSHOT_INTERVAL` | `6h` | How often a snapshot is taken (Go duration) |
-| `COTEL_SNAPSHOT_KEEP` | `56` | How many complete snapshots to keep - 14 days at the default interval |
+| `COTEL_SNAPSHOT_INTERVAL` | `24h` | How often a snapshot is taken (Go duration) |
+| `COTEL_SNAPSHOT_KEEP` | `14` | How many complete snapshots to keep - 14 days at the default interval |
 | `COTEL_SNAPSHOT_VOLUME` | `cotel-snapshots` | Read by `docker-compose.yml`, not the binary: the Docker volume mounted at `/snapshots` |
 | `SNAPSHOT_CHECK` | `auto` | Read by `scripts/probe-healthz.sh`, not the binary: `auto` pages only on an affirmatively broken snapshot, `require` also when the instance claims none, `off` never asks. See [Production health probes](./operations/health-probe#the-snapshot-claim-asked-of-a-second-endpoint) |
-| `SNAPSHOT_STALE_AFTER_SECONDS` | `43200` | Read by `scripts/probe-healthz.sh`, not the binary: how old the newest snapshot may be - two `COTEL_SNAPSHOT_INTERVAL` periods at the shipped `6h` |
+| `SNAPSHOT_STALE_AFTER_SECONDS` | `172800` | Read by `scripts/probe-healthz.sh`, not the binary: how old the newest snapshot may be - two `COTEL_SNAPSHOT_INTERVAL` periods at the shipped `24h` |
 | `API_HEALTH_URL` | _(derived from the `/healthz` URL)_ | Read by `scripts/probe-healthz.sh`, not the binary: overrides the derived `/api/v1/health` address |
 
 ## Data & retention
