@@ -246,7 +246,7 @@ func TestBackfillCostUSD_DoesNotTouchDailyUsage(t *testing.T) {
 	// A rolled-up row whose cost was computed under the old (wrong) rates, and a
 	// cache-heavy row whose correct cost is far above its input+output-only cost.
 	if _, err := db.rw.Exec(`
-		INSERT INTO daily_usage (day, session_id, model, tool_name, user_id, span_count,
+		INSERT INTO daily_usage (day, session_id, model, tool_name, actor_id, span_count,
 		                         total_input_tokens, total_output_tokens, total_cost_usd)
 		VALUES ('2026-07-01', 'sess1', 'claude-opus-4-7', 'tool1', NULL, 10, 1000000, 0, 15.0),
 		       ('2026-07-02', 'sess2', 'claude-opus-4-8', 'tool1', NULL, 20, 1000,    0, 42.0)`); err != nil {

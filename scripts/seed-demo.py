@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Seed a cotel instance with synthetic Claude Code telemetry.
 
-Point it at a *throwaway* instance — it creates users and ingests spans, it
+Point it at a *throwaway* instance — it creates actors and ingests spans, it
 never deletes anything. Used to produce the README screenshots and to give a
 fresh install something to look at.
 
@@ -26,8 +26,8 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 
 # Named principals, heaviest first. Weight drives how many sessions each one
-# opens, so the Users top-5 has a readable spread instead of seven equal bars.
-USERS = [
+# opens, so the Actors top-5 has a readable spread instead of seven equal bars.
+ACTORS = [
     ("alex-mbp", 1.00),
     ("priya-mbp", 0.85),
     ("sam-desktop", 0.70),
@@ -37,7 +37,7 @@ USERS = [
     ("nightly-bot", 0.25),
 ]
 
-# Per-user model mix: (model, weight). ci-runner and nightly-bot are automation
+# Per-actor model mix: (model, weight). ci-runner and nightly-bot are automation
 # and ride the cheap tiers.
 MODEL_MIX = {
     "ci-runner": [("claude-haiku-4-5", 0.7), ("claude-sonnet-5", 0.3)],
@@ -79,13 +79,13 @@ def post(url, payload, token=None, timeout=60):
     return json.loads(raw) if raw else {}
 
 
-def create_users(dash_url, rng):
+def create_actors(dash_url, rng):
     tokens = {}
-    for name, _ in USERS:
+    for name, _ in ACTORS:
         try:
-            created = post(dash_url + "/api/v1/users", {"name": name})
+            created = post(dash_url + "/api/v1/actors", {"name": name})
         except urllib.error.HTTPError as e:
-            sys.exit("could not create user %s: %s %s" % (name, e.code, e.read().decode()[:200]))
+            sys.exit("could not create actor %s: %s %s" % (name, e.code, e.read().decode()[:200]))
         tokens[name] = created["token"]
     return tokens
 
@@ -124,9 +124,9 @@ def model_tokens(rng, model):
     }
 
 
-def build_session(rng, user, start, session_id):
+def build_session(rng, actor, start, session_id):
     """Return the OTLP resourceSpans payload for one session."""
-    model = pick(rng, MODEL_MIX.get(user, MODEL_MIX["_default"]))
+    model = pick(rng, MODEL_MIX.get(actor, MODEL_MIX["_default"]))
     trace_id = hex_id(rng, 32)
     turns = rng.randint(4, 22)
     # A session that errors does so on a tool, not on the whole run; roughly one
@@ -201,8 +201,8 @@ def main():
     ingest = args.ingest_url.rstrip("/") + "/v1/traces"
     rng = random.Random(args.seed)
 
-    tokens = create_users(dash, rng)
-    print("created %d users" % len(tokens))
+    tokens = create_actors(dash, rng)
+    print("created %d actors" % len(tokens))
 
     now = datetime.now(timezone.utc)
     sessions = 0
@@ -213,8 +213,8 @@ def main():
             hour=0, minute=0, second=0, microsecond=0
         )
         weight = DAY_WEIGHT[day.weekday()]
-        for user, user_weight in USERS:
-            count = rng.random() * 3.4 * weight * user_weight
+        for actor, actor_weight in ACTORS:
+            count = rng.random() * 3.4 * weight * actor_weight
             for _ in range(int(count) + (1 if rng.random() < count % 1 else 0)):
                 # Working hours, jittered; the current day stops at "now" so the
                 # newest rows are not in the future.
@@ -226,9 +226,9 @@ def main():
                 if start > now - timedelta(minutes=25):
                     continue
                 session_id = "sess_" + hex_id(rng, 12)
-                payload = build_session(rng, user, start, session_id)
+                payload = build_session(rng, actor, start, session_id)
                 try:
-                    post(ingest, payload, token=tokens[user])
+                    post(ingest, payload, token=tokens[actor])
                 except urllib.error.URLError as e:
                     sys.exit("ingest failed: %s" % e)
                 sessions += 1

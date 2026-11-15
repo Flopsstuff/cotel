@@ -45,7 +45,7 @@ func TestSnapshotWritesManifestLast(t *testing.T) {
 		t.Fatalf("Snapshot: %v", err)
 	}
 
-	for _, name := range []string{"schema.sql", "load.sql", "spans.parquet", "users.parquet", SnapshotManifestName} {
+	for _, name := range []string{"schema.sql", "load.sql", "spans.parquet", "actors.parquet", SnapshotManifestName} {
 		if _, err := os.Stat(filepath.Join(m.Directory, name)); err != nil {
 			t.Errorf("snapshot is missing %s: %v", name, err)
 		}

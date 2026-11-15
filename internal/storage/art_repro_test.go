@@ -48,17 +48,17 @@ const (
 // rows to keep. A roll-up that moves nothing exercises nothing.
 const reproSpanDays = 60
 
-// reproUsers is how many distinct values the index on the added column gets.
+// reproActors is how many distinct values the index on the added column gets.
 // Low cardinality over many rows is what gives the ART long shared prefixes and
 // deep nodes, i.e. the structure the defect damages.
-const reproUsers = 12
+const reproActors = 12
 
-// preUserIDSchema is `spans` as it stood at schema version 2, taken from that
-// era's schema.sql: every column the table has today except user_id, plus
+// preActorIDSchema is `spans` as it stood at schema version 2, taken from that
+// era's schema.sql: every column the table has today except actor_id, plus
 // duration_ms, and the three ART indexes of that era.
 //
 // Both differences from today's table carry a migration. Starting without
-// user_id is what makes the v2 -> v3 ALTER add a column to a filled, indexed
+// actor_id is what makes the v2 -> v3 ALTER add a column to a filled, indexed
 // table. Starting *with* duration_ms is what makes the v9 -> v10 ALTER that
 // drops it do anything at all: `DROP COLUMN IF EXISTS` over a column that was
 // never there is a silent no-op, and v10 is the ALTER that ran in production on
@@ -66,7 +66,7 @@ const reproUsers = 12
 // day after the database was created. While the column is present the table
 // also carries the logical/physical column skew of ADR-0013, so the indexes are
 // built over the layout production built them over.
-const preUserIDSchema = `
+const preActorIDSchema = `
 CREATE TABLE schema_version (
     version     INTEGER PRIMARY KEY,
     applied_at  TIMESTAMPTZ DEFAULT now()
@@ -104,7 +104,7 @@ CREATE INDEX idx_spans_name       ON spans(name);
 `
 
 // seedSpans inserts a batch in one statement. Values are derived from the row
-// number, never from a captured payload: the reproducer must carry no user id,
+// number, never from a captured payload: the reproducer must carry no actor id,
 // session id or span attribute that ever belonged to anyone. Parameters are
 // (now, span-days, first row number, last row number).
 const seedSpans = `
@@ -139,8 +139,8 @@ FROM (
 // value yet. This is the mutation the defect needs: a bulk write through an ART
 // index that was built on a column the table did not originally have.
 var populateAddedColumn = fmt.Sprintf(
-	`UPDATE spans SET user_id = 'user-' || (hash(span_id) %% %d)::VARCHAR WHERE user_id IS NULL`,
-	reproUsers)
+	`UPDATE spans SET actor_id = 'actor-' || (hash(span_id) %% %d)::VARCHAR WHERE actor_id IS NULL`,
+	reproActors)
 
 func envCount(t *testing.T, key string, def int) int {
 	t.Helper()
@@ -234,11 +234,11 @@ func TestARTIndexSurvivesAddedColumnAndBulkReplace(t *testing.T) {
 		t.Fatalf("version(): %v", err)
 	}
 	t.Logf("engine %s: %d spans over %d days, then %d replace/restart cycles", engine, spans, reproSpanDays, cycles)
-	mustExec(t, seed, "pre-migration schema", preUserIDSchema)
+	mustExec(t, seed, "pre-migration schema", preActorIDSchema)
 	mustExec(t, seed, fmt.Sprintf("seed %d spans", spans), seedSpans, now, reproSpanDays, 0, spans)
 	if !spansHasColumn(t, seed, "duration_ms") {
 		t.Fatal("the seeded database has no duration_ms, so it is not pre-v10 and the v10 ALTER " +
-			"under test would pass over it as a silent no-op: restore the column in preUserIDSchema")
+			"under test would pass over it as a silent no-op: restore the column in preActorIDSchema")
 	}
 	mustExec(t, seed, "seed checkpoint", "CHECKPOINT")
 	if err := seed.Close(); err != nil {
@@ -247,7 +247,7 @@ func TestARTIndexSurvivesAddedColumnAndBulkReplace(t *testing.T) {
 	requireNoWAL(t, path, "after seeding")
 
 	// Phase 2 — the migration, as cotel performs it on the next start:
-	// schema.sql adds user_id VARCHAR to the filled table, drops duration_ms
+	// schema.sql adds actor_id VARCHAR to the filled table, drops duration_ms
 	// off the middle of it, and builds an ART index on the added column.
 	db, err := Open(path)
 	if err != nil {
@@ -338,7 +338,7 @@ func TestARTIndexSurvivesAddedColumnAndBulkReplace(t *testing.T) {
 // primary key's ART index still holds its own entries.
 func assertIndexesIntact(t *testing.T, db *DB, wantSpans int) {
 	t.Helper()
-	want := []string{"idx_spans_name", "idx_spans_session_id", "idx_spans_start_time", "idx_spans_user_id"}
+	want := []string{"idx_spans_actor_id", "idx_spans_name", "idx_spans_session_id", "idx_spans_start_time"}
 	got := indexNames(t, db.ReadOnly())
 	if fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Fatalf("after reopen: indexes %v, want %v", got, want)
@@ -359,7 +359,7 @@ func countSpans(t *testing.T, db *DB) int {
 	return n
 }
 
-// assertPushdownProbesAgree compares a bare `user_id = <constant>` on the added
+// assertPushdownProbesAgree compares a bare `actor_id = <constant>` on the added
 // column, which the optimizer folds into the scan, against the same predicate
 // wrapped in an expression, which it cannot fold. A wrong count on the first is
 // this defect's silent form — the shape ADR-0013 documents, where the pushed
@@ -375,15 +375,15 @@ func countSpans(t *testing.T, db *DB) int {
 func assertPushdownProbesAgree(t *testing.T, db *DB) {
 	t.Helper()
 	ro := db.ReadOnly()
-	for u := 0; u < reproUsers; u++ {
-		want := fmt.Sprintf("user-%d", u)
-		bare := fmt.Sprintf("SELECT count(*) FROM spans WHERE user_id = '%s'", want)
-		wrapped := fmt.Sprintf("SELECT count(*) FROM spans WHERE user_id || '' = '%s'", want)
+	for u := 0; u < reproActors; u++ {
+		want := fmt.Sprintf("actor-%d", u)
+		bare := fmt.Sprintf("SELECT count(*) FROM spans WHERE actor_id = '%s'", want)
+		wrapped := fmt.Sprintf("SELECT count(*) FROM spans WHERE actor_id || '' = '%s'", want)
 
 		if u == 0 {
 			// One pair of plans per restart is enough to show the two probes
 			// still take different paths through the scan.
-			filter := fmt.Sprintf("user_id='%s'", want)
+			filter := fmt.Sprintf("actor_id='%s'", want)
 			if plan := queryPlan(t, ro, bare); !strings.Contains(plan, filter) {
 				t.Fatalf("%s is no longer pushed into the scan, so it tests the same path as the "+
 					"control probe and the pair has nothing left to disagree about; plan: %s", bare, plan)
@@ -401,7 +401,7 @@ func assertPushdownProbesAgree(t *testing.T, db *DB) {
 			t.Fatalf("control probe %s: %v", want, err)
 		}
 		if pushed != scanned {
-			t.Fatalf("REPRODUCED: user_id = %q matched %d rows as a pushed-down filter, %d as an expression", want, pushed, scanned)
+			t.Fatalf("REPRODUCED: actor_id = %q matched %d rows as a pushed-down filter, %d as an expression", want, pushed, scanned)
 		}
 		if pushed == 0 {
 			t.Fatalf("probe %s matched nothing by either path; the fixture built no entries for it", want)

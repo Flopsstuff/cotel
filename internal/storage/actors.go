@@ -10,23 +10,23 @@ import (
 	"time"
 )
 
-// AnonymousUserID is the synthetic ID used to represent spans with no user_id (unauthenticated ingest).
-const AnonymousUserID = "__anonymous__"
+// AnonymousActorID is the synthetic ID used to represent spans with no actor_id (unauthenticated ingest).
+const AnonymousActorID = "__anonymous__"
 
-// ErrNotFound is returned when the target user does not exist or is already soft-deleted.
+// ErrNotFound is returned when the target actor does not exist or is already soft-deleted.
 var ErrNotFound = errors.New("not found")
 
-// User is a named principal whose token authenticates OTLP ingest requests.
-type User struct {
+// Actor is a named principal whose token authenticates OTLP ingest requests.
+type Actor struct {
 	ID        string
 	Name      string
 	Token     string
 	CreatedAt time.Time
 }
 
-// UserWithStats adds span-derived metrics to a User.
-type UserWithStats struct {
-	User
+// ActorWithStats adds span-derived metrics to an Actor.
+type ActorWithStats struct {
+	Actor
 	TotalCostUSD float64
 	Sessions     int64
 	LastSeen     *time.Time
@@ -49,29 +49,29 @@ func generateID() string {
 		b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }
 
-// CreateUser inserts a new user with a generated token and returns the full record.
-func (db *DB) CreateUser(name string) (User, error) {
+// CreateActor inserts a new actor with a generated token and returns the full record.
+func (db *DB) CreateActor(name string) (Actor, error) {
 	token, err := generateToken()
 	if err != nil {
-		return User{}, err
+		return Actor{}, err
 	}
 	id := generateID()
 	_, err = db.rw.Exec(
-		`INSERT INTO users (id, name, token) VALUES (?, ?, ?)`,
+		`INSERT INTO actors (id, name, token) VALUES (?, ?, ?)`,
 		id, name, token,
 	)
 	if err != nil {
-		return User{}, err
+		return Actor{}, err
 	}
-	var u User
+	var u Actor
 	err = db.rw.QueryRow(
-		`SELECT id, name, token, created_at FROM users WHERE id = ?`, id,
+		`SELECT id, name, token, created_at FROM actors WHERE id = ?`, id,
 	).Scan(&u.ID, &u.Name, &u.Token, &u.CreatedAt)
 	return u, err
 }
 
-// ListUsersOptions parameterises ListUsersPage.
-type ListUsersOptions struct {
+// ListActorsOptions parameterises ListActorsPage.
+type ListActorsOptions struct {
 	Since *time.Time // lower bound for range-scoped cost/sessions; nil = all-time
 	Query string     // case-insensitive substring match on name; "" = no filter
 	Sort  string     // name|created_at|last_seen|cost|sessions (invalid → cost)
@@ -80,9 +80,9 @@ type ListUsersOptions struct {
 	Limit int        // rows per page; 0 = unpaginated; clamped to 500
 }
 
-// userSortExprs whitelists sort keys to their SELECT-list column, so the caller
+// actorSortExprs whitelists sort keys to their SELECT-list column, so the caller
 // can never inject an ORDER BY expression.
-var userSortExprs = map[string]string{
+var actorSortExprs = map[string]string{
 	"name":       "name",
 	"created_at": "created_at",
 	"last_seen":  "last_seen",
@@ -107,21 +107,21 @@ raw_floor AS (
     SELECT MIN(start_time) AS ts FROM spans
 ),
 usage AS (
-    SELECT user_id, session_id, cost_usd AS cost
+    SELECT actor_id, session_id, cost_usd AS cost
     FROM spans
     WHERE TRUE%s
     UNION ALL
-    SELECT du.user_id, du.session_id, du.total_cost_usd AS cost
+    SELECT du.actor_id, du.session_id, du.total_cost_usd AS cost
     FROM daily_usage du CROSS JOIN raw_floor rf
     WHERE (rf.ts IS NULL OR du.day < CAST(CAST(rf.ts AS TIMESTAMP) AS DATE))%s
 )`
 
-// ListUsersPage returns a sorted, optionally paged slice of users with
+// ListActorsPage returns a sorted, optionally paged slice of actors with
 // range-scoped cost/session stats, plus the total number of matching rows
 // (counted before paging). The synthetic __anonymous__ row is produced inside
-// the SQL so it sorts, filters, and paginates inline with real users.
-func (db *DB) ListUsersPage(opts ListUsersOptions) ([]UserWithStats, int, error) {
-	sortExpr, ok := userSortExprs[opts.Sort]
+// the SQL so it sorts, filters, and paginates inline with real actors.
+func (db *DB) ListActorsPage(opts ListActorsOptions) ([]ActorWithStats, int, error) {
+	sortExpr, ok := actorSortExprs[opts.Sort]
 	if !ok {
 		sortExpr = "cost"
 	}
@@ -162,11 +162,11 @@ func (db *DB) ListUsersPage(opts ListUsersOptions) ([]UserWithStats, int, error)
 		args = append(args, limit, (page-1)*limit)
 	}
 
-	cte := fmt.Sprintf(usersPageCTE, rawSince, aggSince, AnonymousUserID)
+	cte := fmt.Sprintf(actorsPageCTE, rawSince, aggSince, AnonymousActorID)
 	query := cte + fmt.Sprintf(`
 SELECT id, name, token, created_at, cost, sessions, last_seen,
        COUNT(*) OVER () AS total
-FROM all_users
+FROM all_actors
 WHERE TRUE%s
 ORDER BY %s %s NULLS LAST, name ASC%s
 `, qFilter, sortExpr, order, limitClause)
@@ -177,10 +177,10 @@ ORDER BY %s %s NULLS LAST, name ASC%s
 	}
 	defer rows.Close()
 
-	var out []UserWithStats
+	var out []ActorWithStats
 	var total int
 	for rows.Next() {
-		var u UserWithStats
+		var u ActorWithStats
 		var token sql.NullString
 		var createdAt, lastSeen sql.NullTime
 		if err := rows.Scan(
@@ -208,7 +208,7 @@ ORDER BY %s %s NULLS LAST, name ASC%s
 	// COUNT(*) OVER () rides on the result rows, so a page past the end yields no
 	// row to read it from. Re-count so total stays the match count regardless of page.
 	if len(out) == 0 {
-		countQuery := cte + fmt.Sprintf("\nSELECT COUNT(*) FROM all_users WHERE TRUE%s\n", qFilter)
+		countQuery := cte + fmt.Sprintf("\nSELECT COUNT(*) FROM all_actors WHERE TRUE%s\n", qFilter)
 		if err := db.rw.QueryRow(countQuery, filterArgs...).Scan(&total); err != nil {
 			return nil, 0, err
 		}
@@ -216,26 +216,26 @@ ORDER BY %s %s NULLS LAST, name ASC%s
 	return out, total, nil
 }
 
-const usersPageCTE = `
+const actorsPageCTE = `
 WITH ` + rangeUsageCTE + `,
 usage_agg AS (
-    SELECT user_id,
+    SELECT actor_id,
            COALESCE(SUM(cost), 0) AS cost,
            COUNT(DISTINCT session_id) AS sessions
     FROM usage
-    GROUP BY user_id
+    GROUP BY actor_id
 ),
 seen AS (
-    SELECT user_id, MAX(end_time) AS last_seen FROM spans GROUP BY user_id
+    SELECT actor_id, MAX(end_time) AS last_seen FROM spans GROUP BY actor_id
 ),
 named AS (
     SELECT u.id, u.name, u.token, u.created_at,
            COALESCE(ua.cost, 0) AS cost,
            COALESCE(ua.sessions, 0) AS sessions,
            s.last_seen AS last_seen
-    FROM users u
-    LEFT JOIN usage_agg ua ON ua.user_id = u.name
-    LEFT JOIN seen s ON s.user_id = u.name
+    FROM actors u
+    LEFT JOIN usage_agg ua ON ua.actor_id = u.name
+    LEFT JOIN seen s ON s.actor_id = u.name
     WHERE u.deleted_at IS NULL
 ),
 anon AS (
@@ -244,51 +244,51 @@ anon AS (
         'Anonymous' AS name,
         CAST(NULL AS VARCHAR) AS token,
         CAST(NULL AS TIMESTAMPTZ) AS created_at,
-        COALESCE((SELECT cost FROM usage_agg WHERE user_id IS NULL), 0) AS cost,
-        COALESCE((SELECT sessions FROM usage_agg WHERE user_id IS NULL), 0) AS sessions,
-        (SELECT last_seen FROM seen WHERE user_id IS NULL) AS last_seen
+        COALESCE((SELECT cost FROM usage_agg WHERE actor_id IS NULL), 0) AS cost,
+        COALESCE((SELECT sessions FROM usage_agg WHERE actor_id IS NULL), 0) AS sessions,
+        (SELECT last_seen FROM seen WHERE actor_id IS NULL) AS last_seen
     FROM (SELECT 1) d
-    WHERE EXISTS (SELECT 1 FROM spans WHERE user_id IS NULL)
-       OR EXISTS (SELECT 1 FROM daily_usage WHERE user_id IS NULL)
+    WHERE EXISTS (SELECT 1 FROM spans WHERE actor_id IS NULL)
+       OR EXISTS (SELECT 1 FROM daily_usage WHERE actor_id IS NULL)
 ),
-all_users AS (
+all_actors AS (
     SELECT * FROM named
     UNION ALL
     SELECT * FROM anon
 )`
 
-// GetUserWithStats returns a single user with range-scoped cost/session stats
-// (since = nil means all-time). id may be the __anonymous__ pseudo-user, which
+// GetActorWithStats returns a single actor with range-scoped cost/session stats
+// (since = nil means all-time). id may be the __anonymous__ pseudo-actor, which
 // always resolves to the synthetic row. Returns ErrNotFound for an unknown or
-// soft-deleted named user.
-func (db *DB) GetUserWithStats(id string, since *time.Time) (UserWithStats, error) {
-	if id == AnonymousUserID {
+// soft-deleted named actor.
+func (db *DB) GetActorWithStats(id string, since *time.Time) (ActorWithStats, error) {
+	if id == AnonymousActorID {
 		cost, sessions, lastSeen, err := db.principalStats(true, "", since)
 		if err != nil {
-			return UserWithStats{}, err
+			return ActorWithStats{}, err
 		}
-		return UserWithStats{
-			User:         User{ID: AnonymousUserID, Name: "Anonymous"},
+		return ActorWithStats{
+			Actor:        Actor{ID: AnonymousActorID, Name: "Anonymous"},
 			TotalCostUSD: cost,
 			Sessions:     sessions,
 			LastSeen:     lastSeen,
 		}, nil
 	}
 
-	var u UserWithStats
+	var u ActorWithStats
 	err := db.rw.QueryRow(
-		`SELECT id, name, token, created_at FROM users WHERE id = ? AND deleted_at IS NULL`, id,
+		`SELECT id, name, token, created_at FROM actors WHERE id = ? AND deleted_at IS NULL`, id,
 	).Scan(&u.ID, &u.Name, &u.Token, &u.CreatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return UserWithStats{}, ErrNotFound
+			return ActorWithStats{}, ErrNotFound
 		}
-		return UserWithStats{}, err
+		return ActorWithStats{}, err
 	}
 
 	cost, sessions, lastSeen, err := db.principalStats(false, u.Name, since)
 	if err != nil {
-		return UserWithStats{}, err
+		return ActorWithStats{}, err
 	}
 	u.TotalCostUSD = cost
 	u.Sessions = sessions
@@ -297,13 +297,13 @@ func (db *DB) GetUserWithStats(id string, since *time.Time) (UserWithStats, erro
 }
 
 // principalStats computes range-scoped cost/sessions plus all-time last_seen for
-// one principal: the anonymous bucket (isAnon) or a named user. It reuses the
+// one principal: the anonymous bucket (isAnon) or a named actor. It reuses the
 // same span/daily_usage union as the list query so a single row's numbers match
 // the list exactly.
 func (db *DB) principalStats(isAnon bool, name string, since *time.Time) (float64, int64, *time.Time, error) {
-	rawPrincipal, aggPrincipal := "user_id IS NULL", "du.user_id IS NULL"
+	rawPrincipal, aggPrincipal := "actor_id IS NULL", "du.actor_id IS NULL"
 	if !isAnon {
-		rawPrincipal, aggPrincipal = "user_id = ?", "du.user_id = ?"
+		rawPrincipal, aggPrincipal = "actor_id = ?", "du.actor_id = ?"
 	}
 
 	var rawSince, aggSince string
@@ -360,11 +360,11 @@ SELECT COALESCE(SUM(cost), 0), COUNT(DISTINCT session_id) FROM usage
 	return cost, sessions, lastSeen, nil
 }
 
-// GetUserByToken looks up a non-deleted user by their plaintext token.
-func (db *DB) GetUserByToken(token string) (*User, error) {
-	var u User
+// GetActorByToken looks up a non-deleted actor by their plaintext token.
+func (db *DB) GetActorByToken(token string) (*Actor, error) {
+	var u Actor
 	err := db.rw.QueryRow(
-		`SELECT id, name, token, created_at FROM users WHERE token = ? AND deleted_at IS NULL`, token,
+		`SELECT id, name, token, created_at FROM actors WHERE token = ? AND deleted_at IS NULL`, token,
 	).Scan(&u.ID, &u.Name, &u.Token, &u.CreatedAt)
 	if err != nil {
 		return nil, err
@@ -372,36 +372,36 @@ func (db *DB) GetUserByToken(token string) (*User, error) {
 	return &u, nil
 }
 
-// RotateToken replaces a user's token with a freshly generated one.
-func (db *DB) RotateToken(userID string) (User, error) {
+// RotateToken replaces an actor's token with a freshly generated one.
+func (db *DB) RotateToken(actorID string) (Actor, error) {
 	token, err := generateToken()
 	if err != nil {
-		return User{}, err
+		return Actor{}, err
 	}
 	_, err = db.rw.Exec(
-		`UPDATE users SET token = ? WHERE id = ?`, token, userID,
+		`UPDATE actors SET token = ? WHERE id = ?`, token, actorID,
 	)
 	if err != nil {
-		return User{}, err
+		return Actor{}, err
 	}
-	var u User
+	var u Actor
 	err = db.rw.QueryRow(
-		`SELECT id, name, token, created_at FROM users WHERE id = ?`, userID,
+		`SELECT id, name, token, created_at FROM actors WHERE id = ?`, actorID,
 	).Scan(&u.ID, &u.Name, &u.Token, &u.CreatedAt)
 	return u, err
 }
 
-// SoftDeleteUser stamps deleted_at, making the user invisible and their token
-// invalid (GetUserByToken filters deleted_at IS NULL). Returns ErrNotFound if
-// the user does not exist or is already soft-deleted.
+// SoftDeleteActor stamps deleted_at, making the actor invisible and their token
+// invalid (GetActorByToken filters deleted_at IS NULL). Returns ErrNotFound if
+// the actor does not exist or is already soft-deleted.
 //
 // Note: DuckDB v1.8.x has a bug where UPDATE on a UNIQUE-constrained column
 // raises a false "duplicate key" error. We therefore do NOT update the token
-// column — the deleted_at filter is sufficient to reject auth for deleted users.
-func (db *DB) SoftDeleteUser(userID string) error {
+// column — the deleted_at filter is sufficient to reject auth for deleted actors.
+func (db *DB) SoftDeleteActor(actorID string) error {
 	result, err := db.rw.Exec(
-		`UPDATE users SET deleted_at = CURRENT_TIMESTAMP WHERE id = ? AND deleted_at IS NULL`,
-		userID,
+		`UPDATE actors SET deleted_at = CURRENT_TIMESTAMP WHERE id = ? AND deleted_at IS NULL`,
+		actorID,
 	)
 	if err != nil {
 		return err
@@ -413,15 +413,15 @@ func (db *DB) SoftDeleteUser(userID string) error {
 	return nil
 }
 
-// DeleteUserWithHistory hard-deletes all spans and daily_usage rows belonging to the
-// user, then hard-deletes the user row. Returns ErrNotFound if the user does not
+// DeleteActorWithHistory hard-deletes all spans and daily_usage rows belonging to the
+// actor, then hard-deletes the actor row. Returns ErrNotFound if the actor does not
 // exist or is already soft-deleted.
 //
 // Note: DuckDB v1.x fails with "Vector::Reference used on vector of different type"
-// when executing UPDATE on spans.user_id (a column added via ADD COLUMN on a table
+// when executing UPDATE on spans.actor_id (a column added via ADD COLUMN on a table
 // with GENERATED ALWAYS columns). We therefore DELETE span rows rather than
-// anonymising them. All history is removed together with the user.
-func (db *DB) DeleteUserWithHistory(userID string) error {
+// anonymising them. All history is removed together with the actor.
+func (db *DB) DeleteActorWithHistory(actorID string) error {
 	tx, err := db.rw.Begin()
 	if err != nil {
 		return err
@@ -434,7 +434,7 @@ func (db *DB) DeleteUserWithHistory(userID string) error {
 
 	var name string
 	if err = tx.QueryRow(
-		`SELECT name FROM users WHERE id = ? AND deleted_at IS NULL`, userID,
+		`SELECT name FROM actors WHERE id = ? AND deleted_at IS NULL`, actorID,
 	).Scan(&name); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			err = ErrNotFound
@@ -442,22 +442,22 @@ func (db *DB) DeleteUserWithHistory(userID string) error {
 		return err
 	}
 
-	if _, err = tx.Exec(`DELETE FROM spans WHERE user_id = ?`, name); err != nil {
+	if _, err = tx.Exec(`DELETE FROM spans WHERE actor_id = ?`, name); err != nil {
 		return err
 	}
 
-	if _, err = tx.Exec(`DELETE FROM daily_usage WHERE user_id = ?`, name); err != nil {
+	if _, err = tx.Exec(`DELETE FROM daily_usage WHERE actor_id = ?`, name); err != nil {
 		return err
 	}
 
-	if _, err = tx.Exec(`DELETE FROM users WHERE id = ?`, userID); err != nil {
+	if _, err = tx.Exec(`DELETE FROM actors WHERE id = ?`, actorID); err != nil {
 		return err
 	}
 
 	return tx.Commit()
 }
 
-// DeleteAnonymousData hard-deletes all spans and daily_usage rows that have no user_id (anonymous ingest).
+// DeleteAnonymousData hard-deletes all spans and daily_usage rows that have no actor_id (anonymous ingest).
 func (db *DB) DeleteAnonymousData() error {
 	tx, err := db.rw.Begin()
 	if err != nil {
@@ -469,10 +469,10 @@ func (db *DB) DeleteAnonymousData() error {
 		}
 	}()
 
-	if _, err = tx.Exec(`DELETE FROM spans WHERE user_id IS NULL`); err != nil {
+	if _, err = tx.Exec(`DELETE FROM spans WHERE actor_id IS NULL`); err != nil {
 		return err
 	}
-	if _, err = tx.Exec(`DELETE FROM daily_usage WHERE user_id IS NULL`); err != nil {
+	if _, err = tx.Exec(`DELETE FROM daily_usage WHERE actor_id IS NULL`); err != nil {
 		return err
 	}
 	return tx.Commit()

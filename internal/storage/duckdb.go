@@ -211,6 +211,9 @@ func ensureSchema(rw *sql.DB) error {
 	if current, ok := appliedSchemaVersion(rw); ok && current >= target && appliedSchemaSHA(rw) == sha {
 		return nil
 	}
+	if err := migrateUsersToActors(rw); err != nil {
+		return fmt.Errorf("migrate users to actors: %w", err)
+	}
 	if _, err := rw.Exec(string(ddl)); err != nil {
 		return fmt.Errorf("apply schema: %w", err)
 	}
@@ -218,6 +221,88 @@ func ensureSchema(rw *sql.DB) error {
 		return fmt.Errorf("record schema hash: %w", err)
 	}
 	return nil
+}
+
+// spansSecondaryIndexes are the ART indexes schema.sql creates on spans. DuckDB
+// refuses to ALTER a table any index depends on, so a column rename has to drop
+// them first; schema.sql recreates them right after (CREATE INDEX IF NOT EXISTS).
+var spansSecondaryIndexes = []string{
+	"idx_spans_session_id", "idx_spans_start_time", "idx_spans_name",
+	"idx_spans_user_id", "idx_spans_actor_id",
+}
+
+// migrateUsersToActors is the v10 → v11 rename (ADR-0027): table users →
+// actors, and spans.user_id / daily_usage.user_id → actor_id. It runs before
+// schema.sql because a rename cannot be made idempotent in plain SQL, and
+// schema.sql's CREATE TABLE IF NOT EXISTS actors / ADD COLUMN IF NOT EXISTS
+// actor_id would otherwise create an empty actors table and an empty actor_id
+// column beside the populated originals. Each step checks the catalog, so a
+// fresh database, an already-migrated one and a re-apply are all no-ops. All
+// steps commit together or not at all.
+func migrateUsersToActors(rw *sql.DB) error {
+	tx, err := rw.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op after Commit
+
+	hasUsers, err := tableExists(tx, "users")
+	if err != nil {
+		return err
+	}
+	if hasUsers {
+		hasActors, err := tableExists(tx, "actors")
+		if err != nil {
+			return err
+		}
+		if hasActors {
+			// Refuse to guess which of the two holds the real tokens.
+			return fmt.Errorf("both users and actors tables exist; resolve by hand before upgrading")
+		}
+		if _, err := tx.Exec(`ALTER TABLE users RENAME TO actors`); err != nil {
+			return fmt.Errorf("rename users: %w", err)
+		}
+	}
+
+	spansHasUserID, err := columnExists(tx, "spans", "user_id")
+	if err != nil {
+		return err
+	}
+	if spansHasUserID {
+		for _, idx := range spansSecondaryIndexes {
+			if _, err := tx.Exec(`DROP INDEX IF EXISTS ` + idx); err != nil {
+				return fmt.Errorf("drop %s: %w", idx, err)
+			}
+		}
+		if _, err := tx.Exec(`ALTER TABLE spans RENAME COLUMN user_id TO actor_id`); err != nil {
+			return fmt.Errorf("rename spans.user_id: %w", err)
+		}
+	}
+
+	dailyHasUserID, err := columnExists(tx, "daily_usage", "user_id")
+	if err != nil {
+		return err
+	}
+	if dailyHasUserID {
+		if _, err := tx.Exec(`ALTER TABLE daily_usage RENAME COLUMN user_id TO actor_id`); err != nil {
+			return fmt.Errorf("rename daily_usage.user_id: %w", err)
+		}
+	}
+	return tx.Commit()
+}
+
+func tableExists(tx *sql.Tx, table string) (bool, error) {
+	var n int
+	err := tx.QueryRow(`SELECT count(*) FROM information_schema.tables
+		WHERE table_schema = 'main' AND table_name = ?`, table).Scan(&n)
+	return n > 0, err
+}
+
+func columnExists(tx *sql.Tx, table, column string) (bool, error) {
+	var n int
+	err := tx.QueryRow(`SELECT count(*) FROM information_schema.columns
+		WHERE table_schema = 'main' AND table_name = ? AND column_name = ?`, table, column).Scan(&n)
+	return n > 0, err
 }
 
 func (db *DB) Close() error { return db.rw.Close() }
@@ -246,8 +331,9 @@ type Span struct {
 	SessionID        string
 	Model            string
 	ToolName         string
-	// UserID identifies the sender; set via OTEL resource attribute user.id (empty = unset → stored as NULL).
-	UserID           string
+	// ActorID is the name of the actor whose token sent the span, injected by the
+	// auth middleware; empty (anonymous ingest) is stored as NULL.
+	ActorID           string
 	// StatusCode is the OTLP span status: 0=UNSET, 1=OK, 2=ERROR.
 	StatusCode       int32
 	InputTokens      *int64
@@ -265,7 +351,7 @@ const insertSpan = `
 INSERT OR IGNORE INTO spans (
   trace_id, span_id, parent_span_id, name,
   start_time, end_time, service_name,
-  session_id, model, tool_name, user_id, status_code,
+  session_id, model, tool_name, actor_id, status_code,
   input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd,
   attributes, resource_attrs
 ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
@@ -286,7 +372,7 @@ func (db *DB) InsertSpan(s Span) error {
 	_, err := db.rw.Exec(insertSpan,
 		s.TraceID, s.SpanID, s.ParentSpanID, s.Name,
 		s.StartTime, s.EndTime, s.ServiceName,
-		s.SessionID, s.Model, s.ToolName, nullableStr(s.UserID), s.StatusCode,
+		s.SessionID, s.Model, s.ToolName, nullableStr(s.ActorID), s.StatusCode,
 		s.InputTokens, s.OutputTokens, s.CacheReadTokens, s.CacheWriteTokens, s.CostUSD,
 		s.Attributes, s.ResourceAttrs,
 	)

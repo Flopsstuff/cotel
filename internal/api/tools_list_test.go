@@ -42,7 +42,7 @@ func addAggRow(t *testing.T, db *storage.DB, r aggRow) {
 	t.Helper()
 	_, err := db.Exec(`
 		INSERT INTO daily_usage
-		  (day, session_id, model, tool_name, user_id, span_count, total_cost_usd, total_duration_ms, fail_count)
+		  (day, session_id, model, tool_name, actor_id, span_count, total_cost_usd, total_duration_ms, fail_count)
 		VALUES (CAST(? AS DATE), ?, 'm', ?, NULL, ?, 0, ?, ?)
 	`, r.day.UTC().Format("2006-01-02"), "agg-"+r.tool, r.tool, r.spanCount, r.durationMS, r.failCount)
 	if err != nil {
@@ -335,24 +335,24 @@ func TestTools_QueryFilter(t *testing.T) {
 	}
 }
 
-// TestTools_UserFilterStillWorks guards the pre-existing user_id filter across
+// TestTools_ActorFilterStillWorks guards the pre-existing actor_id filter across
 // the rewrite, on both halves of the union.
-func TestTools_UserFilterStillWorks(t *testing.T) {
+func TestTools_ActorFilterStillWorks(t *testing.T) {
 	db, ro := openTestDB(t)
 	now := time.Now().Add(-time.Hour)
 	insertSpan(t, db, storage.Span{
 		TraceID: "tr", SpanID: "u1", Name: "tool", SessionID: "s", ToolName: "Bash",
-		UserID: "alice", StartTime: now, EndTime: now.Add(100 * time.Millisecond),
+		ActorID: "alice", StartTime: now, EndTime: now.Add(100 * time.Millisecond),
 	})
 	insertSpan(t, db, storage.Span{
 		TraceID: "tr", SpanID: "u2", Name: "tool", SessionID: "s", ToolName: "Grep",
-		UserID: "bob", StartTime: now, EndTime: now.Add(100 * time.Millisecond),
+		ActorID: "bob", StartTime: now, EndTime: now.Add(100 * time.Millisecond),
 	})
 	h := api.New(ro)
 
-	_, body := getJSON(t, h, "/api/v1/tools?range=all&user_id=alice")
+	_, body := getJSON(t, h, "/api/v1/tools?range=all&actor_id=alice")
 	if names := toolNames(t, body); len(names) != 1 || names[0] != "Bash" {
-		t.Errorf("user_id=alice: want [Bash], got %v", names)
+		t.Errorf("actor_id=alice: want [Bash], got %v", names)
 	}
 }
 

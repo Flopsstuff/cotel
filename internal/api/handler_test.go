@@ -341,12 +341,12 @@ func TestSessions(t *testing.T) {
 			},
 		},
 		{
-			name: "surfaces user_id",
+			name: "surfaces actor_id",
 			seed: func(t *testing.T, db *storage.DB) {
 				now := time.Now()
 				insertSpan(t, db, storage.Span{
 					TraceID: "t1", SpanID: "s1", Name: "llm", SessionID: "sess1",
-					UserID: "alice", StartTime: now, EndTime: now.Add(time.Second),
+					ActorID: "alice", StartTime: now, EndTime: now.Add(time.Second),
 				})
 			},
 			path:       "/api/v1/sessions",
@@ -357,8 +357,8 @@ func TestSessions(t *testing.T) {
 					t.Fatalf("want 1 item, got %v", body["items"])
 				}
 				item := items[0].(map[string]any)
-				if item["user_id"] != "alice" {
-					t.Errorf("want user_id=alice, got %v", item["user_id"])
+				if item["actor_id"] != "alice" {
+					t.Errorf("want actor_id=alice, got %v", item["actor_id"])
 				}
 			},
 		},

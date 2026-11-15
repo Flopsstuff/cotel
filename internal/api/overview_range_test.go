@@ -15,7 +15,7 @@ type usageRow struct {
 	session string
 	model   string
 	tool    string
-	user    string
+	actor    string
 	spans   int64
 	cost    float64
 	in, out int64
@@ -23,17 +23,17 @@ type usageRow struct {
 
 func addUsageRow(t *testing.T, db *storage.DB, r usageRow) {
 	t.Helper()
-	var user any
-	if r.user != "" {
-		user = r.user
+	var actor any
+	if r.actor != "" {
+		actor = r.actor
 	}
 	_, err := db.Exec(`
 		INSERT INTO daily_usage
-		  (day, session_id, model, tool_name, user_id, span_count,
+		  (day, session_id, model, tool_name, actor_id, span_count,
 		   total_input_tokens, total_output_tokens,
 		   total_cache_read_tokens, total_cache_write_tokens, total_cost_usd)
 		VALUES (CAST(? AS DATE), ?, ?, ?, ?, ?, ?, ?, 0, 0, ?)
-	`, r.day.UTC().Format("2006-01-02"), r.session, r.model, r.tool, user,
+	`, r.day.UTC().Format("2006-01-02"), r.session, r.model, r.tool, actor,
 		r.spans, r.in, r.out, r.cost)
 	if err != nil {
 		t.Fatalf("insert daily_usage: %v", err)
@@ -57,28 +57,28 @@ func seedRangeFixture(t *testing.T, db *storage.DB) {
 
 	insertSpan(t, db, storage.Span{
 		TraceID: "tr", SpanID: "raw-floor", Name: "llm",
-		SessionID: "s-raw-1", Model: "sonnet", ToolName: "Bash", UserID: "alice",
+		SessionID: "s-raw-1", Model: "sonnet", ToolName: "Bash", ActorID: "alice",
 		StartTime: floor, EndTime: floor.Add(time.Second),
 		CostUSD:   ptr(2.0), InputTokens: ptr(int64(20)), OutputTokens: ptr(int64(2)),
 	})
 	recent := time.Now().Add(-time.Hour)
 	insertSpan(t, db, storage.Span{
 		TraceID: "tr", SpanID: "raw-recent", Name: "llm",
-		SessionID: "s-raw-2", Model: "sonnet", ToolName: "Read", UserID: "alice",
+		SessionID: "s-raw-2", Model: "sonnet", ToolName: "Read", ActorID: "alice",
 		StartTime: recent, EndTime: recent.Add(time.Second),
 		CostUSD:   ptr(1.0), InputTokens: ptr(int64(10)), OutputTokens: ptr(int64(1)),
 	})
 
 	addUsageRow(t, db, usageRow{
-		day: floor, session: "s-floor", model: "opus", tool: "Grep", user: "bob",
+		day: floor, session: "s-floor", model: "opus", tool: "Grep", actor: "bob",
 		spans: 7, cost: 99, in: 700, out: 70,
 	})
 	addUsageRow(t, db, usageRow{
-		day: floor.AddDate(0, 0, -55), session: "s-year", model: "opus", tool: "Grep", user: "bob",
+		day: floor.AddDate(0, 0, -55), session: "s-year", model: "opus", tool: "Grep", actor: "bob",
 		spans: 3, cost: 4, in: 40, out: 4,
 	})
 	addUsageRow(t, db, usageRow{
-		day: floor.AddDate(0, 0, -395), session: "s-old", model: "haiku", tool: "Glob", user: "carol",
+		day: floor.AddDate(0, 0, -395), session: "s-old", model: "haiku", tool: "Glob", actor: "carol",
 		spans: 5, cost: 8, in: 80, out: 8,
 	})
 }
@@ -115,7 +115,7 @@ func TestOverview_RangeAcrossUnion(t *testing.T) {
 	cases := []struct {
 		rangeKey     string
 		sessions     float64
-		users        float64
+		actors        float64
 		cost         float64
 		input        float64
 		output       float64
@@ -139,8 +139,8 @@ func TestOverview_RangeAcrossUnion(t *testing.T) {
 			if got := num(t, body, "sessions_count"); got != tc.sessions {
 				t.Errorf("sessions_count: want %v, got %v", tc.sessions, got)
 			}
-			if got := num(t, body, "users_count"); got != tc.users {
-				t.Errorf("users_count: want %v, got %v", tc.users, got)
+			if got := num(t, body, "actors_count"); got != tc.actors {
+				t.Errorf("actors_count: want %v, got %v", tc.actors, got)
 			}
 			if got := num(t, body, "total_cost_usd"); got != tc.cost {
 				t.Errorf("total_cost_usd: want %v, got %v", tc.cost, got)
@@ -178,10 +178,10 @@ func TestOverview_FloorDayNotDoubleCounted(t *testing.T) {
 	}
 }
 
-// TestOverview_RangeComposesWithUserID checks the two filters intersect rather
-// than one overriding the other, including for users_count, which used to
+// TestOverview_RangeComposesWithActorID checks the two filters intersect rather
+// than one overriding the other, including for actors_count, which used to
 // ignore both.
-func TestOverview_RangeComposesWithUserID(t *testing.T) {
+func TestOverview_RangeComposesWithActorID(t *testing.T) {
 	db, ro := openTestDB(t)
 	seedRangeFixture(t, db)
 	h := api.New(ro)
@@ -189,14 +189,14 @@ func TestOverview_RangeComposesWithUserID(t *testing.T) {
 	cases := []struct {
 		path     string
 		sessions float64
-		users    float64
+		actors    float64
 		cost     float64
 	}{
-		{"/api/v1/overview?range=all&user_id=alice", 2, 1, 3},
-		{"/api/v1/overview?range=all&user_id=bob", 1, 1, 4},
-		{"/api/v1/overview?range=all&user_id=carol", 1, 1, 8},
-		{"/api/v1/overview?range=month&user_id=bob", 0, 0, 0},
-		{"/api/v1/overview?range=week&user_id=alice", 2, 1, 3},
+		{"/api/v1/overview?range=all&actor_id=alice", 2, 1, 3},
+		{"/api/v1/overview?range=all&actor_id=bob", 1, 1, 4},
+		{"/api/v1/overview?range=all&actor_id=carol", 1, 1, 8},
+		{"/api/v1/overview?range=month&actor_id=bob", 0, 0, 0},
+		{"/api/v1/overview?range=week&actor_id=alice", 2, 1, 3},
 	}
 	for _, tc := range cases {
 		t.Run(tc.path, func(t *testing.T) {
@@ -204,8 +204,8 @@ func TestOverview_RangeComposesWithUserID(t *testing.T) {
 			if got := num(t, body, "sessions_count"); got != tc.sessions {
 				t.Errorf("sessions_count: want %v, got %v", tc.sessions, got)
 			}
-			if got := num(t, body, "users_count"); got != tc.users {
-				t.Errorf("users_count: want %v, got %v", tc.users, got)
+			if got := num(t, body, "actors_count"); got != tc.actors {
+				t.Errorf("actors_count: want %v, got %v", tc.actors, got)
 			}
 			if got := num(t, body, "total_cost_usd"); got != tc.cost {
 				t.Errorf("total_cost_usd: want %v, got %v", tc.cost, got)
@@ -404,7 +404,7 @@ func TestSessions_BlankSessionIDIsNotASession(t *testing.T) {
 	seedRangeFixture(t, db)
 	now := time.Now().Add(-2 * time.Hour)
 	insertSpan(t, db, storage.Span{
-		TraceID: "tr", SpanID: "no-session", Name: "llm", SessionID: "", UserID: "alice",
+		TraceID: "tr", SpanID: "no-session", Name: "llm", SessionID: "", ActorID: "alice",
 		StartTime: now, EndTime: now.Add(time.Second),
 	})
 	h := api.New(ro)

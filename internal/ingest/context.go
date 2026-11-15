@@ -2,18 +2,18 @@ package ingest
 
 import "context"
 
-// ctxKeyUserID is the context key for the authenticated user's display name.
-type ctxKeyUserID struct{}
+// ctxKeyActorID is the context key for the authenticated actor's display name.
+type ctxKeyActorID struct{}
 
-// WithUserName returns a new context carrying the authenticated user's name.
-// Used by auth middleware to propagate the user identity to the ingest handler.
-func WithUserName(ctx context.Context, name string) context.Context {
-	return context.WithValue(ctx, ctxKeyUserID{}, name)
+// WithActorName returns a new context carrying the authenticated actor's name.
+// Used by auth middleware to propagate the actor identity to the ingest handler.
+func WithActorName(ctx context.Context, name string) context.Context {
+	return context.WithValue(ctx, ctxKeyActorID{}, name)
 }
 
-// UserNameFromContext extracts the user name injected by auth middleware, or "".
-func UserNameFromContext(ctx context.Context) string {
-	if name, ok := ctx.Value(ctxKeyUserID{}).(string); ok {
+// ActorNameFromContext extracts the actor name injected by auth middleware, or "".
+func ActorNameFromContext(ctx context.Context) string {
+	if name, ok := ctx.Value(ctxKeyActorID{}).(string); ok {
 		return name
 	}
 	return ""

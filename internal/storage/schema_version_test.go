@@ -66,7 +66,8 @@ func TestEnsureSchema_FreshDB(t *testing.T) {
 func TestEnsureSchema_PreMarkerDB(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "premarker.duckdb")
 
-	// Simulate an old database: a spans table, no schema_version table/rows.
+	// Simulate an old database: a spans table with the pre-v11 user_id column and
+	// no schema_version table/rows.
 	raw, err := sql.Open("duckdb", path)
 	if err != nil {
 		t.Fatalf("raw open: %v", err)
@@ -93,13 +94,13 @@ func TestEnsureSchema_PreMarkerDB(t *testing.T) {
 	if got, want := appliedVersion(t, db), embeddedVersion(t); got != want {
 		t.Fatalf("recorded version = %d, want %d", got, want)
 	}
-	// The user backfill migration must have run against the pre-existing spans.
+	// The actor backfill migration must have run against the pre-existing spans.
 	var n int
-	if err := db.rw.QueryRow(`SELECT count(*) FROM users WHERE name = 'alice'`).Scan(&n); err != nil {
-		t.Fatalf("count users: %v", err)
+	if err := db.rw.QueryRow(`SELECT count(*) FROM actors WHERE name = 'alice'`).Scan(&n); err != nil {
+		t.Fatalf("count actors: %v", err)
 	}
 	if n != 1 {
-		t.Fatalf("backfilled users for 'alice' = %d, want 1", n)
+		t.Fatalf("backfilled actors for 'alice' = %d, want 1", n)
 	}
 }
 

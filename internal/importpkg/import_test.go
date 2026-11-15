@@ -193,7 +193,7 @@ func TestReadZIP_UnknownColumnsDropped(t *testing.T) {
 
 	sf, _ := zw.Create("spans.csv")
 	// Header has an extra unknown column; known columns have zero/empty values.
-	_, _ = sf.Write([]byte("span_id,trace_id,unknown_col,name,start_time,end_time,parent_span_id,service_name,session_id,model,tool_name,user_id,status_code,input_tokens,output_tokens,cache_read_tokens,cache_write_tokens,cost_usd,attributes,resource_attrs,ingested_at,duration_ms\n"))
+	_, _ = sf.Write([]byte("span_id,trace_id,unknown_col,name,start_time,end_time,parent_span_id,service_name,session_id,model,tool_name,actor_id,status_code,input_tokens,output_tokens,cache_read_tokens,cache_write_tokens,cost_usd,attributes,resource_attrs,ingested_at,duration_ms\n"))
 	_, _ = sf.Write([]byte("span-unk,trace-unk,IGNORED,op.test,2026-05-01T12:00:00Z,2026-05-01T12:00:01Z,,,,,,,,,,,,,,,,\n"))
 	_ = zw.Close()
 
@@ -399,5 +399,31 @@ func TestRoundTripWithStorage(t *testing.T) {
 	}
 	if n != 0 {
 		t.Errorf("duplicate import daily: got %d inserted, want 0", n)
+	}
+}
+
+// A v1 export, written before ADR-0027 renamed user_id to actor_id, must still
+// import with its attribution intact.
+func TestReadZIP_V1UserIDColumn(t *testing.T) {
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	mf, _ := zw.Create("manifest.json")
+	_, _ = mf.Write([]byte(`{"format_version":1,"cotel_version":"0.1.0","export_at":"2026-05-01T00:00:00Z","period":"day","period_start":"2026-05-01T00:00:00Z","period_end":"2026-05-02T00:00:00Z","tables":{"spans":{"row_count":1},"daily_usage":{"row_count":1}}}`))
+	sf, _ := zw.Create("spans.csv")
+	_, _ = sf.Write([]byte("span_id,trace_id,name,start_time,end_time,user_id\ns1,t1,n,2026-05-01T10:00:00Z,2026-05-01T10:00:01Z,Daedalus\n"))
+	df, _ := zw.Create("daily_usage.csv")
+	_, _ = df.Write([]byte("day,session_id,model,tool_name,user_id,span_count\n2026-05-01,sess,m,,Daedalus,3\n"))
+	_ = zw.Close()
+
+	data := buf.Bytes()
+	_, spans, daily, err := importpkg.ReadZIP(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		t.Fatalf("ReadZIP v1: %v", err)
+	}
+	if len(spans) != 1 || spans[0].ActorID != "Daedalus" {
+		t.Fatalf("v1 spans = %+v, want one span attributed to Daedalus", spans)
+	}
+	if len(daily) != 1 || daily[0].ActorID != "Daedalus" {
+		t.Fatalf("v1 daily_usage = %+v, want one row attributed to Daedalus", daily)
 	}
 }

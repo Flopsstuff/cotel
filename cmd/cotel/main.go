@@ -130,7 +130,7 @@ func main() {
 	ingestMux.Handle("/v1/traces", auth.Middleware(db, ingest.New(db)))
 
 	ro := db.ReadOnly()
-	apiHandler := api.New(ro).SetPublicIngestURL(parsePublicIngestURL(os.Getenv("COTEL_PUBLIC_INGEST_URL"))).SetUserStore(db)
+	apiHandler := api.New(ro).SetPublicIngestURL(parsePublicIngestURL(os.Getenv("COTEL_PUBLIC_INGEST_URL"))).SetActorStore(db)
 	dashMux := http.NewServeMux()
 	dashMux.Handle("/api/v1/export", auth.Middleware(db, export.NewHandler(db)))
 	dashMux.Handle("/api/v1/import", auth.Middleware(db, importpkg.NewHandler(db)))

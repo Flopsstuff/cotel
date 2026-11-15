@@ -10,13 +10,13 @@ import (
 )
 
 type mockAuthDB struct {
-	user          *storage.User
+	actor          *storage.Actor
 	allowAnonymous bool
 }
 
-func (m *mockAuthDB) GetUserByToken(token string) (*storage.User, error) {
-	if m.user != nil && m.user.Token == token {
-		return m.user, nil
+func (m *mockAuthDB) GetActorByToken(token string) (*storage.Actor, error) {
+	if m.actor != nil && m.actor.Token == token {
+		return m.actor, nil
 	}
 	return nil, &notFoundErr{}
 }
@@ -57,7 +57,7 @@ func TestMiddleware_AnonymousDenied(t *testing.T) {
 
 func TestMiddleware_ValidToken(t *testing.T) {
 	db := &mockAuthDB{
-		user:          &storage.User{Name: "alice", Token: "cotel_abc123"},
+		actor:          &storage.Actor{Name: "alice", Token: "cotel_abc123"},
 		allowAnonymous: false,
 	}
 	h := auth.Middleware(db, okHandler)
