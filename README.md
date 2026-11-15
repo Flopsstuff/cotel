@@ -8,13 +8,13 @@ One Docker container. OTLP ingest on `:4318`, interactive analytics dashboard on
 
 ## What you get
 
-- **Overview dashboard** — one range switcher in the header (All / Year / Month / Week / Day, default 30 days) that every figure on the page obeys: the KPI cards for sessions, users, total cost and token counts, and the Span activity / Users / Spans & cost / Tools / Models / Sessions blocks below them. The Span activity grid is a GitHub-style block of cells counting spans, and the range picks how much time a cell is — a day over a year, four hours over a month, an hour over a week, ten minutes over a day. The Spans & cost block charts spans and spend together on one field — spans in blue against the left axis, cost in amber against the right — so a spend spike lands under the activity that caused it. The Users block ranks your top 5 principals by spend in the selected range. Arriving with `?user_id=` scopes the whole page to one user, with a chip in the header to clear it
-- **Sessions** — live table of every Claude Code session with user, model, duration, cost, and status (OK / ERROR); search by user and click any user to filter the table to their sessions
+- **Overview dashboard** — one range switcher in the header (All / Year / Month / Week / Day, default 30 days) that every figure on the page obeys: the KPI cards for sessions, actors, total cost and token counts, and the Span activity / Actors / Spans & cost / Tools / Models / Sessions blocks below them. The Span activity grid is a GitHub-style block of cells counting spans, and the range picks how much time a cell is — a day over a year, four hours over a month, an hour over a week, ten minutes over a day. The Spans & cost block charts spans and spend together on one field — spans in blue against the left axis, cost in amber against the right — so a spend spike lands under the activity that caused it. The Actors block ranks your top 5 principals by spend in the selected range. Arriving with `?actor_id=` scopes the whole page to one actor, with a chip in the header to clear it
+- **Sessions** — live table of every Claude Code session with actor, model, duration, cost, and status (OK / ERROR); search by actor and click any actor to filter the table to their sessions
 - **History** — time-series and daily-activity heatmaps for sessions and token spend over time. The day, week and month series keep charting after retention has rolled raw spans into daily totals; the hourly series and both heatmaps need a per-span timestamp, so they cover raw days only and say from when
 - **Costs** — cumulative spend chart + breakdown table by model
 - **Tools** — call counts, average duration, and error rate per tool (`Bash`, `Read`, `Edit`, …), scoped to a range switcher (All / Year / Month / Week / Day, default 30 days), plus a per-command breakdown of `Bash` calls
 - **Models** — token and cost breakdown across all Claude model variants
-- **Users** — one sortable, searchable list with per-user cost and sessions scoped to a range switcher (All / Year / Month / Week / Day, default 30 days); click any row for that user's page — token, rotate, delete, and links into their activity and sessions
+- **Actors** — one sortable, searchable list with per-actor cost and sessions scoped to a range switcher (All / Year / Month / Week / Day, default 30 days); click any row for that actor's page — token, rotate, delete, and links into their activity and sessions
 - **Setup** — step-by-step onboarding guide with copy-paste `settings.json` snippets pre-filled with your ingest URL and token
 - **Export / Import** — download all data as a versioned ZIP/CSV archive; restore it on a fresh instance
 - **Cloudflare Tunnel** — publish cotel over HTTPS with a single env var; bearer-token auth for OTLP, Zero Trust for the dashboard
@@ -25,8 +25,8 @@ Every screenshot here is one instance seeded with synthetic telemetry — see [D
 
 |  |  |
 |:--|:--|
-| **Sessions** — every session with its user, model, tokens, cost and OK / ERROR status<br>![Sessions](docs/assets/dashboard-sessions.png) | **Costs** — daily spend and cost by model across the window you pick<br>![Costs](docs/assets/dashboard-costs.png) |
-| **Users** — cost and session count per principal for the selected range<br>![Users](docs/assets/dashboard-users.png) | **Tools** — call count, average duration and error rate per tool<br>![Tools](docs/assets/dashboard-tools.png) |
+| **Sessions** — every session with its actor, model, tokens, cost and OK / ERROR status<br>![Sessions](docs/assets/dashboard-sessions.png) | **Costs** — daily spend and cost by model across the window you pick<br>![Costs](docs/assets/dashboard-costs.png) |
+| **Actors** — cost and session count per actor (person, agent or host) for the selected range<br>![Actors](docs/assets/dashboard-actors.png) | **Tools** — call count, average duration and error rate per tool<br>![Tools](docs/assets/dashboard-tools.png) |
 
 ## Quick start
 
@@ -46,7 +46,7 @@ Open **http://localhost:8080** → **Setup** for the guided onboarding.
 ## Demo data
 
 An empty cotel shows empty charts, which makes it hard to judge. `scripts/seed-demo.py`
-fills a throwaway instance with a synthetic team — seven users, three models, 90 days
+fills a throwaway instance with a synthetic team — seven actors, three models, 90 days
 of sessions and tool calls — over the real OTLP endpoint, so what you see is what
 ingest actually produces:
 
@@ -55,7 +55,7 @@ python3 scripts/seed-demo.py --dash-url http://localhost:8080 \
                              --ingest-url http://localhost:4318
 ```
 
-It only creates users and ingests spans; it never deletes. Point it at an instance
+It only creates actors and ingests spans; it never deletes. Point it at an instance
 you are willing to throw away, not at one holding real telemetry. The screenshots in
 this README come from exactly this seed — the recipe is in
 [docs/operations/screenshots.md](docs/operations/screenshots.md).
@@ -78,19 +78,19 @@ Add to your `~/.claude/settings.json`:
 
 Restart Claude Code. Telemetry starts flowing immediately.
 
-## Users and authentication
+## Actors and authentication
 
-cotel ships with token-based authentication for OTLP ingest. Tokens are tied to named users.
+cotel ships with token-based authentication for OTLP ingest. Tokens are tied to named **actors**: whoever sends telemetry, whether a person, an AI agent or a host.
 
-Open the dashboard → **Users** (people icon in the sidebar) → **Add user**. Give the user a name (e.g. the machine or agent name sending telemetry) and copy the token from the banner. The token is retrievable any time from that user's page (click the row); rotating or deleting a user revokes its token immediately.
+Open the dashboard → **Actors** (people icon in the sidebar) → **Add actor**. Give the actor a name (e.g. the machine or agent name sending telemetry) and copy the token from the banner. The token is retrievable any time from that actor's page (click the row); rotating or deleting an actor revokes its token immediately.
 
 By default, cotel accepts spans without an `Authorization` header (allow-anonymous mode). To enforce strict auth: open **Setup** → **Settings** tab → disable **Allow anonymous OTLP**. Requests without a valid token then receive `401 Unauthorized`.
 
-See **[docs/operations/users-and-auth.md](docs/operations/users-and-auth.md)** for the full guide: multi-user setup, token rotation, and security considerations.
+See **[docs/operations/actors-and-auth.md](docs/operations/actors-and-auth.md)** for the full guide: one token per sender, token rotation, and security considerations.
 
 ## Publishing with Cloudflare
 
-Use [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) to expose cotel over HTTPS without opening inbound ports. The dashboard is protected by Cloudflare Zero Trust; OTLP ingest is protected by a bearer token you create in the cotel Users page.
+Use [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) to expose cotel over HTTPS without opening inbound ports. The dashboard is protected by Cloudflare Zero Trust; OTLP ingest is protected by a bearer token you create in the cotel Actors page.
 
 ### Prerequisites
 
@@ -137,7 +137,7 @@ No `-p` flags are needed — Cloudflare Tunnel uses outbound connections only.
 
 ### 5. Create an agent token
 
-Open your dashboard URL (e.g. `https://cotel.yourdomain.com`), go to **Users** in the sidebar, and click **Add user**. Give it a name (e.g. the agent's hostname or machine name) and copy the token.
+Open your dashboard URL (e.g. `https://cotel.yourdomain.com`), go to **Actors** in the sidebar, and click **Add actor**. Give it a name (e.g. the agent's hostname or machine name) and copy the token.
 
 ### 6. Configure Claude Code
 
@@ -158,7 +158,7 @@ Add to your `~/.claude/settings.json`:
 
 Replace `cotel-ingest.yourdomain.com` with your actual OTLP hostname, and `cotel_<your-token>` with the token you copied above. Restart Claude Code to apply the changes.
 
-> **Token enforcement:** cotel accepts anonymous spans until the first user with a token is created. Once any token exists, every OTLP request must carry a valid `Authorization: Bearer cotel_...` header — unless you explicitly re-enable Allow anonymous OTLP in Setup → Settings.
+> **Token enforcement:** cotel accepts anonymous spans until the first actor with a token is created. Once any token exists, every OTLP request must carry a valid `Authorization: Bearer cotel_...` header — unless you explicitly re-enable Allow anonymous OTLP in Setup → Settings.
 
 ## Ports
 

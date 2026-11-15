@@ -6,7 +6,7 @@ default) and returns `application/json`.
 
 ## The list-query contract
 
-`GET /users`, `GET /tools` and `GET /bash-commands` share one set of query
+`GET /actors`, `GET /tools` and `GET /bash-commands` share one set of query
 parameters. They behave identically across the three endpoints, so learning it
 once is enough ([ADR-0011](../decisions/0011-users-list-ranged-stats-and-server-side-sort.md),
 [ADR-0012](../decisions/0012-tools-list-ranged-stats-and-server-side-sort.md)).
@@ -40,7 +40,7 @@ so a client can render its controls from the response alone.
 accept the same `range` parameter, with the same five keys, the same
 rolling-window semantics and the same fall-back-don't-`400` rule
 ([ADR-0014](../decisions/0014-overview-single-range-selector.md)). Each echoes
-back the `range` it used. All five also accept `user_id`, which composes with
+back the `range` it used. All five also accept `actor_id`, which composes with
 `range` rather than overriding it.
 
 **Defaults preserve each endpoint's previous behaviour rather than converging on
@@ -55,7 +55,7 @@ one value:**
 | `GET /models` | `all` | Same |
 
 Every additive figure — cost, token totals, span and session counts, distinct
-users, per-model and per-tool totals — is answered from the union of raw `spans`
+actors, per-model and per-tool totals — is answered from the union of raw `spans`
 and the `daily_usage` roll-up, split at the earliest surviving raw day. `year`
 and `all` therefore keep answering after retention has deleted the raw spans,
 instead of silently repeating the `month` figure.
@@ -77,9 +77,9 @@ Two consequences are worth knowing:
   `/overview` is unaffected — `daily_usage` carries `session_id`, so counting
   distinct sessions across the union is exact.
 
-`GET /overview`'s `users_count` counts the distinct principals active in the
+`GET /overview`'s `actors_count` counts the distinct principals active in the
 range, with all unattributed spans counting as the single `__anonymous__`
-principal the users list shows.
+principal the actors list shows.
 
 ## `GET /history`
 
@@ -90,7 +90,7 @@ Activity over time, bucketed at the requested `granularity`.
 | `granularity` | `10m` \| `hour` \| `4h` \| `day` \| `week` \| `month` | `day` | Bucket width for `buckets` and `by_model`; an unrecognised value falls back to `day` |
 | `range` | `all` \| `year` \| `month` \| `week` \| `day` | `month` | Rolling window, as above |
 | `from`, `to` | `YYYY-MM-DD` | — | Explicit bounds; when either is present they win and `range` echoes `null` |
-| `user_id` | user id \| `__anonymous__` | — | Scopes every figure to one principal |
+| `actor_id` | actor name \| `__anonymous__` | — | Scopes every figure to one principal |
 
 ```json
 {
@@ -151,8 +151,8 @@ One row per tool, with call volume, average duration and error rate.
 | `fail_count` | Number of failed calls |
 | `fail_rate` | Percentage of calls that failed |
 
-Also accepts `user_id` to scope every figure to one user; the value
-`__anonymous__` selects spans ingested without a user.
+Also accepts `actor_id` to scope every figure to one actor; the value
+`__anonymous__` selects spans ingested without an actor.
 
 ```json
 {
@@ -201,7 +201,7 @@ producers that do send a `command` attribute; cotel's ingest is generic.
 | `fail_count` | Number of failed calls |
 | `fail_rate` | Percentage of calls that failed |
 
-`q` matches on the command text. `user_id` works as above.
+`q` matches on the command text. `actor_id` works as above.
 
 This endpoint is computed from raw spans alone. A command string is unbounded, so
 the roll-up deliberately carries no command dimension — giving it one would grow
@@ -225,9 +225,9 @@ the aggregate table with every distinct command per day. It therefore accepts
 }
 ```
 
-## `GET /users`
+## `GET /actors`
 
-One row per user, plus a synthetic `__anonymous__` row when unattributed spans
+One row per actor, plus a synthetic `__anonymous__` row when unattributed spans
 exist. `cost` and `sessions` are range-scoped; `created_at` and `last_seen` are
 always all-time.
 
@@ -236,12 +236,17 @@ always all-time.
 | `name` | Display name |
 | `cost` (default) | Spend in the selected range |
 | `sessions` | Distinct sessions in the selected range |
-| `created_at` | When the user was created |
+| `created_at` | When the actor was created |
 | `last_seen` | Most recent span |
 
-Its rows are returned under `users` rather than `items`. `GET /users/{id}`
-returns one user in the same shape and accepts `range`. See
-[Users and Authentication](./users-and-auth.md) for the management endpoints
+`/actors` was `/users` before schema v11 ([ADR-0027](../decisions/0027-users-become-actors.md)).
+The old path, the `user_id` filter and `mode=user_only|user_and_history` on
+delete are still accepted as aliases; response bodies use the new names only
+(`actors`, `actor_id`, `actors_count`).
+
+Its rows are returned under `actors` rather than `items`. `GET /actors/{id}`
+returns one actor in the same shape and accepts `range`. See
+[Actors and Authentication](./actors-and-auth.md) for the management endpoints
 (create, rotate, delete).
 
 ## `GET /health`
