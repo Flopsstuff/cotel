@@ -35,3 +35,4 @@ New ADRs go in this directory as `NNNN-short-title.md`, numbered sequentially.
 | [ADR-0025](./0025-best-effort-ingest-watcher-in-actions) | cotel is watched by a best-effort ingest probe in GitHub Actions | Accepted |
 | [ADR-0026](./0026-scheduled-loopback-probe-with-a-pager) | The deploy host asks `/healthz` on a schedule, and it pages | Accepted |
 | [ADR-0027](./0027-users-become-actors) | Users become actors, down to the schema | Accepted |
+| [ADR-0028](./0028-ingest-keys-and-actor-tokens) | Ingest keys authorize, actor tokens identify | Accepted |

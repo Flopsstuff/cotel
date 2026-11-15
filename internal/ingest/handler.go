@@ -98,9 +98,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte(`{}`))
+	writeOTLPSuccess(w, r)
 }
 
 // sessionIDKeys are the attribute key names Claude Code may use for the session

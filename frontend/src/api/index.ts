@@ -231,6 +231,56 @@ export function useSettings() {
   return useSWR<SettingsResponse>('/api/v1/settings', fetcher)
 }
 
+// Ingest keys authorize OTLP ingest for many senders at once; each sender names
+// itself with its actor token in X-Cotel-Actor-Token. Like actor tokens, the
+// full key is always returned so it can be copied again.
+export interface IngestKey {
+  id: string
+  name: string
+  token: string
+  created_at: string
+}
+
+export interface IngestKeysResponse {
+  ingest_keys: IngestKey[]
+}
+
+export type CreatedIngestKey = IngestKey
+
+export const INGEST_KEYS_URL = '/api/v1/ingest-keys'
+
+// responseError turns a failed response into an Error, preferring the
+// server's {"error": "..."} message over the raw body.
+async function responseError(res: Response): Promise<Error> {
+  const text = await res.text().catch(() => '')
+  try {
+    const body = JSON.parse(text) as { error?: unknown }
+    if (typeof body.error === 'string' && body.error) return new Error(body.error)
+  } catch {
+    // not JSON: fall through to the raw text
+  }
+  return new Error(text || `${res.status} ${res.statusText}`)
+}
+
+export function useIngestKeys() {
+  return useSWR<IngestKeysResponse>(INGEST_KEYS_URL, fetcher)
+}
+
+export async function createIngestKey(name: string): Promise<CreatedIngestKey> {
+  const res = await fetch(INGEST_KEYS_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  })
+  if (!res.ok) throw await responseError(res)
+  return res.json()
+}
+
+export async function revokeIngestKey(id: string): Promise<void> {
+  const res = await fetch(`${INGEST_KEYS_URL}/${encodeURIComponent(id)}`, { method: 'DELETE' })
+  if (!res.ok) throw await responseError(res)
+}
+
 export async function createActor(name: string): Promise<Actor> {
   const res = await fetch('/api/v1/actors', {
     method: 'POST',

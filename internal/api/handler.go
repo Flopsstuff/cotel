@@ -26,6 +26,7 @@ type Handler struct {
 	db              DB
 	tokenDB         TokenStore
 	actorStore       ActorStore
+	ingestKeyStore  IngestKeyStore
 	publicIngestURL string
 }
 
@@ -95,6 +96,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		} else {
 			h.handleActorByID(w, r, rest)
 		}
+	case path == "/ingest-keys" || path == "/ingest-keys/":
+		h.handleIngestKeys(w, r)
+	case strings.HasPrefix(path, "/ingest-keys/"):
+		h.handleIngestKeyByID(w, r, strings.TrimPrefix(path, "/ingest-keys/"))
 	case path == "/settings" || path == "/settings/":
 		h.handleSettings(w, r)
 	case path == "/health" || path == "/health/":

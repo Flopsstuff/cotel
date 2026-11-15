@@ -57,6 +57,8 @@ on:
       - "scripts/probe-edge-ingest_test.sh"
       - "scripts/page-cotel-health.sh"
       - "scripts/page-cotel-health_test.sh"
+      - "scripts/otel-headers-helper.py"
+      - "scripts/otel-headers-helper_test.sh"
       - ".github/workflows/health-probe.yml"
 
 permissions:
@@ -75,6 +77,8 @@ jobs:
         run: bash scripts/probe-edge-ingest_test.sh
       - name: Run pager tests
         run: bash scripts/page-cotel-health_test.sh
+      - name: Run OTEL headers helper tests
+        run: bash scripts/otel-headers-helper_test.sh
 
   probe-ingest:
     name: Probe the public OTLP ingest

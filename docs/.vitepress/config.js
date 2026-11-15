@@ -68,6 +68,7 @@ export default defineConfig({
             { text: 'ADR-0025 - Best-Effort Ingest Watcher in Actions', link: '/decisions/0025-best-effort-ingest-watcher-in-actions' },
             { text: 'ADR-0026 - The Deploy Host Asks /healthz on a Schedule', link: '/decisions/0026-scheduled-loopback-probe-with-a-pager' },
             { text: 'ADR-0027 - Users Become Actors', link: '/decisions/0027-users-become-actors' },
+            { text: 'ADR-0028 - Ingest Keys Authorize, Actor Tokens Identify', link: '/decisions/0028-ingest-keys-and-actor-tokens' },
           ],
         },
       ],

@@ -87,13 +87,6 @@
   color: var(--color-accent);
 }
 
-.hint {
-  margin: var(--space-3) 0 0;
-  font-size: var(--text-xs);
-  color: var(--color-text-2);
-  word-break: break-all;
-}
-
 .code {
   font-family: var(--font-mono);
   font-size: var(--text-mono-sm);
@@ -158,4 +151,26 @@
   font-size: var(--text-sm);
   color: var(--color-text-2);
   margin: 0 0 var(--space-4);
+}
+
+.hintList {
+  margin: var(--space-3) 0 0;
+  padding-left: var(--space-5);
+  font-size: var(--text-xs);
+  color: var(--color-text-2);
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+
+.hintList .code {
+  word-break: break-all;
+}
+
+.hintLink {
+  color: var(--color-accent);
+  text-decoration: none;
+}
+
+.hintLink:hover {
+  text-decoration: underline;
 }
