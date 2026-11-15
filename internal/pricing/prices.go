@@ -1,7 +1,9 @@
 // Package pricing computes ingest-time cost from token counts.
-// Prices are USD per million tokens sourced from Anthropic's published pricing page.
-// Last verified: 2026-11 against https://platform.claude.com/docs/en/about-claude/models/overview
-// Update this table when Anthropic revises rates.
+// Prices are USD per million tokens. Claude rates come from Anthropic's published
+// pricing page, last verified 2026-11 against
+// https://platform.claude.com/docs/en/about-claude/models/overview; the OpenAI and
+// xAI entries say where theirs came from. Update this table when a provider
+// revises rates.
 package pricing
 
 import (
@@ -130,6 +132,31 @@ var table = map[string]ModelPrices{
 		OutputPerMTok:     5.00,
 		CacheReadPerMTok:  0.10,
 		CacheWritePerMTok: 1.25,
+	},
+	// Non-Anthropic harnesses Paperclip runs (Codex, Grok CLI). Neither
+	// provider charges for writing to its prompt cache, so a cache write bills
+	// as ordinary input. Both bill long prompts (Grok: 200K+ tokens, the whole
+	// request) at a higher tier that a span cannot be matched to, so the base
+	// rate is used, as for Haiku 5.5. Verified 2026-11-15 against third-party
+	// rate cards citing the providers (openai.com/api/pricing and
+	// docs.x.ai/docs/models were not reachable to confirm).
+	"gpt-5.6-sol": {
+		InputPerMTok:      4.00,
+		OutputPerMTok:     20.00,
+		CacheReadPerMTok:  0.40,
+		CacheWritePerMTok: 4.00,
+	},
+	"grok-4.7": {
+		InputPerMTok:      2.00,
+		OutputPerMTok:     6.00,
+		CacheReadPerMTok:  0.50,
+		CacheWritePerMTok: 2.00,
+	},
+	"grok-4.6": {
+		InputPerMTok:      2.00,
+		OutputPerMTok:     6.00,
+		CacheReadPerMTok:  0.50,
+		CacheWritePerMTok: 2.00,
 	},
 	// Legacy / alias entries
 	"claude-3-5-sonnet": {

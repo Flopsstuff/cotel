@@ -551,7 +551,7 @@ func (h *Handler) handleOverview(w http.ResponseWriter, r *http.Request) {
 	// it; it is one principal on the actors list and counts as one here too.
 	if err := h.db.QueryRow(cte+`
 SELECT
-    COUNT(DISTINCT session_id),
+    COUNT(DISTINCT NULLIF(session_id, '')),
     COUNT(DISTINCT actor_id) + CASE WHEN COUNT(*) FILTER (WHERE actor_id IS NULL) > 0 THEN 1 ELSE 0 END,
     COALESCE(SUM(cost), 0),
     COALESCE(SUM(input_tokens), 0),
@@ -1685,7 +1685,7 @@ func (h *Handler) historyRawSeries(resp *historyResponse, r *http.Request, gran 
 	brows, err := h.db.Query(fmt.Sprintf(`
 		SELECT
 			%s AS bucket,
-			COUNT(DISTINCT session_id) AS sessions,
+			COUNT(DISTINCT NULLIF(session_id, '')) AS sessions,
 			COUNT(*) AS spans,
 			COALESCE(SUM(cost_usd), 0) AS cost_usd,
 			COALESCE(SUM(input_tokens), 0) AS input_tokens,
@@ -1744,7 +1744,7 @@ func (h *Handler) historyUnionSeries(resp *historyResponse, r *http.Request, gra
 	brows, err := h.db.Query(cte+fmt.Sprintf(`
 SELECT
     %s AS bucket,
-    COUNT(DISTINCT session_id) AS sessions,
+    COUNT(DISTINCT NULLIF(session_id, '')) AS sessions,
     CAST(SUM(spans) AS BIGINT) AS spans,
     COALESCE(SUM(cost), 0) AS cost_usd,
     COALESCE(SUM(input_tokens), 0) AS input_tokens,
