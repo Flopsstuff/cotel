@@ -256,8 +256,11 @@ returns one actor in the same shape and accepts `range`. See
 Shared credentials that authorize OTLP ingest without identifying an actor
 ([ADR-0028](../decisions/0028-ingest-keys-and-actor-tokens.md)). Like actor
 tokens, keys are stored in plaintext and every response carries the full key in
-`token`. An ingest key authorizes `/v1/*` ingest only; it cannot call these
-endpoints or any other `/api/v1/` endpoint. See
+`token`. An ingest key is an ingest credential, not a dashboard one: cotel
+checks it only on `/v1/*`, and it is refused on export and import. The rest of
+`/api/v1/` - these endpoints included - has no authentication of its own in
+cotel, so dashboard access must be restricted in front of it (Cloudflare Access
+in the reference deployment). See
 [Ingest keys](./actors-and-auth.md#ingest-keys-one-key-for-many-senders) for
 how senders use them.
 

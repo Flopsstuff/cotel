@@ -617,7 +617,8 @@ function IngestKeysSection() {
     setRevokeError(null)
     try {
       await revokeIngestKey(revoking.id)
-      if (created?.id === revoking.id) setCreated(null)
+      const revokedId = revoking.id
+      setCreated((cur) => (cur?.id === revokedId ? null : cur))
       setRevoking(null)
     } catch (err) {
       setRevokeError(err instanceof Error ? err.message : 'Revoke failed')
@@ -637,7 +638,7 @@ function IngestKeysSection() {
         Paperclip company. Each sender sends the key as{' '}
         <code className={styles.code}>Authorization: Bearer &lt;key&gt;</code> and identifies itself
         with its actor token in <code className={styles.code}>X-Cotel-Actor-Token</code>; without it,
-        spans are stored as Anonymous. An ingest key does not grant dashboard, export or import access.
+        spans are stored as Anonymous. An ingest key only authorizes ingest: it is refused on export and import.
       </p>
 
       <form className={styles.keyForm} onSubmit={handleCreate}>

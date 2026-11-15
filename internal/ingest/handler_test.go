@@ -310,3 +310,33 @@ func TestUnknownModelCostIsNil(t *testing.T) {
 		t.Errorf("unknown model: cost_usd should be nil, got %v", *s.CostUSD)
 	}
 }
+
+// A protobuf export must be answered with a protobuf ExportTraceServiceResponse
+// (an empty one is zero bytes), not with JSON: protobuf exporters decode the body.
+func TestTracesResponseMatchesRequestEncoding(t *testing.T) {
+	cases := []struct {
+		name, contentType, wantCT, wantBody string
+		body                                []byte
+	}{
+		{"protobuf", "application/x-protobuf", "application/x-protobuf", "", nil},
+		{"json", "application/json", "application/json", `{}`, []byte(`{"resourceSpans":[]}`)},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			h := ingest.New(&memStore{})
+			req := httptest.NewRequest(http.MethodPost, "/v1/traces", bytes.NewReader(c.body))
+			req.Header.Set("Content-Type", c.contentType)
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, req)
+			if w.Code != http.StatusOK {
+				t.Fatalf("status = %d (%s)", w.Code, w.Body.String())
+			}
+			if ct := w.Header().Get("Content-Type"); ct != c.wantCT {
+				t.Errorf("Content-Type = %q, want %q", ct, c.wantCT)
+			}
+			if got := w.Body.String(); got != c.wantBody {
+				t.Errorf("body = %q, want %q", got, c.wantBody)
+			}
+		})
+	}
+}

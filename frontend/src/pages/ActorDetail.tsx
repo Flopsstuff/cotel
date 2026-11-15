@@ -145,8 +145,10 @@ export default function ActorDetail() {
             </li>
             <li>
               With an <Link to="/setup?tab=settings" className={styles.hintLink}>ingest key</Link>: set{' '}
-              <code className={styles.code}>COTEL_ACTOR_TOKEN={data.token}</code>, sent as{' '}
-              <code className={styles.code}>X-Cotel-Actor-Token</code>.
+              <code className={styles.code}>COTEL_ACTOR_TOKEN={data.token}</code> and configure{' '}
+              <code className={styles.code}>scripts/otel-headers-helper.py</code> as Claude Code&apos;s{' '}
+              <code className={styles.code}>otelHeadersHelper</code>, which sends it as{' '}
+              <code className={styles.code}>X-Cotel-Actor-Token</code>. Other senders set that header themselves.
             </li>
           </ul>
         </Card>

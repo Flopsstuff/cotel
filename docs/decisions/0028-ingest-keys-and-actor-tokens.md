@@ -69,8 +69,10 @@ falls through to allow-anonymous like any request without one.
   into the next sender's configuration is a chore, and the database file already
   holds every actor token in clear, so hashing one more secret buys nothing.
   Revoking a key deletes its row.
-- An ingest key authorizes **OTLP ingest only** (`/v1/traces`, `/v1/logs`). It
-  never opens export/import or the dashboard API.
+- An ingest key authorizes **OTLP ingest only** (`/v1/traces`, `/v1/logs`) and
+  is refused on export and import. It is not a dashboard credential: the rest of
+  the dashboard API has no authentication of its own in cotel and stays behind
+  Cloudflare Access (or whatever restricts the dashboard), as before.
 - Management is in the dashboard API: `GET`, `POST /api/v1/ingest-keys` and
   `DELETE /api/v1/ingest-keys/{id}`.
 - `POST /v1/logs` exists only so Paperclip's log exporter does not get `404`. It

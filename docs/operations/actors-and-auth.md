@@ -98,7 +98,7 @@ Use one when many senders must share one set of headers. Paperclip is the case i
 |---|---|---|
 | Format | `cotel_<64 hex>` | `cotel_ik_<64 hex>` |
 | Identifies | One actor | Nobody |
-| Authorizes | OTLP ingest | OTLP ingest only (`/v1/traces`, `/v1/logs`) — never export/import or the dashboard |
+| Authorizes | OTLP ingest, export, import | OTLP ingest only (`/v1/traces`, `/v1/logs`); refused on export and import. Not a dashboard credential — protect the dashboard separately (e.g. Cloudflare Access) |
 | Sent as | `Authorization: Bearer …`, or `X-Cotel-Actor-Token: …` next to an ingest key | `Authorization: Bearer …` |
 | Stored | Plaintext, retrievable any time | Plaintext, retrievable any time |
 

@@ -24,7 +24,5 @@ func (LogsSink) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, _ = io.Copy(io.Discard, http.MaxBytesReader(w, r.Body, maxLogsBody))
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte(`{}`))
+	writeOTLPSuccess(w, r)
 }
