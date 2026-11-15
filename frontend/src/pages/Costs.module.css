@@ -14,7 +14,7 @@
   margin-bottom: var(--space-2);
 }
 
-.userChip {
+.actorChip {
   display: inline-flex;
   align-items: center;
   gap: 4px;

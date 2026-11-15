@@ -308,13 +308,13 @@ export default function History() {
   const [to, setTo] = useState(today())
   const [activePreset, setActivePreset] = useState<string>('30d')
   const [searchParams, setSearchParams] = useSearchParams()
-  const userId = searchParams.get('user_id') ?? undefined
-  const { data, error, isLoading } = useHistory(gran, from, to, userId)
+  const actorId = searchParams.get('actor_id') ?? undefined
+  const { data, error, isLoading } = useHistory(gran, from, to, actorId)
 
-  function clearUserFilter() {
+  function clearActorFilter() {
     setSearchParams((prev) => {
       const next = new URLSearchParams(prev)
-      next.delete('user_id')
+      next.delete('actor_id')
       return next
     })
   }
@@ -338,9 +338,9 @@ export default function History() {
       <div className={styles.header}>
         <div>
           <h1 className={styles.title}>History</h1>
-          {userId && (
-            <button className={styles.userChip} onClick={clearUserFilter}>
-              Filtered by: <strong>{userId}</strong> ×
+          {actorId && (
+            <button className={styles.actorChip} onClick={clearActorFilter}>
+              Filtered by: <strong>{actorId}</strong> ×
             </button>
           )}
         </div>

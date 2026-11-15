@@ -169,11 +169,11 @@ function GettingStartedTab() {
 
         <Step
           number={4}
-          title="Add yourself as a user (optional)"
-          description="Create a named user to track your usage and optionally restrict anonymous access."
+          title="Give each sender its own token (optional)"
+          description="An actor is whoever sends telemetry - you, an AI agent or a host. Give each one its own token to see its usage separately and to restrict anonymous access."
         >
           <ol className={styles.verifyList}>
-            <li>Go to <a href="/users" className={styles.link}>Users</a> and click <strong>Add user</strong>.</li>
+            <li>Go to <a href="/actors" className={styles.link}>Actors</a> and click <strong>Add actor</strong>.</li>
             <li>Copy the generated token.</li>
             <li>Add to Claude Code settings:</li>
           </ol>
@@ -182,7 +182,7 @@ function GettingStartedTab() {
             <pre className={styles.pre}>{OTLP_HEADERS_SNIPPET}</pre>
           </div>
           <p className={styles.hint}>
-            Replace <code className={styles.code}>YOUR_TOKEN_HERE</code> with the token shown after user creation.
+            Replace <code className={styles.code}>YOUR_TOKEN_HERE</code> with the token shown after the actor is created.
           </p>
           <p className={styles.hint}>
             To block unauthenticated sends, open the{' '}
@@ -497,8 +497,8 @@ function SettingsTab() {
         <div className={styles.settingInfo}>
           <div className={styles.settingLabel}>Allow anonymous OTLP</div>
           <div className={styles.settingDesc}>
-            When enabled, spans without an <code className={styles.code}>Authorization</code> header are accepted and attributed to no user.
-            Disable to require every OTLP sender to present a valid user token.
+            When enabled, spans without an <code className={styles.code}>Authorization</code> header are accepted and attributed to no actor.
+            Disable to require every OTLP sender to present a valid actor token.
           </div>
         </div>
         <label className={styles.toggle}>
@@ -517,7 +517,7 @@ function SettingsTab() {
         <div className={styles.warning}>
           Anonymous OTLP is disabled. All ingest requests must include{' '}
           <code className={styles.code}>Authorization: Bearer &lt;token&gt;</code>.{' '}
-          Go to <a href="/users" className={styles.link}>Users</a> to manage tokens.
+          Go to <a href="/actors" className={styles.link}>Actors</a> to manage tokens.
         </div>
       )}
 

@@ -9,7 +9,7 @@ export const fetcher = (url: string) =>
 export interface OverviewResponse {
   range: string
   sessions_count: number
-  users_count: number
+  actors_count: number
   total_cost_usd: number
   total_input_tokens: number
   total_output_tokens: number
@@ -21,7 +21,7 @@ export interface OverviewResponse {
 
 export interface SessionItem {
   session_id: string
-  user_id: string
+  actor_id: string
   first_seen: string
   last_seen: string
   model: string
@@ -95,7 +95,7 @@ export interface BashCommandItem {
 }
 
 // ListParams is the range/search/sort/paging contract the tools and
-// bash-commands lists share with the users list (ADR-0011, ADR-0012).
+// bash-commands lists share with the actors list (ADR-0011, ADR-0012).
 export interface ListParams {
   range: string
   q?: string
@@ -103,7 +103,7 @@ export interface ListParams {
   order: string
   page: number
   limit: number
-  user_id?: string
+  actor_id?: string
 }
 
 export type ToolsParams = ListParams
@@ -140,7 +140,7 @@ function listQuery(p: ListParams): string {
     limit: String(p.limit),
   })
   if (p.q) qs.set('q', p.q)
-  if (p.user_id) qs.set('user_id', p.user_id)
+  if (p.actor_id) qs.set('actor_id', p.actor_id)
   return qs.toString()
 }
 
@@ -152,8 +152,8 @@ export interface ModelItem {
   total_output_tokens: number
 }
 
-export interface UserRow {
-  user_id: string
+export interface ActorRow {
+  actor_id: string
   is_default: boolean
   sessions: number
   total_cost_usd: number
@@ -163,12 +163,12 @@ export interface UserRow {
   last_seen: string
 }
 
-export interface UsersResponse {
-  items: UserRow[]
+export interface ActorsResponse {
+  items: ActorRow[]
 }
 
-// New user management types
-export interface User {
+// New actor management types
+export interface Actor {
   id: string
   name: string
   token: string
@@ -178,12 +178,12 @@ export interface User {
   last_seen: string | null
 }
 
-export interface UsersListResponse {
-  users: User[]
+export interface ActorsListResponse {
+  actors: Actor[]
 }
 
-export interface UsersPageResponse {
-  users: User[]
+export interface ActorsPageResponse {
+  actors: Actor[]
   total: number
   page: number
   limit: number
@@ -192,7 +192,7 @@ export interface UsersPageResponse {
   order: string
 }
 
-export interface UsersPageParams {
+export interface ActorsPageParams {
   range: string
   q?: string
   sort: string
@@ -205,12 +205,12 @@ export interface SettingsResponse {
   allow_anonymous: boolean
 }
 
-// useUsers fetches every user unpaginated (limit=0) — used by the UserSearch typeahead.
-export function useUsers() {
-  return useSWR<UsersListResponse>('/api/v1/users', fetcher)
+// useActors fetches every actor unpaginated (limit=0) — used by the ActorSearch typeahead.
+export function useActors() {
+  return useSWR<ActorsListResponse>('/api/v1/actors', fetcher)
 }
 
-export function useUsersPage(params: UsersPageParams) {
+export function useActorsPage(params: ActorsPageParams) {
   const qs = new URLSearchParams({
     range: params.range,
     sort: params.sort,
@@ -219,20 +219,20 @@ export function useUsersPage(params: UsersPageParams) {
     limit: String(params.limit),
   })
   if (params.q) qs.set('q', params.q)
-  return useSWR<UsersPageResponse>(`/api/v1/users?${qs.toString()}`, fetcher, { keepPreviousData: true })
+  return useSWR<ActorsPageResponse>(`/api/v1/actors?${qs.toString()}`, fetcher, { keepPreviousData: true })
 }
 
-export function useUser(id: string | undefined, range: string) {
+export function useActor(id: string | undefined, range: string) {
   const qs = new URLSearchParams({ range })
-  return useSWR<User>(id ? `/api/v1/users/${encodeURIComponent(id)}?${qs.toString()}` : null, fetcher)
+  return useSWR<Actor>(id ? `/api/v1/actors/${encodeURIComponent(id)}?${qs.toString()}` : null, fetcher)
 }
 
 export function useSettings() {
   return useSWR<SettingsResponse>('/api/v1/settings', fetcher)
 }
 
-export async function createUser(name: string): Promise<User> {
-  const res = await fetch('/api/v1/users', {
+export async function createActor(name: string): Promise<Actor> {
+  const res = await fetch('/api/v1/actors', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name }),
@@ -244,8 +244,8 @@ export async function createUser(name: string): Promise<User> {
   return res.json()
 }
 
-export async function rotateUserToken(id: string): Promise<User> {
-  const res = await fetch(`/api/v1/users/${id}/rotate-token`, { method: 'POST' })
+export async function rotateActorToken(id: string): Promise<Actor> {
+  const res = await fetch(`/api/v1/actors/${id}/rotate-token`, { method: 'POST' })
   if (!res.ok) {
     const text = await res.text().catch(() => res.statusText)
     throw new Error(text || `${res.status}`)
@@ -253,10 +253,10 @@ export async function rotateUserToken(id: string): Promise<User> {
   return res.json()
 }
 
-export type DeleteMode = 'user_only' | 'user_and_history'
+export type DeleteMode = 'actor_only' | 'actor_and_history'
 
-export async function deleteUser(id: string, mode?: DeleteMode): Promise<void> {
-  const url = mode ? `/api/v1/users/${id}?mode=${mode}` : `/api/v1/users/${id}`
+export async function deleteActor(id: string, mode?: DeleteMode): Promise<void> {
+  const url = mode ? `/api/v1/actors/${id}?mode=${mode}` : `/api/v1/actors/${id}`
   const res = await fetch(url, { method: 'DELETE' })
   if (!res.ok && res.status !== 204) {
     const text = await res.text().catch(() => res.statusText)
@@ -280,9 +280,9 @@ export async function updateSettings(settings: Partial<SettingsResponse>): Promi
 // The four hooks below take range last and omit the parameter when it is
 // undefined, so a caller that does not pass one keeps the server-side default
 // for that endpoint (ADR-0014).
-export function useOverview(refreshInterval = 30_000, userId?: string, range?: string) {
+export function useOverview(refreshInterval = 30_000, actorId?: string, range?: string) {
   const params = new URLSearchParams()
-  if (userId) params.set('user_id', userId)
+  if (actorId) params.set('actor_id', actorId)
   if (range) params.set('range', range)
   const qs = params.toString()
   return useSWR<OverviewResponse>(`/api/v1/overview${qs ? `?${qs}` : ''}`, fetcher, {
@@ -296,11 +296,11 @@ export function useSessions(
   limit = 50,
   sort = 'start_time',
   order = 'desc',
-  userId?: string,
+  actorId?: string,
   range?: string,
 ) {
   const params = new URLSearchParams({ page: String(page), limit: String(limit), sort, order })
-  if (userId) params.set('user_id', userId)
+  if (actorId) params.set('actor_id', actorId)
   if (range) params.set('range', range)
   return useSWR<SessionsResponse>(`/api/v1/sessions?${params.toString()}`, fetcher, {
     keepPreviousData: true,
@@ -311,11 +311,11 @@ export function useSession(id: string) {
   return useSWR<SessionDetailResponse>(id ? `/api/v1/sessions/${id}` : null, fetcher)
 }
 
-export function useCosts(from?: string, to?: string, userId?: string, range?: string) {
+export function useCosts(from?: string, to?: string, actorId?: string, range?: string) {
   const params = new URLSearchParams()
   if (from) params.set('from', from)
   if (to) params.set('to', to)
-  if (userId) params.set('user_id', userId)
+  if (actorId) params.set('actor_id', actorId)
   if (range) params.set('range', range)
   const qs = params.toString()
   return useSWR<CostsResponse>(`/api/v1/costs${qs ? `?${qs}` : ''}`, fetcher, {
@@ -338,9 +338,9 @@ export interface ModelsResponse {
   range: string
 }
 
-export function useModels(userId?: string, range?: string) {
+export function useModels(actorId?: string, range?: string) {
   const params = new URLSearchParams()
-  if (userId) params.set('user_id', userId)
+  if (actorId) params.set('actor_id', actorId)
   if (range) params.set('range', range)
   const qs = params.toString()
   return useSWR<ModelsResponse>(`/api/v1/models${qs ? `?${qs}` : ''}`, fetcher, {
@@ -387,13 +387,13 @@ export function useHistory(
   granularity: string,
   from?: string,
   to?: string,
-  userId?: string,
+  actorId?: string,
   range?: string,
 ) {
   const params = new URLSearchParams({ granularity })
   if (from) params.set('from', from)
   if (to) params.set('to', to)
-  if (userId) params.set('user_id', userId)
+  if (actorId) params.set('actor_id', actorId)
   if (range) params.set('range', range)
   return useSWR<HistoryResponse>(`/api/v1/history?${params.toString()}`, fetcher, {
     keepPreviousData: true,

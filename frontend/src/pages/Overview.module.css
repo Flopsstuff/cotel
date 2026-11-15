@@ -18,7 +18,7 @@
   gap: var(--space-4);
 }
 
-.userChip {
+.actorChip {
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -95,7 +95,7 @@
   color: var(--color-accent);
 }
 
-.anonUser {
+.anonActor {
   color: var(--color-text-2);
   font-style: italic;
 }

@@ -1,15 +1,15 @@
 import { useState, useEffect, useRef } from 'react'
-import { deleteUser } from '../api'
-import type { User, DeleteMode } from '../api'
-import styles from './DeleteUserModal.module.css'
+import { deleteActor } from '../api'
+import type { Actor, DeleteMode } from '../api'
+import styles from './DeleteActorModal.module.css'
 
-interface DeleteUserModalProps {
-  user: User
+interface DeleteActorModalProps {
+  actor: Actor
   onClose: () => void
   onDeleted: (mode: DeleteMode) => void
 }
 
-export function DeleteUserModal({ user, onClose, onDeleted }: DeleteUserModalProps) {
+export function DeleteActorModal({ actor, onClose, onDeleted }: DeleteActorModalProps) {
   const [mode, setMode] = useState<DeleteMode | null>(null)
   const [confirmText, setConfirmText] = useState('')
   const [loading, setLoading] = useState(false)
@@ -25,8 +25,8 @@ export function DeleteUserModal({ user, onClose, onDeleted }: DeleteUserModalPro
     return () => document.removeEventListener('keydown', onKey)
   }, [onClose])
 
-  const modeAReady = mode === 'user_only'
-  const modeBReady = mode === 'user_and_history' && confirmText === user.name
+  const modeAReady = mode === 'actor_only'
+  const modeBReady = mode === 'actor_and_history' && confirmText === actor.name
   const canSubmit = modeAReady || modeBReady
 
   const handleSubmit = async () => {
@@ -34,7 +34,7 @@ export function DeleteUserModal({ user, onClose, onDeleted }: DeleteUserModalPro
     setLoading(true)
     setError(null)
     try {
-      await deleteUser(user.id, mode)
+      await deleteActor(actor.id, mode)
       onDeleted(mode)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Delete failed')
@@ -44,60 +44,60 @@ export function DeleteUserModal({ user, onClose, onDeleted }: DeleteUserModalPro
 
   const handleModeChange = (next: DeleteMode) => {
     setMode(next)
-    if (next !== 'user_and_history') setConfirmText('')
+    if (next !== 'actor_and_history') setConfirmText('')
     setError(null)
   }
 
-  const confirmLabel = mode === 'user_and_history' ? 'Permanently delete' : 'Delete user'
+  const confirmLabel = mode === 'actor_and_history' ? 'Permanently delete' : 'Delete actor'
 
   return (
     <div className={styles.modalOverlay} onClick={(e) => e.target === e.currentTarget && onClose()}>
       <div className={styles.modal} role="dialog" aria-modal="true" aria-labelledby="delete-modal-title">
         <div className={styles.modalHeader}>
-          <h2 className={styles.modalTitle} id="delete-modal-title">Delete user</h2>
+          <h2 className={styles.modalTitle} id="delete-modal-title">Delete actor</h2>
           <button className={styles.dismissBtn} onClick={onClose} aria-label="Close">×</button>
         </div>
         <p className={styles.modalPreamble}>
-          You are about to delete <strong>{user.name}</strong>. Choose what to delete:
+          You are about to delete <strong>{actor.name}</strong>. Choose what to delete:
         </p>
 
         <div
           ref={firstRadioRef}
           role="radio"
-          aria-checked={mode === 'user_only'}
+          aria-checked={mode === 'actor_only'}
           tabIndex={0}
-          className={`${styles.radioCard} ${mode === 'user_only' ? styles.radioCardSelectedA : ''}`}
-          onClick={() => handleModeChange('user_only')}
-          onKeyDown={(e) => (e.key === ' ' || e.key === 'Enter') && handleModeChange('user_only')}
+          className={`${styles.radioCard} ${mode === 'actor_only' ? styles.radioCardSelectedA : ''}`}
+          onClick={() => handleModeChange('actor_only')}
+          onKeyDown={(e) => (e.key === ' ' || e.key === 'Enter') && handleModeChange('actor_only')}
         >
           <div className={styles.radioRow}>
-            <span className={styles.radioMark}>{mode === 'user_only' ? '●' : '○'}</span>
-            <span className={styles.radioLabel}>Delete user only</span>
+            <span className={styles.radioMark}>{mode === 'actor_only' ? '●' : '○'}</span>
+            <span className={styles.radioLabel}>Delete actor only</span>
           </div>
           <p className={styles.radioDesc}>
-            Revokes {user.name}'s login access. All session history and telemetry stays attributed to {user.name}. Reversible by re-creating a user with the same name.
+            Revokes {actor.name}'s login access. All session history and telemetry stays attributed to {actor.name}. Reversible by re-creating an actor with the same name.
           </p>
         </div>
 
         <div
           role="radio"
-          aria-checked={mode === 'user_and_history'}
+          aria-checked={mode === 'actor_and_history'}
           tabIndex={0}
-          className={`${styles.radioCard} ${mode === 'user_and_history' ? styles.radioCardSelectedB : ''}`}
-          onClick={() => handleModeChange('user_and_history')}
-          onKeyDown={(e) => (e.key === ' ' || e.key === 'Enter') && handleModeChange('user_and_history')}
+          className={`${styles.radioCard} ${mode === 'actor_and_history' ? styles.radioCardSelectedB : ''}`}
+          onClick={() => handleModeChange('actor_and_history')}
+          onKeyDown={(e) => (e.key === ' ' || e.key === 'Enter') && handleModeChange('actor_and_history')}
         >
           <div className={styles.radioRow}>
-            <span className={styles.radioMark}>{mode === 'user_and_history' ? '●' : '○'}</span>
-            <span className={styles.radioLabel}>Delete user + history</span>
+            <span className={styles.radioMark}>{mode === 'actor_and_history' ? '●' : '○'}</span>
+            <span className={styles.radioLabel}>Delete actor + history</span>
             <span className={styles.permanentBadge}>⚠ Permanent</span>
           </div>
           <p className={styles.radioDesc}>
-            Revokes access and permanently removes {user.name} and all their telemetry. This cannot be undone.
+            Revokes access and permanently removes {actor.name} and all their telemetry. This cannot be undone.
           </p>
-          {mode === 'user_and_history' && (
+          {mode === 'actor_and_history' && (
             <div className={`${styles.confirmInputWrap} ${styles.confirmInputAnimate}`}>
-              <label className={styles.confirmLabel}>Type "{user.name}" to confirm:</label>
+              <label className={styles.confirmLabel}>Type "{actor.name}" to confirm:</label>
               <input
                 className={styles.confirmInput}
                 value={confirmText}
@@ -115,7 +115,7 @@ export function DeleteUserModal({ user, onClose, onDeleted }: DeleteUserModalPro
         <div className={styles.modalFooter}>
           <button className={styles.ghostBtn} onClick={onClose} disabled={loading}>Cancel</button>
           <button
-            className={mode === 'user_and_history' ? styles.dangerBtn : styles.secondaryBtn}
+            className={mode === 'actor_and_history' ? styles.dangerBtn : styles.secondaryBtn}
             disabled={!canSubmit || loading}
             onClick={handleSubmit}
           >

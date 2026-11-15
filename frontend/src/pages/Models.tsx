@@ -7,13 +7,13 @@ import styles from './Models.module.css'
 
 export default function Models() {
   const [searchParams, setSearchParams] = useSearchParams()
-  const userId = searchParams.get('user_id') ?? undefined
-  const { data, error, isLoading } = useModels(userId)
+  const actorId = searchParams.get('actor_id') ?? undefined
+  const { data, error, isLoading } = useModels(actorId)
 
-  function clearUserFilter() {
+  function clearActorFilter() {
     setSearchParams((prev) => {
       const next = new URLSearchParams(prev)
-      next.delete('user_id')
+      next.delete('actor_id')
       return next
     })
   }
@@ -29,9 +29,9 @@ export default function Models() {
     <div>
       <div className={styles.pageHeader}>
         <h1 className={styles.title}>Models</h1>
-        {userId && (
-          <button className={styles.userChip} onClick={clearUserFilter}>
-            Filtered by: <strong>{userId}</strong> ×
+        {actorId && (
+          <button className={styles.actorChip} onClick={clearActorFilter}>
+            Filtered by: <strong>{actorId}</strong> ×
           </button>
         )}
       </div>

@@ -24,15 +24,15 @@ export default function Costs() {
   const [from, setFrom] = useState(daysAgo(30))
   const [to, setTo] = useState(today())
   const [searchParams, setSearchParams] = useSearchParams()
-  const userId = searchParams.get('user_id') ?? undefined
-  const { data, error, isLoading } = useCosts(from, to, userId)
+  const actorId = searchParams.get('actor_id') ?? undefined
+  const { data, error, isLoading } = useCosts(from, to, actorId)
 
   const totalCost = data?.by_model.reduce((s, m) => s + m.cost_usd, 0) ?? 0
 
-  function clearUserFilter() {
+  function clearActorFilter() {
     setSearchParams((prev) => {
       const next = new URLSearchParams(prev)
-      next.delete('user_id')
+      next.delete('actor_id')
       return next
     })
   }
@@ -42,9 +42,9 @@ export default function Costs() {
       <div className={styles.header}>
         <div>
           <h1 className={styles.title}>Costs</h1>
-          {userId && (
-            <button className={styles.userChip} onClick={clearUserFilter}>
-              Filtered by: <strong>{userId}</strong> ×
+          {actorId && (
+            <button className={styles.actorChip} onClick={clearActorFilter}>
+              Filtered by: <strong>{actorId}</strong> ×
             </button>
           )}
         </div>

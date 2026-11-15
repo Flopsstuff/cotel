@@ -5,9 +5,9 @@ import {
   XAxis, YAxis, Tooltip, ResponsiveContainer,
 } from 'recharts'
 import {
-  useOverview, useSessions, useHistory, useTools, useModels, useUsersPage,
+  useOverview, useSessions, useHistory, useTools, useModels, useActorsPage,
 } from '../api'
-import type { SessionItem, ToolItem, ModelItem, User } from '../api'
+import type { SessionItem, ToolItem, ModelItem, Actor } from '../api'
 import {
   KpiCard, DataTable, EmptyState, ErrorState, RefreshIndicator, SegmentedControl,
   KpiSkeleton, ChartSkeleton, LoadingSkeleton, sessionStatusBadge, failRateBadge, ChartTooltip,
@@ -23,7 +23,7 @@ const ANON_ID = '__anonymous__'
 
 interface SectionProps {
   range: RangeKey
-  userId?: string
+  actorId?: string
 }
 
 function fmtTokens(n: number): string {
@@ -38,9 +38,9 @@ function formatDay(iso: string): string {
 
 // ---- Compact section components ----
 
-function UsersSection({ range }: { range: RangeKey }) {
+function ActorsSection({ range }: { range: RangeKey }) {
   const navigate = useNavigate()
-  const { data, isLoading, error } = useUsersPage({
+  const { data, isLoading, error } = useActorsPage({
     range,
     sort: 'cost',
     order: 'desc',
@@ -50,17 +50,17 @@ function UsersSection({ range }: { range: RangeKey }) {
 
   if (isLoading && !data) return <LoadingSkeleton rows={5} height={36} />
   if (error) return <ErrorState message={error.message} />
-  if (!data || data.users.length === 0)
-    return <EmptyState heading="No users" subtext="Users appear once telemetry is recorded in the selected range." />
+  if (!data || data.actors.length === 0)
+    return <EmptyState heading="No actors" subtext="Actors appear once telemetry is recorded in the selected range." />
 
   return (
-    <DataTable<User>
+    <DataTable<Actor>
       columns={[
         {
           key: 'name',
           label: 'Name',
           render: (v, row) => (
-            <span className={row.id === ANON_ID ? styles.anonUser : undefined}>{String(v)}</span>
+            <span className={row.id === ANON_ID ? styles.anonActor : undefined}>{String(v)}</span>
           ),
         },
         { key: 'cost', label: 'Cost', render: (v) => `$${Number(v).toFixed(2)}` },
@@ -71,8 +71,8 @@ function UsersSection({ range }: { range: RangeKey }) {
           render: (v) => (v ? new Date(String(v)).toLocaleString() : '—'),
         },
       ]}
-      rows={data.users}
-      onRowClick={(row) => navigate(`/users/${encodeURIComponent(row.id)}`)}
+      rows={data.actors}
+      onRowClick={(row) => navigate(`/actors/${encodeURIComponent(row.id)}`)}
     />
   )
 }
@@ -81,12 +81,12 @@ function UsersSection({ range }: { range: RangeKey }) {
 // days over a year, ten minutes over a day. On the year and all ranges that is
 // the same request ActivitySection already makes, and SWR serves both from one
 // fetch.
-function ActivityGridSection({ range, userId }: SectionProps) {
+function ActivityGridSection({ range, actorId }: SectionProps) {
   const { data, isLoading, error } = useHistory(
     GRID_GRANULARITY[range],
     undefined,
     undefined,
-    userId,
+    actorId,
     range,
   )
 
@@ -109,15 +109,15 @@ function ActivityGridSection({ range, userId }: SectionProps) {
 }
 
 // Spans and cost share the history buckets, so the two series are bucketed,
-// windowed and user-filtered identically — a client-side join of /history with
+// windowed and actor-filtered identically — a client-side join of /history with
 // /costs could not guarantee that. They carry different units, so each keeps its
 // own axis and the legend names the side it reads against.
-function ActivitySection({ range, userId }: SectionProps) {
+function ActivitySection({ range, actorId }: SectionProps) {
   const { data, isLoading, error } = useHistory(
     range === 'day' ? 'hour' : 'day',
     undefined,
     undefined,
-    userId,
+    actorId,
     range,
   )
 
@@ -211,14 +211,14 @@ function ActivitySection({ range, userId }: SectionProps) {
   )
 }
 
-function ToolsSection({ range, userId }: SectionProps) {
+function ToolsSection({ range, actorId }: SectionProps) {
   const { data, isLoading, error } = useTools({
     range,
     sort: 'calls',
     order: 'desc',
     page: 1,
     limit: 5,
-    user_id: userId,
+    actor_id: actorId,
   })
 
   if (isLoading && !data) return <LoadingSkeleton rows={5} height={36} />
@@ -249,8 +249,8 @@ function ToolsSection({ range, userId }: SectionProps) {
   )
 }
 
-function ModelsSection({ range, userId }: SectionProps) {
-  const { data, isLoading, error } = useModels(userId, range)
+function ModelsSection({ range, actorId }: SectionProps) {
+  const { data, isLoading, error } = useModels(actorId, range)
 
   const rows = useMemo(() => {
     if (!data) return []
@@ -305,9 +305,9 @@ function ModelsSection({ range, userId }: SectionProps) {
   )
 }
 
-function SessionsSection({ range, userId }: SectionProps) {
+function SessionsSection({ range, actorId }: SectionProps) {
   const navigate = useNavigate()
-  const { data, isLoading, error } = useSessions(1, 5, 'start_time', 'desc', userId, range)
+  const { data, isLoading, error } = useSessions(1, 5, 'start_time', 'desc', actorId, range)
 
   if (isLoading && !data) return <LoadingSkeleton rows={5} height={36} />
   if (error) return <ErrorState message={error.message} />
@@ -328,10 +328,10 @@ function SessionsSection({ range, userId }: SectionProps) {
             ),
           },
           {
-            key: 'user_id',
-            label: 'User',
+            key: 'actor_id',
+            label: 'Actor',
             render: (v) =>
-              v ? String(v) : <span className={styles.anonUser}>anonymous</span>,
+              v ? String(v) : <span className={styles.anonActor}>anonymous</span>,
           },
           {
             key: 'first_seen',
@@ -369,19 +369,19 @@ function SessionsSection({ range, userId }: SectionProps) {
 export default function Overview() {
   const [paused, setPaused] = useState(false)
   const [searchParams, setSearchParams] = useSearchParams()
-  const userId = searchParams.get('user_id') ?? undefined
+  const actorId = searchParams.get('actor_id') ?? undefined
   const [range, setRange] = useRangeCookie(RANGE_COOKIE)
 
-  const { data, error, isLoading, isValidating, mutate } = useOverview(paused ? 0 : 30_000, userId, range)
+  const { data, error, isLoading, isValidating, mutate } = useOverview(paused ? 0 : 30_000, actorId, range)
 
-  const userParam = userId ? `?user_id=${encodeURIComponent(userId)}` : ''
+  const actorParam = actorId ? `?actor_id=${encodeURIComponent(actorId)}` : ''
   const suffix = RANGE_SUFFIX[range]
   const scoped = (label: string) => (suffix ? `${label} (${suffix})` : label)
 
-  const clearUserFilter = () =>
+  const clearActorFilter = () =>
     setSearchParams((prev) => {
       const next = new URLSearchParams(prev)
-      next.delete('user_id')
+      next.delete('actor_id')
       return next
     })
 
@@ -390,9 +390,9 @@ export default function Overview() {
       <div className={styles.header}>
         <div className={styles.headerLeft}>
           <h1 className={styles.title}>Overview</h1>
-          {userId && (
-            <button className={styles.userChip} onClick={clearUserFilter} title="Show all users">
-              Scoped to: <strong>{userId === ANON_ID ? 'Anonymous' : userId}</strong> ×
+          {actorId && (
+            <button className={styles.actorChip} onClick={clearActorFilter} title="Show all actors">
+              Scoped to: <strong>{actorId === ANON_ID ? 'Anonymous' : actorId}</strong> ×
             </button>
           )}
         </div>
@@ -421,43 +421,43 @@ export default function Overview() {
       ) : data ? (
         <div className={styles.kpiRow}>
           <KpiCard label={scoped('Sessions')} value={String(data.sessions_count)} />
-          <KpiCard label={scoped('Active Users')} value={String(data.users_count)} />
+          <KpiCard label={scoped('Active Actors')} value={String(data.actors_count)} />
           <KpiCard label={scoped('Total Cost')} value={`$${data.total_cost_usd.toFixed(2)}`} />
           <KpiCard label={scoped('Input Tokens')} value={fmtTokens(data.total_input_tokens)} />
           <KpiCard label={scoped('Output Tokens')} value={fmtTokens(data.total_output_tokens)} />
         </div>
       ) : null}
 
-      <StatSection title={scoped('Span activity')} viewAllHref={`/history${userParam}`}>
-        <ActivityGridSection range={range} userId={userId} />
+      <StatSection title={scoped('Span activity')} viewAllHref={`/history${actorParam}`}>
+        <ActivityGridSection range={range} actorId={actorId} />
       </StatSection>
 
-      {!userId && (
-        <StatSection title="Users" viewAllHref="/users">
-          <UsersSection range={range} />
+      {!actorId && (
+        <StatSection title="Actors" viewAllHref="/actors">
+          <ActorsSection range={range} />
         </StatSection>
       )}
 
       <StatSection
         title="Spans & cost"
         links={[
-          { label: 'History', href: `/history${userParam}` },
-          { label: 'Costs', href: `/costs${userParam}` },
+          { label: 'History', href: `/history${actorParam}` },
+          { label: 'Costs', href: `/costs${actorParam}` },
         ]}
       >
-        <ActivitySection range={range} userId={userId} />
+        <ActivitySection range={range} actorId={actorId} />
       </StatSection>
 
-      <StatSection title="Tools" viewAllHref={`/tools${userParam}`}>
-        <ToolsSection range={range} userId={userId} />
+      <StatSection title="Tools" viewAllHref={`/tools${actorParam}`}>
+        <ToolsSection range={range} actorId={actorId} />
       </StatSection>
 
-      <StatSection title="Models" viewAllHref={`/models${userParam}`}>
-        <ModelsSection range={range} userId={userId} />
+      <StatSection title="Models" viewAllHref={`/models${actorParam}`}>
+        <ModelsSection range={range} actorId={actorId} />
       </StatSection>
 
-      <StatSection title="Sessions" viewAllHref={`/sessions${userParam}`}>
-        <SessionsSection range={range} userId={userId} />
+      <StatSection title="Sessions" viewAllHref={`/sessions${actorParam}`}>
+        <SessionsSection range={range} actorId={actorId} />
       </StatSection>
     </div>
   )

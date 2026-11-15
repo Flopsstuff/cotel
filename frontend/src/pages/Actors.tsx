@@ -1,20 +1,20 @@
 import { useState, useCallback, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Copy, Check, Plus, Search, ChevronLeft, ChevronRight } from 'lucide-react'
-import { useUsersPage, createUser } from '../api'
-import type { User } from '../api'
+import { useActorsPage, createActor } from '../api'
+import type { Actor } from '../api'
 import { DataTable, EmptyState, ErrorState, LoadingSkeleton, SegmentedControl } from '../components'
 import type { Column, SortState } from '../components'
 import { RANGE_OPTIONS, RANGE_SUFFIX, useRangeCookie } from '../lib/range'
-import styles from './Users.module.css'
+import styles from './Actors.module.css'
 
 const ANON_ID = '__anonymous__'
 const PAGE_SIZE = 50
-const RANGE_COOKIE = 'cotel_users_range'
+const RANGE_COOKIE = 'cotel_actors_range'
 
 type SortKey = 'name' | 'cost' | 'sessions' | 'created_at' | 'last_seen'
 
-interface UserVM {
+interface ActorVM {
   id: string
   name: string
   cost: number
@@ -24,7 +24,7 @@ interface UserVM {
   isAnon: boolean
 }
 
-function AddUserModal({ onClose, onCreated }: { onClose: () => void; onCreated: (u: User) => void }) {
+function AddActorModal({ onClose, onCreated }: { onClose: () => void; onCreated: (u: Actor) => void }) {
   const [name, setName] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -36,7 +36,7 @@ function AddUserModal({ onClose, onCreated }: { onClose: () => void; onCreated: 
     setLoading(true)
     setError(null)
     try {
-      const u = await createUser(trimmed)
+      const u = await createActor(trimmed)
       onCreated(u)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Create failed')
@@ -48,7 +48,7 @@ function AddUserModal({ onClose, onCreated }: { onClose: () => void; onCreated: 
   return (
     <div className={styles.modalOverlay} onClick={(e) => e.target === e.currentTarget && onClose()}>
       <div className={styles.modal}>
-        <h2 className={styles.modalTitle}>Add user</h2>
+        <h2 className={styles.modalTitle}>Add actor</h2>
         <form onSubmit={handleSubmit}>
           <label className={styles.fieldLabel}>Name</label>
           <input
@@ -71,34 +71,34 @@ function AddUserModal({ onClose, onCreated }: { onClose: () => void; onCreated: 
   )
 }
 
-function NewTokenBanner({ user, onDismiss }: { user: User; onDismiss: () => void }) {
+function NewTokenBanner({ actor, onDismiss }: { actor: Actor; onDismiss: () => void }) {
   const [copied, setCopied] = useState(false)
   const copy = useCallback(async () => {
-    await navigator.clipboard.writeText(user.token)
+    await navigator.clipboard.writeText(actor.token)
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
-  }, [user.token])
+  }, [actor.token])
 
   return (
     <div className={styles.newTokenBanner}>
       <div className={styles.newTokenHeader}>
-        <span className={styles.newTokenTitle}>User <strong>{user.name}</strong> created — copy your token</span>
+        <span className={styles.newTokenTitle}>Actor <strong>{actor.name}</strong> created — copy your token</span>
         <button className={styles.dismissBtn} onClick={onDismiss}>×</button>
       </div>
       <div className={styles.tokenCell}>
-        <code className={styles.tokenText}>{user.token}</code>
+        <code className={styles.tokenText}>{actor.token}</code>
         <button className={styles.iconBtn} onClick={copy} title="Copy token">
           {copied ? <Check size={13} /> : <Copy size={13} />}
         </button>
       </div>
       <p className={styles.newTokenHint}>
-        Set <code className={styles.code}>OTEL_EXPORTER_OTLP_HEADERS=Authorization=Bearer {user.token}</code> in your Claude Code settings.
+        Set <code className={styles.code}>OTEL_EXPORTER_OTLP_HEADERS=Authorization=Bearer {actor.token}</code> in your Claude Code settings.
       </p>
     </div>
   )
 }
 
-export default function Users() {
+export default function Actors() {
   const navigate = useNavigate()
 
   const [range, setRange] = useRangeCookie(RANGE_COOKIE)
@@ -109,7 +109,7 @@ export default function Users() {
   const [q, setQ] = useState('')
 
   const [showAdd, setShowAdd] = useState(false)
-  const [newUser, setNewUser] = useState<User | null>(null)
+  const [newActor, setNewActor] = useState<Actor | null>(null)
 
   // Debounce the search box into the server-side q parameter.
   useEffect(() => {
@@ -120,7 +120,7 @@ export default function Users() {
     return () => clearTimeout(t)
   }, [search])
 
-  const { data, error, isLoading, mutate } = useUsersPage({
+  const { data, error, isLoading, mutate } = useActorsPage({
     range,
     q: q || undefined,
     sort,
@@ -130,7 +130,7 @@ export default function Users() {
   })
 
   const total = data?.total ?? 0
-  const rows: UserVM[] = (data?.users ?? []).map((u) => ({
+  const rows: ActorVM[] = (data?.actors ?? []).map((u) => ({
     id: u.id,
     name: u.name,
     cost: u.cost,
@@ -148,25 +148,25 @@ export default function Users() {
     setPage(1)
   }
 
-  const handleSortChange = (next: NonNullable<SortState<UserVM>>) => {
+  const handleSortChange = (next: NonNullable<SortState<ActorVM>>) => {
     setSort(next.key as SortKey)
     setOrder(next.dir)
     setPage(1)
   }
 
-  const handleCreated = (u: User) => {
+  const handleCreated = (u: Actor) => {
     setShowAdd(false)
-    setNewUser(u)
+    setNewActor(u)
     mutate()
   }
 
-  const columns: Column<UserVM>[] = [
+  const columns: Column<ActorVM>[] = [
     {
       key: 'name',
       label: 'Name',
       sortable: true,
       render: (_v, row) => (
-        <span className={row.isAnon ? styles.userNameAnon : styles.userName}>{row.name}</span>
+        <span className={row.isAnon ? styles.actorNameAnon : styles.actorName}>{row.name}</span>
       ),
     },
     {
@@ -206,7 +206,7 @@ export default function Users() {
   return (
     <div>
       <div className={styles.toolbar}>
-        <h1 className={styles.title}>Users</h1>
+        <h1 className={styles.title}>Actors</h1>
 
         <div className={styles.searchWrap}>
           <Search size={14} className={styles.searchIcon} />
@@ -229,11 +229,11 @@ export default function Users() {
         />
 
         <button className={`${styles.primaryBtn} ${styles.addBtn}`} onClick={() => setShowAdd(true)}>
-          <Plus size={14} /> Add user
+          <Plus size={14} /> Add actor
         </button>
       </div>
 
-      {newUser && <NewTokenBanner user={newUser} onDismiss={() => setNewUser(null)} />}
+      {newActor && <NewTokenBanner actor={newActor} onDismiss={() => setNewActor(null)} />}
 
       {isLoading ? (
         <LoadingSkeleton rows={6} height={40} />
@@ -241,21 +241,21 @@ export default function Users() {
         <ErrorState message={error.message} />
       ) : total === 0 ? (
         q ? (
-          <div className={styles.noResults}>No users match "{q}"</div>
+          <div className={styles.noResults}>No actors match "{q}"</div>
         ) : (
           <EmptyState
-            heading="No users yet"
-            subtext="Add a user to get a token for authenticated OTLP ingest. Anonymous sends are allowed by default."
+            heading="No actors yet"
+            subtext="Add an actor to get a token for authenticated OTLP ingest. Anonymous sends are allowed by default."
           />
         )
       ) : (
         <>
-          <DataTable<UserVM>
+          <DataTable<ActorVM>
             columns={columns}
             rows={rows}
-            sort={{ key: sort as keyof UserVM, dir: order }}
+            sort={{ key: sort as keyof ActorVM, dir: order }}
             onSortChange={handleSortChange}
-            onRowClick={(row) => navigate(`/users/${encodeURIComponent(row.id)}`)}
+            onRowClick={(row) => navigate(`/actors/${encodeURIComponent(row.id)}`)}
           />
 
           {total > PAGE_SIZE && (
@@ -280,7 +280,7 @@ export default function Users() {
         </>
       )}
 
-      {showAdd && <AddUserModal onClose={() => setShowAdd(false)} onCreated={handleCreated} />}
+      {showAdd && <AddActorModal onClose={() => setShowAdd(false)} onCreated={handleCreated} />}
     </div>
   )
 }
