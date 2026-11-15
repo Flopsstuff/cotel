@@ -553,6 +553,54 @@ from the network at startup instead of bundling it).
 | `COTEL_ART_REPRO_CYCLES` | `2` | Read by the ART-corruption reproducer test, not by the binary: how many replace-transaction-then-restart cycles it runs. The damage accumulates across cycles, so this is the other knob to raise. |
 | `COTEL_DATA_VOLUME` | `cotel-data-repaired-20261004` | Read by `docker-compose.yml`, not by the binary: the Docker volume mounted at `/data`. Point it at a restored copy to bring an instance up *without* writing to the volume being restored from — Docker has no `volume rename`, so the only other way to serve repaired data under the expected name is to overwrite the damaged original, which is also the forensic evidence. The default is a restored copy, not the `cotel_cotel-data` name compose derives by itself: that volume holds a database the binary can no longer open and is kept untouched as evidence. A fresh install that has neither volume gets the default created empty, which is correct. |
 
+## Maintenance commands
+
+### Cost backfill
+
+When the pricing table gains a model or corrects a rate after spans were already ingested, those
+spans keep the `cost_usd` they were stored with (unset for a model the table did not know).
+`--backfill-cost` recomputes `cost_usd` from each span's stored token counts at today's rates.
+
+> **The running server holds an exclusive DuckDB lock.** No second process can open
+> `/data/cotel.duckdb` while the container is up, not even read-only (`Could not set lock on file
+> ... Conflicting lock is held`), so neither command can be run with `docker exec` against the live
+> file. The dry run reads a database restored from the newest snapshot (no downtime); the apply runs
+> against the volume while the server is stopped (brief downtime).
+
+Both one-offs below pass `--entrypoint /usr/local/bin/cotel` (or `sh`) so the image entrypoint
+does not start a second Cloudflare tunnel connector next to the server's, and `--no-deps` so nothing
+else is started.
+
+**Step 1 - dry run against the newest snapshot (no writes, no downtime):**
+
+```bash
+# Snapshot paths are absolute; pick the newest directory under /snapshots.
+docker compose run --rm --no-deps -e COTEL_DB_PATH=/tmp/dry.duckdb --entrypoint sh cotel -c \
+  'cotel --db-import "$(ls -d /snapshots/20* | tail -1)" && cotel --backfill-cost'
+```
+
+It prints a per-model table of old and new cost and the total delta. Spans with an unknown or empty
+model are counted separately and left untouched. The snapshot is up to `COTEL_SNAPSHOT_INTERVAL`
+old, so the totals are an estimate of what the apply will do.
+
+**Step 2 - apply (after reviewing the dry run):**
+
+```bash
+docker compose stop cotel
+docker compose run --rm --no-deps --entrypoint /usr/local/bin/cotel cotel --backfill-cost-apply
+docker compose start cotel
+```
+
+It updates `cost_usd` on every span of a priced model. It is idempotent: cost is recomputed from the
+stored token counts, not scaled, so a second run changes nothing.
+
+> **Scope - `spans` only.** `daily_usage` is not touched. The retention roll-up derives
+> `total_cost_usd` as `SUM(spans.cost_usd)`, so a day rolled up *after* the backfill is correct by
+> construction. A day already rolled up keeps the cost it was rolled up with: roll-ups written
+> before schema v8 kept no cache-token totals, and on real traffic cache tokens outnumber input and
+> output ~156:1, so a recompute from the stored counters would understate the cost. Run the backfill
+> before the affected days leave the raw window (`COTEL_RETENTION_RAW_DAYS`, 30 days by default).
+
 ## Architecture
 
 ```

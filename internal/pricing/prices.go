@@ -1,6 +1,6 @@
 // Package pricing computes ingest-time cost from token counts.
 // Prices are USD per million tokens sourced from Anthropic's published pricing page.
-// Last verified: 2026-08 against https://platform.claude.com/docs/en/about-claude/models/overview
+// Last verified: 2026-11 against https://platform.claude.com/docs/en/about-claude/models/overview
 // Update this table when Anthropic revises rates.
 package pricing
 
@@ -23,8 +23,56 @@ type ModelPrices struct {
 // snapshot suffixes canonicalID strips.
 //
 // Cache rates follow Anthropic's convention: CacheRead = 0.1 x input,
-// CacheWrite = 1.25 x input (the 5-minute ephemeral TTL).
+// CacheWrite = 1.25 x input (the 5-minute ephemeral TTL). Where Anthropic
+// publishes a cache-read rate that departs from 0.1 x input (Opus 5.5, Fable 5.2,
+// Sonnet 5.5), the published rate wins.
 var table = map[string]ModelPrices{
+	// Claude 5.5 / 5.2 generation
+	"claude-opus-5-5": {
+		InputPerMTok:      4.00,
+		OutputPerMTok:     20.00,
+		CacheReadPerMTok:  0.20,
+		CacheWritePerMTok: 5.00,
+	},
+	"claude-sonnet-5-5": {
+		InputPerMTok:      2.00,
+		OutputPerMTok:     10.00,
+		CacheReadPerMTok:  0.10,
+		CacheWritePerMTok: 2.50,
+	},
+	// Haiku 5.5 bills $0.50/$2.50 for prompts over 100K tokens. A span does not
+	// say which tier the request was billed at, so the base rate is used and
+	// long-prompt Haiku requests are under-counted.
+	"claude-haiku-5-5": {
+		InputPerMTok:      0.10,
+		OutputPerMTok:     0.50,
+		CacheReadPerMTok:  0.01,
+		CacheWritePerMTok: 0.125,
+	},
+	"claude-fable-5-2": {
+		InputPerMTok:      8.00,
+		OutputPerMTok:     40.00,
+		CacheReadPerMTok:  0.20,
+		CacheWritePerMTok: 10.00,
+	},
+	"claude-mythos-5-2": {
+		InputPerMTok:      8.00,
+		OutputPerMTok:     40.00,
+		CacheReadPerMTok:  0.20,
+		CacheWritePerMTok: 10.00,
+	},
+	"claude-fable-5-1": {
+		InputPerMTok:      10.00,
+		OutputPerMTok:     50.00,
+		CacheReadPerMTok:  1.00,
+		CacheWritePerMTok: 12.50,
+	},
+	"claude-mythos-5-1": {
+		InputPerMTok:      10.00,
+		OutputPerMTok:     50.00,
+		CacheReadPerMTok:  1.00,
+		CacheWritePerMTok: 12.50,
+	},
 	// Claude 5 family
 	"claude-fable-5": {
 		InputPerMTok:      10.00,
@@ -44,14 +92,13 @@ var table = map[string]ModelPrices{
 		CacheReadPerMTok:  0.50,
 		CacheWritePerMTok: 6.25,
 	},
-	// Sonnet 5 has a $2/$10 introductory rate through 2026-08-31; we bill the
-	// standard $3/$15 rate. A date-dependent rate would silently rot, so the
-	// standard rate is the boring, correct choice.
+	// Sonnet 5 launched with a $2/$10 rate described as introductory; the
+	// published rate is still $2/$10 as of 2026-11, so that is what is billed.
 	"claude-sonnet-5": {
-		InputPerMTok:      3.00,
-		OutputPerMTok:     15.00,
-		CacheReadPerMTok:  0.30,
-		CacheWritePerMTok: 3.75,
+		InputPerMTok:      2.00,
+		OutputPerMTok:     10.00,
+		CacheReadPerMTok:  0.20,
+		CacheWritePerMTok: 2.50,
 	},
 	// Claude 4.x family
 	"claude-opus-4-8": {
@@ -130,6 +177,15 @@ func isSnapshotDate(s string) bool {
 		}
 	}
 	return true
+}
+
+// Known reports whether the model (after stripping tier and snapshot suffixes)
+// is present in the price table. Callers use this to tell a genuinely unpriced
+// model from a priced one that computes a zero cost (e.g. a span with zero
+// billable tokens). Do not infer "unknown model" from Compute() == 0.
+func Known(model string) bool {
+	_, ok := table[canonicalID(model)]
+	return ok
 }
 
 // Compute returns the estimated cost in USD for the given token counts and model.
