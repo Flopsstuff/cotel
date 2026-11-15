@@ -226,7 +226,7 @@ WITH ` + rangeUsageCTE + `,
 usage_agg AS (
     SELECT actor_id,
            COALESCE(SUM(cost), 0) AS cost,
-           COUNT(DISTINCT session_id) AS sessions
+           COUNT(DISTINCT NULLIF(session_id, '')) AS sessions
     FROM usage
     GROUP BY actor_id
 ),
@@ -343,7 +343,7 @@ usage AS (
     FROM daily_usage du CROSS JOIN raw_floor rf
     WHERE %s AND (rf.ts IS NULL OR du.day < CAST(CAST(rf.ts AS TIMESTAMP) AS DATE))%s
 )
-SELECT COALESCE(SUM(cost), 0), COUNT(DISTINCT session_id) FROM usage
+SELECT COALESCE(SUM(cost), 0), COUNT(DISTINCT NULLIF(session_id, '')) FROM usage
 `, rawPrincipal, rawSince, aggPrincipal, aggSince)
 
 	var cost float64

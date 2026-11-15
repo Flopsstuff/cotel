@@ -225,6 +225,8 @@ func decodeSpan(sp *tracepb.Span, svcName string, resAttrs map[string]any, resJS
 		s.CostUSD = &f
 	}
 
+	normalizeProducer(svcName, sp.Name, attrs, &s)
+
 	// Derive cost from token counts when the producer did not supply cost_usd.
 	// Claude Code beta telemetry omits the field; we compute it ingest-time so
 	// the stored row is always queryable without a per-query price JOIN.

@@ -447,3 +447,35 @@ func TestGetActorWithStats(t *testing.T) {
 }
 
 func ptrTime(t time.Time) *time.Time { return &t }
+
+// A span stored without a session id (Codex and Grok emit most of theirs that
+// way) is not a session: before this was counted, an actor whose only spans were
+// sessionless showed one session on the Actors page and none on Sessions.
+func TestActorSessionsIgnoreEmptySessionID(t *testing.T) {
+	db := openTestActorDB(t)
+	u := mustCreateTestActor(t, db, "codex")
+	now := time.Now()
+	addRangeSpan(t, db, "noise-1", "codex", "", now.Add(-time.Hour), 0)
+	addRangeSpan(t, db, "noise-2", "codex", "", now.Add(-time.Hour), 0)
+
+	got, err := db.GetActorWithStats(u.ID, nil)
+	if err != nil {
+		t.Fatalf("GetActorWithStats: %v", err)
+	}
+	if got.Sessions != 0 {
+		t.Errorf("GetActorWithStats: want 0 sessions, got %d", got.Sessions)
+	}
+
+	addRangeSpan(t, db, "turn", "codex", "conv-1", now.Add(-time.Hour), 1)
+	actors, _, err := db.ListActorsPage(ListActorsOptions{})
+	if err != nil {
+		t.Fatalf("ListActorsPage: %v", err)
+	}
+	row, ok := actorByName(actors, "codex")
+	if !ok {
+		t.Fatalf("codex missing from %v", actorNames(actors))
+	}
+	if row.Sessions != 1 {
+		t.Errorf("ListActorsPage: want 1 session, got %d", row.Sessions)
+	}
+}
