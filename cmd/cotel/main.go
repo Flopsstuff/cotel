@@ -33,6 +33,8 @@ func main() {
 	healthcheck := flag.Bool("healthcheck", false, "probe the local dashboard /healthz and exit 0 (ready) or 1; used by the container HEALTHCHECK")
 	backfillCost := flag.Bool("backfill-cost", false, "dry-run: show what recalculating cost_usd from stored token counts would change (no writes), then exit")
 	backfillCostApply := flag.Bool("backfill-cost-apply", false, "recalculate cost_usd for all spans of priced models from their stored token counts, then exit")
+	purgeDropped := flag.Bool("purge-dropped", false, "dry-run: show which stored spans today's ingest would drop (Codex spans without a session, ADR-0030), then exit")
+	purgeDroppedApply := flag.Bool("purge-dropped-apply", false, "delete the stored spans today's ingest would drop (Codex spans without a session, ADR-0030), then exit")
 	flag.Parse()
 
 	dbPath := env("COTEL_DB_PATH", "/data/cotel.duckdb")
@@ -73,6 +75,9 @@ func main() {
 	// like --db-import it runs before the listeners bind and exits afterwards.
 	if *backfillCost || *backfillCostApply {
 		os.Exit(runBackfill(dbPath, *backfillCostApply))
+	}
+	if *purgeDropped || *purgeDroppedApply {
+		os.Exit(runPurgeDropped(dbPath, *purgeDroppedApply))
 	}
 
 	// Bind BEFORE storage.Open: WAL replay + schema migration can block for
@@ -183,6 +188,40 @@ func runBackfill(dbPath string, apply bool) int {
 		return 1
 	}
 	printBackfillReport(rep, apply)
+	return 0
+}
+
+// runPurgeDropped deletes the stored spans that ingest would drop today, for
+// data ingested before the rule (ADR-0030). apply=false is a dry run.
+func runPurgeDropped(dbPath string, apply bool) int {
+	db, err := storage.Open(dbPath)
+	if err != nil {
+		log.Printf("open storage: %v", err)
+		return 1
+	}
+	defer db.Close()
+
+	if apply {
+		fmt.Println("=== DELETING spans ingest would drop ===")
+	} else {
+		fmt.Println("=== DRY RUN (no writes) - pass --purge-dropped-apply to delete ===")
+	}
+	rep, err := db.PurgeSpans(ingest.WouldDrop, apply)
+	if err != nil {
+		log.Printf("purge: %v", err)
+		return 1
+	}
+	fmt.Printf("\n%-24s  %-45s  %8s\n", "service", "span name", "spans")
+	fmt.Println(strings.Repeat("-", 81))
+	for _, row := range rep.Rows {
+		fmt.Printf("%-24s  %-45s  %8d\n", row.Service, row.Name, row.Spans)
+	}
+	fmt.Println(strings.Repeat("-", 81))
+	verb := "would delete"
+	if apply {
+		verb = "deleted"
+	}
+	fmt.Printf("%s: %d spans\n\n", verb, rep.Total)
 	return 0
 }
 

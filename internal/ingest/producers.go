@@ -20,13 +20,35 @@ import (
 
 // normalizeProducer applies the adapter for svcName, if there is one.
 func normalizeProducer(svcName, spanName string, attrs map[string]any, s *storage.Span) {
-	svc := strings.ToLower(svcName)
 	switch {
-	case strings.HasPrefix(svc, "codex"):
+	case isCodex(svcName):
 		normalizeCodex(attrs, s)
-	case strings.HasPrefix(svc, "grok"):
+	case strings.HasPrefix(strings.ToLower(svcName), "grok"):
 		normalizeGrok(spanName, attrs, s)
 	}
+}
+
+func isCodex(svcName string) bool {
+	return strings.HasPrefix(strings.ToLower(svcName), "codex")
+}
+
+// dropSpan reports whether a decoded span is kept out of storage. Codex exports
+// every internal tracing span - one pair per streamed response event, rollout
+// writes, filesystem calls, state polls - and only the ones that carry a
+// session feed anything cotel shows, so a Codex span without one is dropped
+// (ADR-0030). Every other producer's spans are all stored.
+func dropSpan(svcName string, s *storage.Span) bool {
+	return isCodex(svcName) && s.SessionID == ""
+}
+
+// WouldDrop reports whether ingest would drop a span with this service, name
+// and attributes today. It is meant for spans already stored without a
+// session, to purge what was ingested before the rule existed: attrs is the
+// span's stored attribute map, as decoded from JSON.
+func WouldDrop(svcName, spanName string, attrs map[string]any) bool {
+	var s storage.Span
+	normalizeProducer(svcName, spanName, attrs, &s)
+	return dropSpan(svcName, &s)
 }
 
 // Codex (service.name "codex-app-server", Rust tracing over OTLP).

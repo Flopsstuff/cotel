@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"google.golang.org/protobuf/encoding/protojson"
@@ -39,6 +40,11 @@ type Handler struct {
 	store Storer
 	queue chan storage.Span
 	done  chan struct{}
+
+	// Spans dropped by dropSpan since the last log line; see noteDropped.
+	dropMu     sync.Mutex
+	dropped    int64
+	dropLogged time.Time
 }
 
 func New(store Storer) *Handler {
@@ -64,6 +70,25 @@ func (h *Handler) drain() {
 func (h *Handler) Flush() {
 	close(h.queue)
 	<-h.done
+}
+
+// dropLogEvery bounds how often noteDropped logs: Codex sends a batch every few
+// seconds while it runs, and a line per batch would drown the log.
+const dropLogEvery = time.Minute
+
+// noteDropped counts spans dropped by dropSpan and logs the running total at
+// most once per dropLogEvery, so the volume being discarded stays visible.
+func (h *Handler) noteDropped(n int64) {
+	if n == 0 {
+		return
+	}
+	h.dropMu.Lock()
+	defer h.dropMu.Unlock()
+	h.dropped += n
+	if now := time.Now(); now.Sub(h.dropLogged) >= dropLogEvery {
+		log.Printf("ingest: dropped %d Codex spans without a session (ADR-0030)", h.dropped)
+		h.dropped, h.dropLogged = 0, now
+	}
 }
 
 // ServeHTTP handles POST /v1/traces (OTLP/HTTP protobuf or JSON).
@@ -103,6 +128,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	byAgent := actorName == "" && IngestKeyAuthFromContext(r.Context())
 	resolve := h.agentResolver(byAgent)
 
+	var dropped int64
 	for _, rs := range req.ResourceSpans {
 		svcName := attrStr(rs.GetResource().GetAttributes(), "service.name")
 		resAttrs := attrsToMap(rs.GetResource().GetAttributes())
@@ -119,10 +145,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					// Some exporters put the attribute on the span, not the resource.
 					spanActor = resolve(attrStr(sp.GetAttributes(), PaperclipAgentIDAttr))
 				}
-				h.queue <- decodeSpan(sp, svcName, resAttrs, string(resJSON), spanActor)
+				s := decodeSpan(sp, svcName, resAttrs, string(resJSON), spanActor)
+				if dropSpan(svcName, &s) {
+					dropped++
+					continue
+				}
+				h.queue <- s
 			}
 		}
 	}
+	h.noteDropped(dropped)
 
 	writeOTLPSuccess(w, r)
 }

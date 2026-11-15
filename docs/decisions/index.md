@@ -37,3 +37,4 @@ New ADRs go in this directory as `NNNN-short-title.md`, numbered sequentially.
 | [ADR-0027](./0027-users-become-actors) | Users become actors, down to the schema | Accepted |
 | [ADR-0028](./0028-ingest-keys-and-actor-tokens) | Ingest keys authorize, actor tokens identify | Accepted |
 | [ADR-0029](./0029-paperclip-agents-by-agent-id) | Paperclip agents are identified by `paperclip.agent.id` | Accepted |
+| [ADR-0030](./0030-codex-spans-without-a-session-are-dropped) | Codex spans without a session are dropped at ingest | Accepted |

@@ -613,6 +613,28 @@ stored token counts, not scaled, so a second run changes nothing.
 > output ~156:1, so a recompute from the stored counters would understate the cost. Run the backfill
 > before the affected days leave the raw window (`COTEL_RETENTION_RAW_DAYS`, 30 days by default).
 
+### Purge spans ingest now drops
+
+Codex spans without a session are dropped at ingest ([ADR-0030](docs/decisions/0030-codex-spans-without-a-session-are-dropped.md)).
+`--purge-dropped` lists the stored spans the same rule would drop, by service and span name, and
+`--purge-dropped-apply` deletes them. Only spans without a session are candidates. The same
+exclusive-lock rule as for the cost backfill applies, so the steps are the same:
+
+```bash
+# Dry run against the newest snapshot (no writes, no downtime)
+docker compose run --rm --no-deps -e COTEL_DB_PATH=/tmp/dry.duckdb --entrypoint sh cotel -c \
+  'cotel --db-import "$(ls -d /snapshots/20* | tail -1)" && cotel --purge-dropped'
+
+# Apply
+docker compose stop cotel
+docker compose run --rm --no-deps --entrypoint /usr/local/bin/cotel cotel --purge-dropped-apply
+docker compose start cotel
+```
+
+It is idempotent: a second run finds nothing. A `DELETE` does not shrink the DuckDB file; the freed
+space is reused for new spans, and the file only gets smaller when it is rebuilt from a snapshot
+([Database snapshots](docs/operations/duckdb-snapshots.md)).
+
 ## Architecture
 
 ```
