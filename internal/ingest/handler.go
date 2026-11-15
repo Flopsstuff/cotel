@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"google.golang.org/protobuf/encoding/protojson"
@@ -136,6 +137,8 @@ func (h *Handler) agentResolver(enabled bool) func(agentID string) string {
 	}
 	seen := map[string]string{}
 	return func(agentID string) string {
+		// The dashboard stores the id lowercased; match a sender's casing to it.
+		agentID = strings.ToLower(strings.TrimSpace(agentID))
 		if agentID == "" {
 			return ""
 		}

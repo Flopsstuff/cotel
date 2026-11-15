@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/Flopsstuff/cotel/internal/ingest"
@@ -385,6 +386,7 @@ func TestPaperclipAgentAttribution(t *testing.T) {
 		{"ingest key, span attr only", true, "", "", daedalus, "Daedalus", 1},
 		{"resource attr beats span attr", true, "", wayland, daedalus, "Wayland", 1},
 		{"unknown agent stays anonymous", true, "", "11111111-1111-1111-1111-111111111111", "", "", 1},
+		{"agent id matched case-insensitively", true, "", strings.ToUpper(wayland), "", "Wayland", 1},
 		{"actor token wins", true, "flop", wayland, "", "flop", 0},
 		{"no ingest key: attribute ignored", false, "", wayland, "", "", 0},
 	}
