@@ -2,6 +2,11 @@
 #
 # agent-set-cotel-token.sh — give the running agent its own cotel telemetry token.
 #
+# OBSOLETE for Paperclip agents (ADR-0029): an agent key can no longer change any
+# *_local agent's env (Paperclip #15283 returns 403), and agents are attributed by
+# the paperclip.agent.id Paperclip puts on their spans, mapped to an actor in
+# cotel. Kept for reference and for non-Paperclip setups.
+#
 # cotel attributes OTLP spans to an actor by its actor token. Paperclip sends one
 # company-wide OTLP destination and Authorization header (a cotel ingest key) for
 # every agent and strips any per-agent OTEL_* env (ADR-0028), so the agent's

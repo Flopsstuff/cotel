@@ -22,6 +22,7 @@ interface ActorVM {
   created_at: string
   last_seen: string | null
   isAnon: boolean
+  paperclip: boolean
 }
 
 function AddActorModal({ onClose, onCreated }: { onClose: () => void; onCreated: (u: Actor) => void }) {
@@ -138,6 +139,7 @@ export default function Actors() {
     created_at: u.created_at,
     last_seen: u.last_seen,
     isAnon: u.id === ANON_ID,
+    paperclip: !!u.paperclip_agent_id,
   }))
 
   const suffix = RANGE_SUFFIX[range]
@@ -166,7 +168,12 @@ export default function Actors() {
       label: 'Name',
       sortable: true,
       render: (_v, row) => (
-        <span className={row.isAnon ? styles.actorNameAnon : styles.actorName}>{row.name}</span>
+        <>
+          <span className={row.isAnon ? styles.actorNameAnon : styles.actorName}>{row.name}</span>
+          {row.paperclip && (
+            <span className={styles.paperclipTag} title="Mapped to a Paperclip agent">paperclip</span>
+          )}
+        </>
       ),
     },
     {

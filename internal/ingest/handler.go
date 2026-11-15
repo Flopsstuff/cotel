@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"time"
 
@@ -21,6 +22,17 @@ import (
 type Storer interface {
 	InsertSpan(storage.Span) error
 }
+
+// AgentResolver maps a Paperclip agent id to the name of the actor it belongs
+// to ("" when none). *storage.DB implements it; a Storer that does not is simply
+// never asked, and such spans stay anonymous.
+type AgentResolver interface {
+	ActorNameByPaperclipAgentID(agentID string) (string, error)
+}
+
+// PaperclipAgentIDAttr is the attribute Paperclip sets on every span it exports
+// for an agent, via OTEL_RESOURCE_ATTRIBUTES (ADR-0029).
+const PaperclipAgentIDAttr = "paperclip.agent.id"
 
 type Handler struct {
 	store Storer
@@ -83,22 +95,61 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Actor identity comes from the auth middleware context, not OTEL attributes.
+	// Actor identity comes from the auth middleware context: an actor token wins.
+	// Only when a shared ingest key authorized the request and no actor token
+	// named the sender may the paperclip.agent.id attribute name it (ADR-0029).
 	actorName := ActorNameFromContext(r.Context())
+	byAgent := actorName == "" && IngestKeyAuthFromContext(r.Context())
+	resolve := h.agentResolver(byAgent)
 
 	for _, rs := range req.ResourceSpans {
 		svcName := attrStr(rs.GetResource().GetAttributes(), "service.name")
 		resAttrs := attrsToMap(rs.GetResource().GetAttributes())
 		resJSON, _ := json.Marshal(resAttrs)
+		resActor := actorName
+		if byAgent {
+			resActor = resolve(attrStr(rs.GetResource().GetAttributes(), PaperclipAgentIDAttr))
+		}
 
 		for _, ss := range rs.ScopeSpans {
 			for _, sp := range ss.Spans {
-				h.queue <- decodeSpan(sp, svcName, resAttrs, string(resJSON), actorName)
+				spanActor := resActor
+				if byAgent && spanActor == "" {
+					// Some exporters put the attribute on the span, not the resource.
+					spanActor = resolve(attrStr(sp.GetAttributes(), PaperclipAgentIDAttr))
+				}
+				h.queue <- decodeSpan(sp, svcName, resAttrs, string(resJSON), spanActor)
 			}
 		}
 	}
 
 	writeOTLPSuccess(w, r)
+}
+
+// agentResolver returns a per-request lookup from Paperclip agent id to actor
+// name, memoized so a batch from one agent costs one query. When attribution by
+// agent is not allowed, or the store cannot resolve agents, every lookup is "".
+func (h *Handler) agentResolver(enabled bool) func(agentID string) string {
+	r, ok := h.store.(AgentResolver)
+	if !enabled || !ok {
+		return func(string) string { return "" }
+	}
+	seen := map[string]string{}
+	return func(agentID string) string {
+		if agentID == "" {
+			return ""
+		}
+		if name, hit := seen[agentID]; hit {
+			return name
+		}
+		name, err := r.ActorNameByPaperclipAgentID(agentID)
+		if err != nil {
+			log.Printf("ingest: resolve paperclip agent %s: %v", agentID, err)
+			name = ""
+		}
+		seen[agentID] = name
+		return name
+	}
 }
 
 // sessionIDKeys are the attribute key names Claude Code may use for the session

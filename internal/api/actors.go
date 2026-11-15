@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -21,7 +22,11 @@ type ActorStore interface {
 	DeleteAnonymousData() error
 	GetSetting(key string) (string, error)
 	SetSetting(key, value string) error
+	SetActorPaperclipAgentID(actorID, agentID string) error
 }
+
+// paperclipAgentIDRe is the shape of a Paperclip agent id (a UUID).
+var paperclipAgentIDRe = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
 type actorItem struct {
 	ID           string  `json:"id"`
@@ -31,6 +36,8 @@ type actorItem struct {
 	TotalCostUSD float64 `json:"cost"`
 	Sessions     int64   `json:"sessions"`
 	LastSeen     *string `json:"last_seen"`
+	// PaperclipAgentID is the Paperclip agent mapped to this actor (ADR-0029).
+	PaperclipAgentID *string `json:"paperclip_agent_id"`
 }
 
 type actorsListResponse struct {
@@ -67,6 +74,10 @@ func toActorItem(u storage.ActorWithStats) actorItem {
 	if u.LastSeen != nil {
 		s := u.LastSeen.UTC().Format(time.RFC3339)
 		item.LastSeen = &s
+	}
+	if u.PaperclipAgentID != "" {
+		id := u.PaperclipAgentID
+		item.PaperclipAgentID = &id
 	}
 	return item
 }
@@ -107,6 +118,10 @@ func (h *Handler) handleActorByID(w http.ResponseWriter, r *http.Request, id str
 	}
 	if r.Method == http.MethodGet {
 		h.getActor(w, r, id)
+		return
+	}
+	if r.Method == http.MethodPatch {
+		h.patchActor(w, r, id)
 		return
 	}
 	if r.Method != http.MethodDelete {
@@ -237,4 +252,36 @@ func (h *Handler) createActor(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(toActorItemPlain(u))
+}
+
+// patchActor handles PATCH /api/v1/actors/{id}. The only writable field is
+// paperclip_agent_id: a Paperclip agent UUID maps that agent's spans to this
+// actor, and "" clears the mapping (ADR-0029).
+func (h *Handler) patchActor(w http.ResponseWriter, r *http.Request, id string) {
+	if id == storage.AnonymousActorID {
+		jsonError(w, "not found", http.StatusNotFound)
+		return
+	}
+	var req struct {
+		PaperclipAgentID *string `json:"paperclip_agent_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.PaperclipAgentID == nil {
+		jsonError(w, "body must be {\"paperclip_agent_id\": \"<uuid>\" | \"\"}", http.StatusBadRequest)
+		return
+	}
+	agentID := strings.ToLower(strings.TrimSpace(*req.PaperclipAgentID))
+	if agentID != "" && !paperclipAgentIDRe.MatchString(agentID) {
+		jsonError(w, "paperclip_agent_id must be a UUID", http.StatusBadRequest)
+		return
+	}
+	err := h.actorStore.SetActorPaperclipAgentID(id, agentID)
+	if errors.Is(err, storage.ErrNotFound) {
+		jsonError(w, "not found", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		jsonError(w, "update failed", http.StatusInternalServerError)
+		return
+	}
+	h.getActor(w, r, id)
 }

@@ -176,6 +176,9 @@ export interface Actor {
   cost: number
   sessions: number
   last_seen: string | null
+  // Paperclip agent UUID mapped to this actor: spans sent with an ingest key and
+  // no actor token are attributed here when their paperclip.agent.id matches.
+  paperclip_agent_id: string | null
 }
 
 export interface ActorsListResponse {
@@ -300,6 +303,18 @@ export async function rotateActorToken(id: string): Promise<Actor> {
     const text = await res.text().catch(() => res.statusText)
     throw new Error(text || `${res.status}`)
   }
+  return res.json()
+}
+
+// setActorPaperclipAgentId maps a Paperclip agent UUID to the actor; an empty
+// string clears it. Setting an id another actor has moves it to this actor.
+export async function setActorPaperclipAgentId(id: string, paperclipAgentId: string): Promise<Actor> {
+  const res = await fetch(`/api/v1/actors/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ paperclip_agent_id: paperclipAgentId }),
+  })
+  if (!res.ok) throw await responseError(res)
   return res.json()
 }
 

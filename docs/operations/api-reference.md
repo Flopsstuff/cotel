@@ -247,7 +247,19 @@ delete are still accepted as aliases; response bodies use the new names only
 (`actors`, `actor_id`, `actors_count`).
 
 Its rows are returned under `actors` rather than `items`. `GET /actors/{id}`
-returns one actor in the same shape and accepts `range`. See
+returns one actor in the same shape and accepts `range`. Each actor carries
+`paperclip_agent_id` (a UUID or `null`): the Paperclip agent whose spans are
+attributed to it ([ADR-0029](../decisions/0029-paperclip-agents-by-agent-id.md)).
+
+### `PATCH /actors/{id}`
+
+Sets or clears the actor's Paperclip agent mapping, the only writable field.
+Body: `{"paperclip_agent_id": "<uuid>"}`, or `""` to clear. The value is trimmed
+and lower-cased; anything but a UUID or `""` is `400`. Assigning an id another
+actor holds moves it to this one. Answers `200` with the actor, as `GET` would;
+`404` for an unknown or deleted actor and for `__anonymous__`.
+
+See
 [Actors and Authentication](./actors-and-auth.md) for the management endpoints
 (create, rotate, delete).
 
