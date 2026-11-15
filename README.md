@@ -2,7 +2,14 @@
 
 # cotel — Claude Code Telemetry
 
-One Docker container. OTLP ingest on `:4318`, interactive analytics dashboard on `:8080`. No cloud dependencies, no sign-up.
+Self-hosted telemetry for Claude Code: sessions, tokens and spend for every sender — people, AI agents and hosts. One Docker container, OTLP ingest on `:4318`, dashboard on `:8080`. No cloud dependencies, no sign-up.
+
+- **Usage by actor** — every sender that identifies itself (actor token or Paperclip agent id) is an actor with its own page and spend; only senders that don't land together on Anonymous.
+- **Cost by model** — per-span cost from a built-in Claude price table (Claude 5.5 and 5.2 included), repriceable after the fact with `--backfill-cost-apply` (`--backfill-cost` previews).
+- **Ingest keys for agent fleets** — one shared `cotel_ik_…` key authorizes ingest for many senders that share one set of OTLP headers.
+- **Paperclip agents, natively** — attributed by `paperclip.agent.id`; one Agent observability setting with an ingest key, no per-agent env. See [Paperclip agents](docs/operations/actors-and-auth.md#paperclip-agents).
+
+Docs: **https://flopsstuff.github.io/cotel/**
 
 ![cotel Overview](docs/assets/dashboard-overview.png)
 
@@ -71,12 +78,15 @@ Add to your `~/.claude/settings.json`:
     "CLAUDE_CODE_ENHANCED_TELEMETRY_BETA": "1",
     "OTEL_TRACES_EXPORTER": "otlp",
     "OTEL_EXPORTER_OTLP_PROTOCOL": "http/json",
-    "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "http://localhost:4318/v1/traces"
+    "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "http://localhost:4318/v1/traces",
+    "OTEL_EXPORTER_OTLP_HEADERS": "Authorization=Bearer cotel_<your-actor-token>"
   }
 }
 ```
 
 Restart Claude Code. Telemetry starts flowing immediately.
+
+The token comes from **Actors** → **Add actor** and puts the spans under that actor. While **Allow anonymous OTLP** is on (the default) the header is optional and spans without it land on the Anonymous actor.
 
 ## Actors and authentication
 
@@ -160,13 +170,13 @@ Add to your `~/.claude/settings.json`:
 
 Replace `cotel-ingest.yourdomain.com` with your actual OTLP hostname, and `cotel_<your-token>` with the token you copied above. Restart Claude Code to apply the changes.
 
-> **Token enforcement:** cotel accepts anonymous spans until the first actor with a token is created. Once any token exists, every OTLP request must carry a valid `Authorization: Bearer cotel_...` header — unless you explicitly re-enable Allow anonymous OTLP in Setup → Settings.
+> **Token enforcement:** a public ingest endpoint should not accept anonymous writes. Once every sender has its actor token or an ingest key, disable **Allow anonymous OTLP** in Setup → Settings; requests without a valid `Authorization: Bearer cotel_…` header then get `401`.
 
 ## Ports
 
 | Port | Purpose |
 |------|---------|
-| 4318 | OTLP/HTTP trace ingest (`POST /v1/traces`) |
+| 4318 | OTLP/HTTP ingest (`POST /v1/traces`; `POST /v1/logs` is accepted and discarded) |
 | 8080 | Analytics dashboard |
 
 > **HTTP-only:** cotel speaks OTLP/HTTP (`application/x-protobuf` and `application/json`). There is no gRPC listener on port 4317. If spans are silently dropped, ensure `OTEL_EXPORTER_OTLP_PROTOCOL=http/json` (or `http/protobuf`) is set — the OTel SDK default is `grpc`, which will fail against cotel.
