@@ -113,6 +113,6 @@ Tracked as a child rollout issue of FLO-486.
 
 - FLO-486 (this), FLO-485 (root-cause investigation)
 - `docs/operations/agent-identity.md` — the per-agent identity scheme (git + cotel)
-- `docs/operations/users-and-auth.md` — cotel users & tokens
+- `docs/operations/actors-and-auth.md` — cotel users & tokens
 - ADR-0004 — Multi-User Separation
 - `scripts/agent-set-cotel-token.sh`, `scripts/agent-set-git-identity.sh`

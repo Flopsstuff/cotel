@@ -6,7 +6,7 @@ import styles from './Layout.module.css'
 
 const navItems = [
   { to: '/', label: 'Overview', icon: <Activity size={15} />, end: true },
-  { to: '/users', label: 'Users', icon: <Users size={15} /> },
+  { to: '/actors', label: 'Actors', icon: <Users size={15} /> },
   { to: '/sessions', label: 'Sessions', icon: <Layers size={15} /> },
   { to: '/history', label: 'History', icon: <CalendarDays size={15} /> },
   { to: '/costs', label: 'Costs', icon: <DollarSign size={15} /> },

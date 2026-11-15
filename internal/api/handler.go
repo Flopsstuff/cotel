@@ -25,7 +25,7 @@ type DB interface {
 type Handler struct {
 	db              DB
 	tokenDB         TokenStore
-	userStore       UserStore
+	actorStore       ActorStore
 	publicIngestURL string
 }
 
@@ -40,9 +40,9 @@ func (h *Handler) SetTokenStore(ts TokenStore) *Handler {
 	return h
 }
 
-// SetUserStore attaches a writable store for the /users and /settings endpoints.
-func (h *Handler) SetUserStore(us UserStore) *Handler {
-	h.userStore = us
+// SetActorStore attaches a writable store for the /actors and /settings endpoints.
+func (h *Handler) SetActorStore(us ActorStore) *Handler {
+	h.actorStore = us
 	return h
 }
 
@@ -63,6 +63,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1")
+	// /users is the pre-v11 name of /actors (ADR-0027); kept so bookmarks and
+	// scripts written against it keep working.
+	if path == "/users" || strings.HasPrefix(path, "/users/") {
+		path = "/actors" + strings.TrimPrefix(path, "/users")
+	}
 
 	switch {
 	case path == "/overview":
@@ -81,14 +86,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleModels(w, r)
 	case path == "/history" || path == "/history/":
 		h.handleHistory(w, r)
-	case path == "/users" || path == "/users/":
-		h.handleUsers(w, r)
-	case strings.HasPrefix(path, "/users/"):
-		rest := strings.TrimPrefix(path, "/users/")
+	case path == "/actors" || path == "/actors/":
+		h.handleActors(w, r)
+	case strings.HasPrefix(path, "/actors/"):
+		rest := strings.TrimPrefix(path, "/actors/")
 		if strings.HasSuffix(rest, "/rotate-token") {
-			h.handleUserRotateToken(w, r, strings.TrimSuffix(rest, "/rotate-token"))
+			h.handleActorRotateToken(w, r, strings.TrimSuffix(rest, "/rotate-token"))
 		} else {
-			h.handleUserByID(w, r, rest)
+			h.handleActorByID(w, r, rest)
 		}
 	case path == "/settings" || path == "/settings/":
 		h.handleSettings(w, r)
@@ -227,28 +232,31 @@ func likeFilter(column, q string) (clause string, args []any) {
 	return " AND " + column + ` ILIKE ? ESCAPE '\'`, []any{"%" + escapeLike(q) + "%"}
 }
 
-// userIDClause returns an additional SQL WHERE fragment and its argument when
-// the request contains a non-empty user_id query parameter. The caller appends
+// actorIDClause returns an additional SQL WHERE fragment and its argument when
+// the request contains a non-empty actor_id query parameter. The caller appends
 // the clause directly to the end of their existing WHERE and appends arg to
-// their args slice (only when arg is non-empty). When no user_id is present
+// their args slice (only when arg is non-empty). When no actor_id is present
 // both return values are empty strings.
 //
-// The special value "__anonymous__" maps to user_id IS NULL (spans with no user_id).
-func userIDClause(r *http.Request) (clause string, arg string) {
-	return userIDClauseOn(r, "")
+// The special value "__anonymous__" maps to actor_id IS NULL (spans with no actor_id).
+func actorIDClause(r *http.Request) (clause string, arg string) {
+	return actorIDClauseOn(r, "")
 }
 
-// userIDClauseOn is userIDClause with the column qualified by a table alias
+// actorIDClauseOn is actorIDClause with the column qualified by a table alias
 // prefix (e.g. "du."), for queries that reference more than one table.
-func userIDClauseOn(r *http.Request, prefix string) (clause string, arg string) {
-	uid := r.URL.Query().Get("user_id")
+func actorIDClauseOn(r *http.Request, prefix string) (clause string, arg string) {
+	uid := r.URL.Query().Get("actor_id")
+	if uid == "" {
+		uid = r.URL.Query().Get("user_id") // pre-v11 name (ADR-0027)
+	}
 	if uid == "" {
 		return "", ""
 	}
 	if uid == "__anonymous__" {
-		return " AND " + prefix + "user_id IS NULL", ""
+		return " AND " + prefix + "actor_id IS NULL", ""
 	}
-	return " AND " + prefix + "user_id = ?", uid
+	return " AND " + prefix + "actor_id = ?", uid
 }
 
 // usageCTE unions raw spans with rolled-up daily_usage into one row set that
@@ -275,7 +283,7 @@ usage AS (
         CAST(CAST(start_time AS TIMESTAMP) AS DATE) AS day,
         start_time AS first_seen,
         NULLIF(session_id, '') AS session_id,
-        user_id,
+        actor_id,
         NULLIF(model, '') AS model,
         NULLIF(tool_name, '') AS tool_name,
         CAST(1 AS BIGINT) AS spans,
@@ -290,7 +298,7 @@ usage AS (
         du.day,
         CAST(du.day AS TIMESTAMPTZ),
         NULLIF(du.session_id, '%[2]s'),
-        du.user_id,
+        du.actor_id,
         NULLIF(du.model, '%[2]s'),
         NULLIF(du.tool_name, '%[2]s'),
         du.span_count,
@@ -303,7 +311,7 @@ usage AS (
 )`
 
 // usageFilter carries the WHERE fragments that scope usageCTE to a time window
-// and, optionally, one user, together with their arguments in statement order —
+// and, optionally, one actor, together with their arguments in statement order —
 // raw side first, aggregate side second.
 type usageFilter struct {
 	raw  string
@@ -314,8 +322,8 @@ type usageFilter struct {
 // newUsageFilter builds the scoping fragments for usageCTE. from and to are
 // inclusive bounds; nil leaves that side unbounded.
 func newUsageFilter(r *http.Request, from, to *time.Time) usageFilter {
-	rawUID, rawUIDArg := userIDClause(r)
-	aggUID, aggUIDArg := userIDClauseOn(r, "du.")
+	rawUID, rawUIDArg := actorIDClause(r)
+	aggUID, aggUIDArg := actorIDClauseOn(r, "du.")
 
 	f := usageFilter{raw: rawUID, agg: aggUID}
 	if rawUIDArg != "" {
@@ -347,7 +355,7 @@ func (f usageFilter) cte() string {
 	return fmt.Sprintf(usageCTE, f.raw, storage.UnknownSentinel, f.agg)
 }
 
-// ---- /api/v1/users — delegated to users.go ----
+// ---- /api/v1/actors — delegated to actors.go ----
 
 // ---- /api/v1/health ----
 
@@ -497,7 +505,7 @@ func (h *Handler) setting(key string) (string, error) {
 type overviewResponse struct {
 	Range             string         `json:"range"`
 	SessionsCount     int64          `json:"sessions_count"`
-	UsersCount        int64          `json:"users_count"`
+	ActorsCount        int64          `json:"actors_count"`
 	TotalCostUSD      float64        `json:"total_cost_usd"`
 	TotalInputTokens  int64          `json:"total_input_tokens"`
 	TotalOutputTokens int64          `json:"total_output_tokens"`
@@ -534,12 +542,12 @@ func (h *Handler) handleOverview(w http.ResponseWriter, r *http.Request) {
 		TopTools:   []topToolRow{},
 	}
 
-	// The anonymous bucket has no user_id, so COUNT(DISTINCT user_id) would drop
-	// it; it is one principal on the users list and counts as one here too.
+	// The anonymous bucket has no actor_id, so COUNT(DISTINCT actor_id) would drop
+	// it; it is one principal on the actors list and counts as one here too.
 	if err := h.db.QueryRow(cte+`
 SELECT
     COUNT(DISTINCT session_id),
-    COUNT(DISTINCT user_id) + CASE WHEN COUNT(*) FILTER (WHERE user_id IS NULL) > 0 THEN 1 ELSE 0 END,
+    COUNT(DISTINCT actor_id) + CASE WHEN COUNT(*) FILTER (WHERE actor_id IS NULL) > 0 THEN 1 ELSE 0 END,
     COALESCE(SUM(cost), 0),
     COALESCE(SUM(input_tokens), 0),
     COALESCE(SUM(output_tokens), 0),
@@ -547,7 +555,7 @@ SELECT
 FROM usage
 `, f.args...).Scan(
 		&resp.SessionsCount,
-		&resp.UsersCount,
+		&resp.ActorsCount,
 		&resp.TotalCostUSD,
 		&resp.TotalInputTokens,
 		&resp.TotalOutputTokens,
@@ -636,7 +644,7 @@ GROUP BY tool_name ORDER BY call_count DESC, tool_name ASC LIMIT 5
 
 type sessionItem struct {
 	SessionID    string  `json:"session_id"`
-	UserID       string  `json:"user_id"`
+	ActorID       string  `json:"actor_id"`
 	FirstSeen    string  `json:"first_seen"`
 	LastSeen     string  `json:"last_seen"`
 	Model        string  `json:"model"`
@@ -688,7 +696,7 @@ func (h *Handler) handleSessions(w http.ResponseWriter, r *http.Request) {
 		sortExpr = "MIN(start_time)"
 	}
 
-	uidClause, uid := userIDClause(r)
+	uidClause, uid := actorIDClause(r)
 	sinceClause := ""
 	scopeArgs := []any{}
 	if uid != "" {
@@ -718,7 +726,7 @@ func (h *Handler) handleSessions(w http.ResponseWriter, r *http.Request) {
 			COALESCE(SUM(output_tokens), 0),
 			COUNT(*) FILTER (WHERE tool_name IS NOT NULL AND tool_name <> ''),
 			MAX(CASE WHEN status_code = 2 THEN 1 ELSE 0 END),
-			COALESCE(MAX(user_id), '')
+			COALESCE(MAX(actor_id), '')
 		FROM spans
 		WHERE `+hasSession+`%s
 		GROUP BY session_id
@@ -740,7 +748,7 @@ func (h *Handler) handleSessions(w http.ResponseWriter, r *http.Request) {
 		var firstSeen, lastSeen time.Time
 		var hasError int
 		if err := rows.Scan(&s.SessionID, &firstSeen, &lastSeen, &s.Model,
-			&s.CostUSD, &s.InputTokens, &s.OutputTokens, &s.ToolCalls, &hasError, &s.UserID); err != nil {
+			&s.CostUSD, &s.InputTokens, &s.OutputTokens, &s.ToolCalls, &hasError, &s.ActorID); err != nil {
 			queryFailed(w)
 			return
 		}
@@ -1137,8 +1145,8 @@ func (h *Handler) handleTools(w http.ResponseWriter, r *http.Request) {
 	sort, order := parseSortOrder(r, toolSortExprs, "calls")
 	page, limit := parsePaging(r)
 
-	rawUID, rawUIDArg := userIDClause(r)
-	aggUID, aggUIDArg := userIDClauseOn(r, "du.")
+	rawUID, rawUIDArg := actorIDClause(r)
+	aggUID, aggUIDArg := actorIDClauseOn(r, "du.")
 
 	var rawSince, aggSince string
 	filterArgs := []any{}
@@ -1220,7 +1228,7 @@ ORDER BY %s %s NULLS LAST, name ASC%s
 // row that predates schema v9. It is nil when no such row exists, or when the
 // gap it describes falls entirely before the selected range.
 func (h *Handler) durationStatsSince(r *http.Request, since *time.Time) *string {
-	aggUID, aggUIDArg := userIDClauseOn(r, "du.")
+	aggUID, aggUIDArg := actorIDClauseOn(r, "du.")
 	args := []any{}
 	if aggUIDArg != "" {
 		args = append(args, aggUIDArg)
@@ -1294,7 +1302,7 @@ func (h *Handler) handleBashCommands(w http.ResponseWriter, r *http.Request) {
 	sort, order := parseSortOrder(r, bashSortExprs, "calls")
 	page, limit := parsePaging(r)
 
-	uidClause, uid := userIDClause(r)
+	uidClause, uid := actorIDClause(r)
 	filterArgs := []any{}
 	if uid != "" {
 		filterArgs = append(filterArgs, uid)
@@ -1389,7 +1397,7 @@ ORDER BY %s %s NULLS LAST, command ASC%s
 // fully covered by raw spans. Shared by the endpoints that cannot answer from
 // the roll-up — the Bash breakdown (ADR-0012) and the sessions list (ADR-0014).
 func (h *Handler) rawCoveredSince(r *http.Request, since *time.Time) *string {
-	aggUID, aggUIDArg := userIDClauseOn(r, "du.")
+	aggUID, aggUIDArg := actorIDClauseOn(r, "du.")
 	args := []any{}
 	if aggUIDArg != "" {
 		args = append(args, aggUIDArg)
@@ -1623,7 +1631,7 @@ func (h *Handler) handleHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	uidClause, uid := userIDClause(r)
+	uidClause, uid := actorIDClause(r)
 	window, args := rawWindow(from, to)
 	if uid != "" {
 		args = append(args, uid)
@@ -1663,7 +1671,7 @@ func (h *Handler) handleHistory(w http.ResponseWriter, r *http.Request) {
 // granularity the roll-up cannot express.
 func (h *Handler) historyRawSeries(resp *historyResponse, r *http.Request, gran string, from, to *time.Time) error {
 	bucketExpr := historyBucketExpr(gran)
-	uidClause, uid := userIDClause(r)
+	uidClause, uid := actorIDClause(r)
 	window, args := rawWindow(from, to)
 	if uid != "" {
 		args = append(args, uid)

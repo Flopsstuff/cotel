@@ -1,14 +1,14 @@
 import { useState, useCallback } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { Copy, Check, RotateCcw, Trash2, Activity, ListTree } from 'lucide-react'
-import { useUser, rotateUserToken, deleteUser } from '../api'
-import type { User } from '../api'
-import { Card, KpiCard, LoadingSkeleton, ErrorState, SegmentedControl, DeleteUserModal } from '../components'
+import { useActor, rotateActorToken, deleteActor } from '../api'
+import type { Actor } from '../api'
+import { Card, KpiCard, LoadingSkeleton, ErrorState, SegmentedControl, DeleteActorModal } from '../components'
 import { getCookie, setCookie } from '../lib/cookie'
-import styles from './UserDetail.module.css'
+import styles from './ActorDetail.module.css'
 
 const ANON_ID = '__anonymous__'
-const RANGE_COOKIE = 'cotel_users_range'
+const RANGE_COOKIE = 'cotel_actors_range'
 const COOKIE_MAX_AGE = 60 * 60 * 24 * 365
 
 type RangeKey = 'all' | 'year' | 'month' | 'week' | 'day'
@@ -33,7 +33,7 @@ function isRangeKey(v: string | null): v is RangeKey {
   return v === 'all' || v === 'year' || v === 'month' || v === 'week' || v === 'day'
 }
 
-export default function UserDetail() {
+export default function ActorDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
 
@@ -41,7 +41,7 @@ export default function UserDetail() {
     const c = getCookie(RANGE_COOKIE)
     return isRangeKey(c) ? c : 'month'
   })
-  const { data, error, isLoading, mutate } = useUser(id, range)
+  const { data, error, isLoading, mutate } = useActor(id, range)
 
   const [copied, setCopied] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
@@ -65,7 +65,7 @@ export default function UserDetail() {
     if (!confirm(`Rotate token for "${data.name}"? The old token will stop working immediately.`)) return
     setActionError(null)
     try {
-      await rotateUserToken(data.id)
+      await rotateActorToken(data.id)
       await mutate()
       setNotice('Token rotated')
       setTimeout(() => setNotice(null), 3000)
@@ -78,8 +78,8 @@ export default function UserDetail() {
     if (!confirm('Delete all anonymous telemetry? All unattributed spans and daily summaries will be permanently removed. This cannot be undone.')) return
     setActionError(null)
     try {
-      await deleteUser(ANON_ID)
-      navigate('/users')
+      await deleteActor(ANON_ID)
+      navigate('/actors')
     } catch (err) {
       setActionError(err instanceof Error ? err.message : 'Delete failed')
     }
@@ -90,9 +90,9 @@ export default function UserDetail() {
     const is404 = error.message.includes('404')
     return is404 ? (
       <div className={styles.notFound}>
-        <p className={styles.notFoundTitle}>User not found</p>
-        <p className={styles.notFoundSub}>User <code>{id}</code> does not exist.</p>
-        <Link to="/users" className={styles.backLink}>← Back to Users</Link>
+        <p className={styles.notFoundTitle}>Actor not found</p>
+        <p className={styles.notFoundSub}>Actor <code>{id}</code> does not exist.</p>
+        <Link to="/actors" className={styles.backLink}>← Back to Actors</Link>
       </div>
     ) : (
       <ErrorState message={error.message} />
@@ -108,7 +108,7 @@ export default function UserDetail() {
   return (
     <div>
       <div className={styles.nav}>
-        <Link to="/users" className={styles.backLink}>← Users</Link>
+        <Link to="/actors" className={styles.backLink}>← Actors</Link>
       </div>
 
       <h1 className={styles.title}>
@@ -146,10 +146,10 @@ export default function UserDetail() {
 
       <Card title="Actions">
         <div className={styles.actionsRow}>
-          <Link className={styles.linkBtn} to={`/?user_id=${encodeURIComponent(activityId)}`}>
+          <Link className={styles.linkBtn} to={`/?actor_id=${encodeURIComponent(activityId)}`}>
             <Activity size={14} /> View activity
           </Link>
-          <Link className={styles.linkBtn} to={`/sessions?user_id=${encodeURIComponent(activityId)}`}>
+          <Link className={styles.linkBtn} to={`/sessions?actor_id=${encodeURIComponent(activityId)}`}>
             <ListTree size={14} /> View sessions
           </Link>
           {!isAnon && (
@@ -163,19 +163,19 @@ export default function UserDetail() {
             </button>
           ) : (
             <button className={`${styles.linkBtn} ${styles.dangerBtn}`} onClick={() => setShowDelete(true)}>
-              <Trash2 size={14} /> Delete user
+              <Trash2 size={14} /> Delete actor
             </button>
           )}
         </div>
       </Card>
 
       {showDelete && !isAnon && (
-        <DeleteUserModal
-          user={data as User}
+        <DeleteActorModal
+          actor={data as Actor}
           onClose={() => setShowDelete(false)}
           onDeleted={() => {
             setShowDelete(false)
-            navigate('/users')
+            navigate('/actors')
           }}
         />
       )}

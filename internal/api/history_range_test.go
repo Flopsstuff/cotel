@@ -294,9 +294,9 @@ func TestHistory_CoarseGranularitiesSpanTheUnion(t *testing.T) {
 	}
 }
 
-// TestHistory_RangeComposesWithUserID checks the two filters intersect on both
+// TestHistory_RangeComposesWithActorID checks the two filters intersect on both
 // sides of the union rather than one overriding the other.
-func TestHistory_RangeComposesWithUserID(t *testing.T) {
+func TestHistory_RangeComposesWithActorID(t *testing.T) {
 	db, ro := openTestDB(t)
 	seedRangeFixture(t, db)
 	h := api.New(ro)
@@ -306,10 +306,10 @@ func TestHistory_RangeComposesWithUserID(t *testing.T) {
 		spans float64
 		cost  float64
 	}{
-		{"/api/v1/history?granularity=day&range=all&user_id=alice", 2, 3},
-		{"/api/v1/history?granularity=day&range=all&user_id=bob", 3, 4},
-		{"/api/v1/history?granularity=day&range=all&user_id=carol", 5, 8},
-		{"/api/v1/history?granularity=day&range=month&user_id=bob", 0, 0},
+		{"/api/v1/history?granularity=day&range=all&actor_id=alice", 2, 3},
+		{"/api/v1/history?granularity=day&range=all&actor_id=bob", 3, 4},
+		{"/api/v1/history?granularity=day&range=all&actor_id=carol", 5, 8},
+		{"/api/v1/history?granularity=day&range=month&actor_id=bob", 0, 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.path, func(t *testing.T) {

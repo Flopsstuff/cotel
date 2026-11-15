@@ -128,7 +128,7 @@ func (db *DB) rollupAndPurgeAt(cfg RetentionConfig, now time.Time) error {
 
 	if _, err := tx.Exec(`
 		INSERT INTO daily_usage
-		  (day, session_id, model, tool_name, user_id,
+		  (day, session_id, model, tool_name, actor_id,
 		   span_count, total_input_tokens, total_output_tokens,
 		   total_cache_read_tokens, total_cache_write_tokens, total_cost_usd,
 		   total_duration_ms, fail_count)
@@ -137,7 +137,7 @@ func (db *DB) rollupAndPurgeAt(cfg RetentionConfig, now time.Time) error {
 		  COALESCE(NULLIF(session_id, ''), ?) AS session_id,
 		  COALESCE(NULLIF(model, ''), ?)      AS model,
 		  COALESCE(NULLIF(tool_name, ''), ?)  AS tool_name,
-		  MAX(user_id) AS user_id,
+		  MAX(actor_id) AS actor_id,
 		  COUNT(*) AS span_count,
 		  COALESCE(SUM(input_tokens), 0),
 		  COALESCE(SUM(output_tokens), 0),
@@ -158,7 +158,7 @@ func (db *DB) rollupAndPurgeAt(cfg RetentionConfig, now time.Time) error {
 		  total_cost_usd           = daily_usage.total_cost_usd + excluded.total_cost_usd,
 		  total_duration_ms        = COALESCE(daily_usage.total_duration_ms, 0) + excluded.total_duration_ms,
 		  fail_count               = COALESCE(daily_usage.fail_count, 0) + excluded.fail_count,
-		  user_id                  = COALESCE(daily_usage.user_id, excluded.user_id)
+		  actor_id                  = COALESCE(daily_usage.actor_id, excluded.actor_id)
 	`, UnknownSentinel, UnknownSentinel, UnknownSentinel, rollupCutoff); err != nil {
 		return err
 	}

@@ -25,7 +25,7 @@ func seedGridFixture(t *testing.T, db *storage.DB) {
 		start := anchor.Add(offset)
 		insertSpan(t, db, storage.Span{
 			TraceID: "tr", SpanID: string(rune('a'+i)) + "-grid", Name: "llm",
-			SessionID: "s-grid", Model: "sonnet", ToolName: "Bash", UserID: "alice",
+			SessionID: "s-grid", Model: "sonnet", ToolName: "Bash", ActorID: "alice",
 			StartTime: start, EndTime: start.Add(time.Second),
 			CostUSD: ptr(1.0), InputTokens: ptr(int64(10)), OutputTokens: ptr(int64(1)),
 		})

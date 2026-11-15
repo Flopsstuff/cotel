@@ -135,15 +135,19 @@ The four secondary indexes on `spans` are plain ART indexes and carry no data of
 DROP INDEX IF EXISTS idx_spans_session_id;
 DROP INDEX IF EXISTS idx_spans_start_time;
 DROP INDEX IF EXISTS idx_spans_name;
-DROP INDEX IF EXISTS idx_spans_user_id;
+DROP INDEX IF EXISTS idx_spans_actor_id;
 
 CREATE INDEX idx_spans_session_id ON spans(session_id);
 CREATE INDEX idx_spans_start_time ON spans(start_time);
 CREATE INDEX idx_spans_name       ON spans(name);
-CREATE INDEX idx_spans_user_id    ON spans(user_id);
+CREATE INDEX idx_spans_actor_id   ON spans(actor_id);
 
 FORCE CHECKPOINT;
 ```
+
+On a file older than schema v11 the fourth index is `idx_spans_user_id` on
+`spans(user_id)` ([ADR-0027](../decisions/0027-users-become-actors.md)); check
+with `SELECT max(version) FROM schema_version` and use the names that file has.
 
 These are the same index definitions as `internal/storage/schema.sql`; if that file has moved on, take them from there rather than from this page.
 

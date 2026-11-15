@@ -2,11 +2,11 @@
 #
 # agent-set-cotel-token.sh — give the running agent its own cotel telemetry token.
 #
-# cotel attributes OTLP spans to a user by the bearer token in
+# cotel attributes OTLP spans to an actor by the bearer token in
 # OTEL_EXPORTER_OTLP_HEADERS. If every Claude Code instance sends the same token,
 # all agents merge into one bucket. This script makes each agent self-attribute
 # by writing its OWN token into ITS OWN Paperclip adapter env, so every future
-# run exports telemetry under that agent's distinct cotel user.
+# run exports telemetry under that agent's distinct cotel actor.
 #
 # Why self-apply (not a central rollout): identical to the git-identity case —
 # the Paperclip API redacts other agents' adapterConfig and rejects cross-agent
@@ -25,7 +25,7 @@
 # (settings.json `env` is applied at startup and overrides the inherited per-agent process env.)
 #
 # The token cannot be derived — it is minted in the cotel dashboard
-# (Users -> Add user, one user per agent) and is a `cotel_<64 hex>` string. Pass
+# (Actors -> Add actor, one actor per agent) and is a `cotel_<64 hex>` string. Pass
 # it as the first argument or via COTEL_TOKEN.
 #
 # Idempotent: re-running with the same token is a no-op.
@@ -47,7 +47,7 @@ set -euo pipefail
 TOKEN="${1:-${COTEL_TOKEN:-}}"
 if [ -z "$TOKEN" ]; then
   echo "usage: $0 <cotel_token>   (or set COTEL_TOKEN)" >&2
-  echo "mint one in the cotel dashboard: Users -> Add user (one per agent)" >&2
+  echo "mint one in the cotel dashboard: Actors -> Add actor (one per agent)" >&2
   exit 2
 fi
 if ! printf '%s' "$TOKEN" | grep -Eq '^cotel_[0-9a-f]{64}$'; then

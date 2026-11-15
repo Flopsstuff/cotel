@@ -122,7 +122,7 @@ gh pr create --title "..." --body $'...\n\nAgent: Wayland' --label agent:wayland
 ## 4. Telemetry (OTEL) identity
 
 Each local agent reports its Claude Code telemetry to cotel under its **own**
-ingest token, so the dashboard's **Users** view separates agents instead of
+ingest token, so the dashboard's **Actors** view separates agents instead of
 merging them into one bucket. The token is injected exactly like the `GIT_*`
 vars — through the agent's Paperclip `adapterConfig.env`:
 
@@ -201,8 +201,8 @@ fights the server for the DuckDB lock.
 ssh robmini 'curl -s "http://localhost:8080/api/v1/sessions?limit=500"'
 ```
 
-Group the result by `user_id`: every agent that has run inside the retention
-window should appear under its own name. A `user_id` missing entirely means its
+Group the result by `actor_id`: every agent that has run inside the retention
+window should appear under its own name. An `actor_id` missing entirely means its
 runs never exported — check the environment's `env_vars` first (the whole fleet
 is dark) and the agent's own header second (only that agent is dark). Spans that
 carry an endpoint but no valid header are rejected at ingest, so a

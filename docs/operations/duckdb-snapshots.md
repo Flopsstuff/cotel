@@ -18,7 +18,7 @@ directory per snapshot into `COTEL_SNAPSHOT_DIR`:
 ```
 /snapshots/2026-10-06T12-00-00Z/
     schema.sql  load.sql
-    spans.parquet  daily_usage.parquet  users.parquet
+    spans.parquet  daily_usage.parquet  actors.parquet
     api_tokens.parquet  settings.parquet  schema_version.parquet
     snapshot.json
 ```
@@ -263,8 +263,8 @@ untracked `COTEL_DATA_VOLUME` on the command line is forgotten by the next
 
 ## A snapshot carries the same secrets as the database
 
-`users.token` holds ingest tokens in plaintext by design
-([Users and Authentication](./users-and-auth)), so every snapshot carries a copy
+`actors.token` (`users.token` before schema v11) holds ingest tokens in plaintext by design
+([Actors and Authentication](./actors-and-auth)), so every snapshot carries a copy
 of every agent's token. Treat the snapshots volume exactly like the data volume:
 it is not a file to hand around, and an off-host copy of it is an off-host copy
 of the credentials.

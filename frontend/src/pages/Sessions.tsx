@@ -11,21 +11,21 @@ export default function Sessions() {
   const [statusFilter, setStatusFilter] = useState<'all' | 'ok' | 'error'>('all')
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
-  const userId = searchParams.get('user_id') ?? undefined
-  const { data, error, isLoading } = useSessions(page, 50, 'start_time', 'desc', userId)
+  const actorId = searchParams.get('actor_id') ?? undefined
+  const { data, error, isLoading } = useSessions(page, 50, 'start_time', 'desc', actorId)
 
-  function clearUserFilter() {
+  function clearActorFilter() {
     setSearchParams((prev) => {
       const next = new URLSearchParams(prev)
-      next.delete('user_id')
+      next.delete('actor_id')
       return next
     })
   }
 
-  function applyUserFilter(uid: string) {
+  function applyActorFilter(uid: string) {
     setSearchParams((prev) => {
       const next = new URLSearchParams(prev)
-      next.set('user_id', uid)
+      next.set('actor_id', uid)
       return next
     })
     setPage(1)
@@ -36,7 +36,7 @@ export default function Sessions() {
     const needle = search.toLowerCase()
     return data.items.filter(
       (s) =>
-        (search === '' || (s.user_id ?? '').toLowerCase().includes(needle)) &&
+        (search === '' || (s.actor_id ?? '').toLowerCase().includes(needle)) &&
         (statusFilter === 'all' || s.status === statusFilter),
     )
   }, [data, search, statusFilter])
@@ -47,9 +47,9 @@ export default function Sessions() {
     <div>
       <div className={styles.pageHeader}>
         <h1 className={styles.title}>Sessions</h1>
-        {userId && (
-          <button className={styles.userChip} onClick={clearUserFilter}>
-            Filtered by: <strong>{userId}</strong> ×
+        {actorId && (
+          <button className={styles.actorChip} onClick={clearActorFilter}>
+            Filtered by: <strong>{actorId}</strong> ×
           </button>
         )}
       </div>
@@ -57,7 +57,7 @@ export default function Sessions() {
       <div className={styles.filterBar}>
         <input
           className={styles.searchInput}
-          placeholder="Search by user…"
+          placeholder="Search by actor…"
           value={search}
           onChange={(e) => { setSearch(e.target.value); setPage(1) }}
         />
@@ -99,20 +99,20 @@ export default function Sessions() {
                 ),
               },
               {
-                key: 'user_id',
-                label: 'User',
+                key: 'actor_id',
+                label: 'Actor',
                 sortable: true,
                 render: (v) =>
                   v ? (
                     <button
-                      className={styles.userLink}
-                      onClick={(e) => { e.stopPropagation(); applyUserFilter(String(v)) }}
+                      className={styles.actorLink}
+                      onClick={(e) => { e.stopPropagation(); applyActorFilter(String(v)) }}
                       title={`Filter by ${v}`}
                     >
                       {String(v)}
                     </button>
                   ) : (
-                    <span className={styles.anonUser}>anonymous</span>
+                    <span className={styles.anonActor}>anonymous</span>
                   ),
               },
               {

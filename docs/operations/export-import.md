@@ -20,7 +20,7 @@ cotel can export its full dataset as a ZIP archive and reimport it into any cote
 
 ## API reference
 
-Both endpoints require a valid `Authorization: Bearer cotel_<token>` header when anonymous mode is disabled (the default when at least one user token has been created). If anonymous mode is enabled (`allow_anonymous=true`) and no token is set on the request, the endpoints are still accessible.
+Both endpoints require a valid `Authorization: Bearer cotel_<token>` header when anonymous mode is disabled (the default when at least one actor token has been created). If anonymous mode is enabled (`allow_anonymous=true`) and no token is set on the request, the endpoints are still accessible.
 
 ### Export — `GET /api/v1/export`
 
@@ -70,7 +70,7 @@ Maximum upload size: **101 MB** (compressed). Uncompressed content must be ≤ 1
 {
   "spans_imported": 1234,
   "daily_usage_imported": 42,
-  "format_version": 1,
+  "format_version": 2,
   "warnings": []
 }
 ```
@@ -97,7 +97,7 @@ A cotel export ZIP always contains the following entries:
 |---|---|---|
 | `manifest.json` | Yes | Archive metadata (version, period, row counts) |
 | `spans.csv` | When raw span data exists | One row per OTLP span |
-| `daily_usage.csv` | When aggregated data exists | One row per (day, session, model, user) bucket |
+| `daily_usage.csv` | When aggregated data exists | One row per (day, session, model, actor) bucket |
 
 **Size limits:** ≤ 100 MB uncompressed total; ≤ 5 ZIP entries.
 
@@ -105,7 +105,7 @@ A cotel export ZIP always contains the following entries:
 
 ```json
 {
-  "format_version": 1,
+  "format_version": 2,
   "cotel_version": "0.1.0",
   "export_at": "2026-05-10T10:00:00Z",
   "period": "month",
@@ -124,17 +124,17 @@ A cotel export ZIP always contains the following entries:
 }
 ```
 
-`format_version` is an integer that cotel increments only on breaking schema changes. The current version is `1`.
+`format_version` is an integer that cotel increments only on breaking schema changes. The current version is `2`: it renamed the attribution column `user_id` to `actor_id` in both tables, at the same position ([ADR-0027](../decisions/0027-users-become-actors.md)). Version 1 archives still import; their `user_id` column is read as `actor_id`.
 
 ### spans.csv columns
 
-`span_id`, `trace_id`, `parent_span_id`, `service_name`, `name`, `start_time`, `end_time`, `duration_ms`, `session_id`, `model`, `tool_name`, `user_id`, `status_code`, `input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_write_tokens`, `cost_usd`, `attributes`, `resource_attrs`, `ingested_at`
+`span_id`, `trace_id`, `parent_span_id`, `service_name`, `name`, `start_time`, `end_time`, `duration_ms`, `session_id`, `model`, `tool_name`, `actor_id`, `status_code`, `input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_write_tokens`, `cost_usd`, `attributes`, `resource_attrs`, `ingested_at`
 
 Times are in RFC 3339 Nano format. NULL values are stored as empty strings.
 
 ### daily_usage.csv columns
 
-`day`, `session_id`, `model`, `tool_name`, `user_id`, `span_count`, `total_input_tokens`, `total_output_tokens`, `total_cost_usd`
+`day`, `session_id`, `model`, `tool_name`, `actor_id`, `span_count`, `total_input_tokens`, `total_output_tokens`, `total_cost_usd`
 
 `day` is in `YYYY-MM-DD` format (UTC).
 

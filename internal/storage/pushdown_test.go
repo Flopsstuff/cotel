@@ -68,7 +68,7 @@ func pushdownFixture(t *testing.T, db *DB) {
 			SessionID:    fmt.Sprintf("session-%d", i),
 			Model:        "claude-opus-4",
 			ToolName:     "Bash",
-			UserID:       fmt.Sprintf("user-%d", i),
+			ActorID:      fmt.Sprintf("actor-%d", i),
 		})
 		if err != nil {
 			t.Fatalf("insert span %d: %v", i, err)
@@ -206,24 +206,24 @@ func TestUpgradeDropsGeneratedDurationColumn(t *testing.T) {
 		start_time TIMESTAMPTZ NOT NULL, end_time TIMESTAMPTZ NOT NULL,
 		duration_ms DOUBLE GENERATED ALWAYS AS (epoch_ms(end_time) - epoch_ms(start_time)),
 		service_name VARCHAR, session_id VARCHAR, model VARCHAR, tool_name VARCHAR,
-		user_id VARCHAR, status_code TINYINT DEFAULT 0,
+		actor_id VARCHAR, status_code TINYINT DEFAULT 0,
 		input_tokens INTEGER, output_tokens INTEGER,
 		cache_read_tokens INTEGER, cache_write_tokens INTEGER, cost_usd DOUBLE,
 		attributes JSON, resource_attrs JSON, ingested_at TIMESTAMPTZ DEFAULT now()
 	)`); err != nil {
 		t.Fatalf("seed v9 spans: %v", err)
 	}
-	for _, idx := range []string{"session_id", "start_time", "name", "user_id"} {
+	for _, idx := range []string{"session_id", "start_time", "name", "actor_id"} {
 		if _, err := raw.Exec(`CREATE INDEX idx_spans_` + idx + ` ON spans(` + idx + `)`); err != nil {
 			t.Fatalf("seed index on %s: %v", idx, err)
 		}
 	}
 	for i := 0; i < 3; i++ {
 		if _, err := raw.Exec(`
-			INSERT INTO spans (trace_id, span_id, name, start_time, end_time, service_name, session_id, model, tool_name, user_id)
+			INSERT INTO spans (trace_id, span_id, name, start_time, end_time, service_name, session_id, model, tool_name, actor_id)
 			VALUES ('t', ?, 'tool.execution', ?, ?, 'claude-code', ?, 'claude-opus-4', 'Bash', ?)`,
 			fmt.Sprintf("span-%d", i), time.Unix(int64(i), 0), time.Unix(int64(i)+1, 0),
-			fmt.Sprintf("session-%d", i), fmt.Sprintf("user-%d", i)); err != nil {
+			fmt.Sprintf("session-%d", i), fmt.Sprintf("actor-%d", i)); err != nil {
 			t.Fatalf("seed span %d: %v", i, err)
 		}
 	}

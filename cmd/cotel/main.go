@@ -31,6 +31,8 @@ func main() {
 	dbQuery := flag.String("db-query", "", "run SQL query against DuckDB, print first column of first row, and exit")
 	dbImport := flag.String("db-import", "", "restore COTEL_DB_PATH from the snapshot directory given, verify it against the snapshot manifest, and exit; the target database file must be empty or absent")
 	healthcheck := flag.Bool("healthcheck", false, "probe the local dashboard /healthz and exit 0 (ready) or 1; used by the container HEALTHCHECK")
+	backfillCost := flag.Bool("backfill-cost", false, "dry-run: show what recalculating cost_usd from stored token counts would change (no writes), then exit")
+	backfillCostApply := flag.Bool("backfill-cost-apply", false, "recalculate cost_usd for all spans of priced models from their stored token counts, then exit")
 	flag.Parse()
 
 	dbPath := env("COTEL_DB_PATH", "/data/cotel.duckdb")
@@ -65,6 +67,12 @@ func main() {
 		log.Printf("db-import: restored %s from snapshot %s (taken %s, schema_version %d, %s)",
 			dbPath, *dbImport, m.Instant, m.SchemaVersion, formatTableCounts(m.Tables))
 		return
+	}
+
+	// The backfill needs the database file to itself (DuckDB has one writer), so
+	// like --db-import it runs before the listeners bind and exits afterwards.
+	if *backfillCost || *backfillCostApply {
+		os.Exit(runBackfill(dbPath, *backfillCostApply))
 	}
 
 	// Bind BEFORE storage.Open: WAL replay + schema migration can block for
@@ -122,7 +130,7 @@ func main() {
 	ingestMux.Handle("/v1/traces", auth.Middleware(db, ingest.New(db)))
 
 	ro := db.ReadOnly()
-	apiHandler := api.New(ro).SetPublicIngestURL(parsePublicIngestURL(os.Getenv("COTEL_PUBLIC_INGEST_URL"))).SetUserStore(db)
+	apiHandler := api.New(ro).SetPublicIngestURL(parsePublicIngestURL(os.Getenv("COTEL_PUBLIC_INGEST_URL"))).SetActorStore(db)
 	dashMux := http.NewServeMux()
 	dashMux.Handle("/api/v1/export", auth.Middleware(db, export.NewHandler(db)))
 	dashMux.Handle("/api/v1/import", auth.Middleware(db, importpkg.NewHandler(db)))
@@ -149,6 +157,57 @@ func main() {
 	cancel()
 	db.Close() //nolint:errcheck // the deferred Close never runs past os.Exit
 	os.Exit(code)
+}
+
+// runBackfill opens the database, recomputes cost_usd and prints a per-model
+// report. apply=false is a dry run that writes nothing.
+func runBackfill(dbPath string, apply bool) int {
+	db, err := storage.Open(dbPath)
+	if err != nil {
+		log.Printf("open storage: %v", err)
+		return 1
+	}
+	defer db.Close()
+
+	var rep storage.BackfillReport
+	if apply {
+		fmt.Println("=== APPLYING cost_usd backfill ===")
+		rep, err = db.BackfillCostUSD()
+	} else {
+		fmt.Println("=== DRY RUN (no writes) - pass --backfill-cost-apply to apply ===")
+		rep, err = db.DryRunBackfill()
+	}
+	if err != nil {
+		log.Printf("backfill: %v", err)
+		return 1
+	}
+	printBackfillReport(rep, apply)
+	return 0
+}
+
+// printBackfillReport prints a BackfillReport to stdout.
+func printBackfillReport(rep storage.BackfillReport, applied bool) {
+	verb := "would change"
+	if applied {
+		verb = "changed"
+	}
+	fmt.Printf("\n%-35s  %8s  %12s  %12s  %12s\n",
+		"model", "spans", "old_cost_usd", "new_cost_usd", "delta_usd")
+	fmt.Println(strings.Repeat("-", 87))
+	for _, row := range rep.ModelRows {
+		fmt.Printf("%-35s  %8d  %12.4f  %12.4f  %+12.4f\n",
+			row.Model, row.SpanCount, row.OldCostUSD, row.NewCostUSD, row.DeltaUSD)
+	}
+	fmt.Println(strings.Repeat("-", 87))
+	fmt.Printf("total delta_usd: %+.4f  (spans that %s: %d)\n",
+		rep.TotalDeltaUSD, verb, rep.SpansToUpdate)
+	if rep.UnknownModel > 0 {
+		fmt.Printf("unknown model (skipped): %d spans\n", rep.UnknownModel)
+	}
+	if rep.EmptyModel > 0 {
+		fmt.Printf("empty/null model (skipped): %d spans\n", rep.EmptyModel)
+	}
+	fmt.Println()
 }
 
 // shutdownCheckpointTimeout bounds a CHECKPOINT so a stuck fold cannot hang

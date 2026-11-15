@@ -96,7 +96,7 @@ These are rendered by a shared `<PageHeader>` component that wraps every page's 
 | Region | Component | Field | Source | Format |
 |---|---|---|---|---|
 | KPI row | `<KpiCard>` | Sessions | `GET /overview → total_sessions` | Integer |
-| KPI row | `<KpiCard>` | Active Users | `GET /overview → users_count` | Integer — principals with usage in the range, not the registered-user total the Users page lists |
+| KPI row | `<KpiCard>` | Active Actors | `GET /overview → actors_count` | Integer — actors with usage in the range, not the registered total the Actors page lists |
 | KPI row | `<KpiCard>` | Total Cost | `GET /overview → total_cost_usd` | `$0.00` |
 | KPI row | `<KpiCard>` | Input Tokens | `GET /overview → total_input_tokens` | `1.2M`, `890K`, `12.4K` |
 | KPI row | `<KpiCard>` | Output Tokens | `GET /overview → total_output_tokens` | Same |
@@ -130,9 +130,9 @@ a "View all" link to its full page, in this order:
    `Day`. Cells outside the queried window — the leading edge, and the rest of
    today — are drawn as an outline, never as an empty cell
    ([ADR-0016](../decisions/0016-overview-activity-grid.md)).
-2. **Users** — top 5 by spend in the range. Hidden while the page is scoped to a
-   single user via `?user_id=`, where a top-5-users table would be the one panel
-   on the page not answering for that user.
+2. **Actors** — top 5 by spend in the range. Hidden while the page is scoped to a
+   single actor via `?actor_id=`, where a top-5-actors table would be the one panel
+   on the page not answering for that actor.
 3. **Spans & cost** — spans as a filled area against the left axis and cost as
    a line against the right, from one `/history` call. `hour` granularity on the
    `Day` range, `day` otherwise; links to both full pages
@@ -144,7 +144,7 @@ a "View all" link to its full page, in this order:
 
 The header carries one `<SegmentedControl>` bound to `RANGE_OPTIONS` and
 persisted in the `cotel_overview_range` cookie — its own key, so changing the
-range here does not move the Users or Tools page. KPI labels take their suffix
+range here does not move the Actors or Tools page. KPI labels take their suffix
 from `RANGE_SUFFIX` (`All` renders none)
 ([ADR-0014](../decisions/0014-overview-single-range-selector.md)).
 

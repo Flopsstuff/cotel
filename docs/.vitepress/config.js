@@ -25,7 +25,7 @@ export default defineConfig({
         {
           text: 'Operations',
           items: [
-            { text: 'Users and Authentication', link: '/operations/users-and-auth' },
+            { text: 'Actors and Authentication', link: '/operations/actors-and-auth' },
             { text: 'JSON API Reference', link: '/operations/api-reference' },
             { text: 'Cloudflare Tunnel — Token Mode', link: '/operations/cloudflare-tunnel-remote' },
             { text: 'Cloudflare Tunnel — Local Config', link: '/operations/cloudflare-tunnel-local' },
@@ -67,6 +67,7 @@ export default defineConfig({
             { text: 'ADR-0024 - Off-Host Snapshot Copy is a Pi-Side Pull', link: '/decisions/0024-off-host-snapshot-copy-pi-pull' },
             { text: 'ADR-0025 - Best-Effort Ingest Watcher in Actions', link: '/decisions/0025-best-effort-ingest-watcher-in-actions' },
             { text: 'ADR-0026 - The Deploy Host Asks /healthz on a Schedule', link: '/decisions/0026-scheduled-loopback-probe-with-a-pager' },
+            { text: 'ADR-0027 - Users Become Actors', link: '/decisions/0027-users-become-actors' },
           ],
         },
       ],

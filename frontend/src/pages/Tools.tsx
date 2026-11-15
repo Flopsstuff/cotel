@@ -46,7 +46,7 @@ function Pagination({ page, total, onChange }: { page: number; total: number; on
 
 export default function Tools() {
   const [searchParams, setSearchParams] = useSearchParams()
-  const userId = searchParams.get('user_id') ?? undefined
+  const actorId = searchParams.get('actor_id') ?? undefined
 
   const [range, setRange] = useRangeCookie(RANGE_COOKIE)
   const [sort, setSort] = useState<ToolSortKey>('calls')
@@ -75,7 +75,7 @@ export default function Tools() {
     order,
     page,
     limit: PAGE_SIZE,
-    user_id: userId,
+    actor_id: actorId,
   })
 
   const { data: bashData, error: bashError, isLoading: bashLoading } = useBashCommands({
@@ -84,16 +84,16 @@ export default function Tools() {
     order: bashOrder,
     page: bashPage,
     limit: PAGE_SIZE,
-    user_id: userId,
+    actor_id: actorId,
   })
 
   const total = data?.total ?? 0
   const bashTotal = bashData?.total ?? 0
 
-  function clearUserFilter() {
+  function clearActorFilter() {
     setSearchParams((prev) => {
       const next = new URLSearchParams(prev)
-      next.delete('user_id')
+      next.delete('actor_id')
       return next
     })
   }
@@ -145,9 +145,9 @@ export default function Tools() {
     <div>
       <div className={styles.toolbar}>
         <h1 className={styles.title}>Tools</h1>
-        {userId && (
-          <button className={styles.userChip} onClick={clearUserFilter}>
-            Filtered by: <strong>{userId}</strong> ×
+        {actorId && (
+          <button className={styles.actorChip} onClick={clearActorFilter}>
+            Filtered by: <strong>{actorId}</strong> ×
           </button>
         )}
 

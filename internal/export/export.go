@@ -13,8 +13,11 @@ import (
 	"github.com/Flopsstuff/cotel/internal/storage"
 )
 
+// FormatVersion bumps only on a breaking change (ADR-0005). v2 renamed the
+// attribution column user_id → actor_id in both tables (ADR-0027); the
+// importer still reads v1 files.
 const (
-	FormatVersion = 1
+	FormatVersion = 2
 	CotelVersion  = "0.1.0"
 )
 
@@ -35,11 +38,12 @@ type Manifest struct {
 	Tables        map[string]TableMeta `json:"tables"`
 }
 
-// Column lists match ADR-0005 manifest v1 exactly.
+// Column lists match ADR-0005 manifest v1 exactly, except that v2 names the
+// attribution column actor_id where v1 had user_id, at the same offset.
 var SpansColumns = []string{
 	"span_id", "trace_id", "parent_span_id", "service_name", "name",
 	"start_time", "end_time", "duration_ms", "session_id", "model",
-	"tool_name", "user_id", "status_code", "input_tokens", "output_tokens",
+	"tool_name", "actor_id", "status_code", "input_tokens", "output_tokens",
 	"cache_read_tokens", "cache_write_tokens", "cost_usd",
 	"attributes", "resource_attrs", "ingested_at",
 }
@@ -48,7 +52,7 @@ var SpansColumns = []string{
 // importer reads by header name, but a positional reader of an older column
 // keeps working only if earlier offsets never shift.
 var DailyUsageColumns = []string{
-	"day", "session_id", "model", "tool_name", "user_id",
+	"day", "session_id", "model", "tool_name", "actor_id",
 	"span_count", "total_input_tokens", "total_output_tokens", "total_cost_usd",
 	"total_cache_read_tokens", "total_cache_write_tokens",
 }
@@ -144,7 +148,7 @@ func writeSpansCSV(w io.Writer, spans []storage.Span) error {
 		row[8] = s.SessionID
 		row[9] = s.Model
 		row[10] = s.ToolName
-		row[11] = s.UserID
+		row[11] = s.ActorID
 		row[12] = strconv.FormatInt(int64(s.StatusCode), 10)
 		row[13] = nullInt64Str(s.InputTokens)
 		row[14] = nullInt64Str(s.OutputTokens)
@@ -173,7 +177,7 @@ func writeDailyUsageCSV(w io.Writer, rows []storage.DailyUsageRow) error {
 		row[1] = r.SessionID
 		row[2] = r.Model
 		row[3] = r.ToolName
-		row[4] = r.UserID
+		row[4] = r.ActorID
 		row[5] = strconv.FormatInt(r.SpanCount, 10)
 		row[6] = strconv.FormatInt(r.TotalInputTokens, 10)
 		row[7] = strconv.FormatInt(r.TotalOutputTokens, 10)

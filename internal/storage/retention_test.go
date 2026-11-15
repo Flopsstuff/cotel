@@ -181,7 +181,7 @@ func TestRollupAndPurge_DurationAndFailCoalesceNULL(t *testing.T) {
 	day := time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC)
 	if _, err := db.rw.Exec(`
 		INSERT INTO daily_usage (
-		  day, session_id, model, tool_name, user_id,
+		  day, session_id, model, tool_name, actor_id,
 		  span_count, total_input_tokens, total_output_tokens, total_cost_usd,
 		  total_duration_ms, fail_count
 		) VALUES (CAST(? AS DATE), 'sess', 'claude-opus-5', 'Bash', NULL,

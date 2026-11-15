@@ -18,7 +18,7 @@ import (
 const (
 	maxUncompressedBytes = 100 * 1024 * 1024 // 100 MB
 	maxEntries           = 5
-	currentMaxVersion    = export.FormatVersion // 1
+	currentMaxVersion    = export.FormatVersion // 2
 )
 
 // ErrTooLarge is returned when the ZIP content exceeds the 100 MB uncompressed limit.
@@ -146,7 +146,7 @@ func parseSpansCSV(r io.Reader) ([]storage.Span, error) {
 		s.SessionID = col(row, idx, "session_id")
 		s.Model = col(row, idx, "model")
 		s.ToolName = col(row, idx, "tool_name")
-		s.UserID = col(row, idx, "user_id")
+		s.ActorID = actorCol(row, idx)
 
 		if v := col(row, idx, "status_code"); v != "" {
 			n, _ := strconv.ParseInt(v, 10, 32)
@@ -199,7 +199,7 @@ func parseDailyUsageCSV(r io.Reader) ([]storage.DailyUsageRow, error) {
 		du.SessionID = col(row, idx, "session_id")
 		du.Model = col(row, idx, "model")
 		du.ToolName = col(row, idx, "tool_name")
-		du.UserID = col(row, idx, "user_id")
+		du.ActorID = actorCol(row, idx)
 
 		if v := col(row, idx, "span_count"); v != "" {
 			du.SpanCount, _ = strconv.ParseInt(v, 10, 64)
@@ -224,6 +224,16 @@ func parseDailyUsageCSV(r io.Reader) ([]storage.DailyUsageRow, error) {
 
 // col returns the value at the named column, or "" if the column is absent or missing from the row.
 // Unknown columns are silently dropped; missing known columns default to "".
+// actorCol reads the attribution column: actor_id in format v2, user_id in v1
+// files exported before the rename (ADR-0027). Reading by header name keeps
+// this independent of the manifest's declared version.
+func actorCol(row []string, idx map[string]int) string {
+	if _, ok := idx["actor_id"]; ok {
+		return col(row, idx, "actor_id")
+	}
+	return col(row, idx, "user_id")
+}
+
 func col(row []string, idx map[string]int, name string) string {
 	i, ok := idx[name]
 	if !ok || i >= len(row) {

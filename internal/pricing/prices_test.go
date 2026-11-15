@@ -251,3 +251,44 @@ func TestComputeUnknownModelLogCap(t *testing.T) {
 		t.Errorf("post-cap unknown still returns 0, got %v", got)
 	}
 }
+
+// The models production actually saw go dark on: from 2026-11-07 every span
+// from these ids was stored with cost_usd unset because the table lacked them.
+func TestComputeClaude55Generation(t *testing.T) {
+	cases := []struct {
+		model           string
+		in, out, cr, cw float64 // $/MTok
+	}{
+		{"claude-opus-5-5", 4.00, 20.00, 0.20, 5.00},
+		{"claude-opus-5-5[1m]", 4.00, 20.00, 0.20, 5.00},
+		{"claude-fable-5-2", 8.00, 40.00, 0.20, 10.00},
+		{"claude-mythos-5-2", 8.00, 40.00, 0.20, 10.00},
+		{"claude-fable-5-1", 10.00, 50.00, 1.00, 12.50},
+		{"claude-sonnet-5-5", 2.00, 10.00, 0.10, 2.50},
+		{"claude-haiku-5-5", 0.10, 0.50, 0.01, 0.125},
+		{"claude-sonnet-5[1m]", 2.00, 10.00, 0.20, 2.50},
+	}
+	for _, c := range cases {
+		if !pricing.Known(c.model) {
+			t.Errorf("%s: Known() = false", c.model)
+			continue
+		}
+		got := pricing.Compute(c.model, 1_000_000, 1_000_000, 1_000_000, 1_000_000)
+		want := c.in + c.out + c.cr + c.cw
+		if math.Abs(got-want) > 1e-9 {
+			t.Errorf("%s: got %.6f, want %.6f", c.model, got, want)
+		}
+	}
+}
+
+func TestKnownIsNotComputeNonZero(t *testing.T) {
+	if !pricing.Known("claude-opus-5-5") {
+		t.Fatal("priced model reported unknown")
+	}
+	if pricing.Compute("claude-opus-5-5", 0, 0, 0, 0) != 0 {
+		t.Fatal("zero tokens must cost zero")
+	}
+	if pricing.Known("claude-nonexistent-9") || pricing.Known("") {
+		t.Fatal("unpriced or empty model reported known")
+	}
+}

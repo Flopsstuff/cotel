@@ -83,8 +83,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// User identity comes from the auth middleware context, not OTEL attributes.
-	userName := UserNameFromContext(r.Context())
+	// Actor identity comes from the auth middleware context, not OTEL attributes.
+	actorName := ActorNameFromContext(r.Context())
 
 	for _, rs := range req.ResourceSpans {
 		svcName := attrStr(rs.GetResource().GetAttributes(), "service.name")
@@ -93,7 +93,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 		for _, ss := range rs.ScopeSpans {
 			for _, sp := range ss.Spans {
-				h.queue <- decodeSpan(sp, svcName, resAttrs, string(resJSON), userName)
+				h.queue <- decodeSpan(sp, svcName, resAttrs, string(resJSON), actorName)
 			}
 		}
 	}
@@ -107,7 +107,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // identifier, checked in order of preference.
 var sessionIDKeys = []string{"session.id", "claude.session.id", "cc.session.id"}
 
-func decodeSpan(sp *tracepb.Span, svcName string, resAttrs map[string]any, resJSON string, userName string) storage.Span {
+func decodeSpan(sp *tracepb.Span, svcName string, resAttrs map[string]any, resJSON string, actorName string) storage.Span {
 	attrs := attrsToMap(sp.Attributes)
 	attrsJSON, _ := json.Marshal(attrs)
 
@@ -141,8 +141,8 @@ func decodeSpan(sp *tracepb.Span, svcName string, resAttrs map[string]any, resJS
 		}
 	}
 
-	// User identity is injected by auth middleware; empty = anonymous (stored as NULL).
-	s.UserID = userName
+	// Actor identity is injected by auth middleware; empty = anonymous (stored as NULL).
+	s.ActorID = actorName
 
 	if v, ok := attrs["model"]; ok {
 		s.Model = fmt.Sprintf("%v", v)

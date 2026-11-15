@@ -12,7 +12,7 @@
   color: var(--color-text-1);
 }
 
-.userChip {
+.actorChip {
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -85,7 +85,7 @@
   color: var(--color-accent);
 }
 
-.userLink {
+.actorLink {
   background: none;
   border: none;
   padding: 0;
@@ -96,11 +96,11 @@
   text-align: left;
 }
 
-.userLink:hover {
+.actorLink:hover {
   text-decoration: underline;
 }
 
-.anonUser {
+.anonActor {
   color: var(--color-text-2);
   font-style: italic;
 }

@@ -12,14 +12,14 @@ import (
 // AuthDB is the database interface required by Middleware.
 // *storage.DB satisfies this interface.
 type AuthDB interface {
-	GetUserByToken(token string) (*storage.User, error)
+	GetActorByToken(token string) (*storage.Actor, error)
 	GetSettingBool(key string, defaultVal bool) bool
 }
 
 // Middleware enforces the allow_anonymous auth policy shared across all cotel endpoints.
 //
 // Rules:
-//   - valid cotel_* bearer → identify the user (injected into ctx), allow
+//   - valid cotel_* bearer → identify the actor (injected into ctx), allow
 //   - no bearer + allow_anonymous=true → allow anonymously
 //   - no bearer + allow_anonymous=false → 401
 //   - invalid/unknown bearer → 401
@@ -27,9 +27,9 @@ func Middleware(db AuthDB, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		bearer := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 		if strings.HasPrefix(bearer, "cotel_") {
-			user, err := db.GetUserByToken(bearer)
-			if err == nil && user != nil {
-				ctx := ingest.WithUserName(r.Context(), user.Name)
+			actor, err := db.GetActorByToken(bearer)
+			if err == nil && actor != nil {
+				ctx := ingest.WithActorName(r.Context(), actor.Name)
 				next.ServeHTTP(w, r.WithContext(ctx))
 				return
 			}

@@ -13,7 +13,7 @@
   margin: 0;
 }
 
-.userChip {
+.actorChip {
   display: inline-flex;
   align-items: center;
   gap: 4px;

@@ -158,8 +158,8 @@ func TestBuildZIP_NonEmpty(t *testing.T) {
 		if err := json.NewDecoder(rc).Decode(&got); err != nil {
 			t.Fatalf("decode manifest: %v", err)
 		}
-		if got.FormatVersion != 1 {
-			t.Errorf("format_version: got %d, want 1", got.FormatVersion)
+		if got.FormatVersion != export.FormatVersion {
+			t.Errorf("format_version: got %d, want %d", got.FormatVersion, export.FormatVersion)
 		}
 		if got.Period != "day" {
 			t.Errorf("period: got %q, want day", got.Period)
