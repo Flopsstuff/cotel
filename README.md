@@ -86,6 +86,8 @@ Open the dashboard → **Actors** (people icon in the sidebar) → **Add actor**
 
 By default, cotel accepts spans without an `Authorization` header (allow-anonymous mode). To enforce strict auth: open **Setup** → **Settings** tab → disable **Allow anonymous OTLP**. Requests without a valid token then receive `401 Unauthorized`.
 
+For a fleet that shares one set of OTLP headers, such as agents run by Paperclip, create an **ingest key** under **Setup** → **Settings** → **Ingest keys** and send it as the bearer instead. The key only authorizes ingest; each sender still names its actor by sending its own actor token in the `X-Cotel-Actor-Token` header, which `scripts/otel-headers-helper.py` adds from `COTEL_ACTOR_TOKEN` as a Claude Code `otelHeadersHelper`. See [Ingest keys](docs/operations/actors-and-auth.md#ingest-keys-one-key-for-many-senders).
+
 See **[docs/operations/actors-and-auth.md](docs/operations/actors-and-auth.md)** for the full guide: one token per sender, token rotation, and security considerations.
 
 ## Publishing with Cloudflare

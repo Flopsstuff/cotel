@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect } from 'react'
-import { Check, Copy, Settings, Download } from 'lucide-react'
+import { Link, useSearchParams } from 'react-router-dom'
+import { Check, Copy, Settings, Download, Plus, Trash2, AlertTriangle } from 'lucide-react'
 import { unzipSync } from 'fflate'
 import { TabBar } from '../components/TabBar'
 import { SegmentedControl } from '../components/SegmentedControl'
@@ -8,8 +9,9 @@ import { ManifestCard } from '../components/ManifestCard'
 import type { ZipManifest } from '../components/ManifestCard'
 import { InlineAlert } from '../components/InlineAlert'
 import { Toast } from '../components/Toast'
-import { LoadingSkeleton, ErrorState } from '../components'
-import { useSettings, updateSettings } from '../api'
+import { LoadingSkeleton, ErrorState, EmptyState } from '../components'
+import { useSettings, updateSettings, useIngestKeys, createIngestKey, revokeIngestKey } from '../api'
+import type { IngestKey, CreatedIngestKey } from '../api'
 import styles from './Setup.module.css'
 
 // ─── Getting Started content ────────────────────────────────────────────────
@@ -186,7 +188,7 @@ function GettingStartedTab() {
           </p>
           <p className={styles.hint}>
             To block unauthenticated sends, open the{' '}
-            <a href="/setup" className={styles.link}>Settings tab</a>{' '}
+            <Link to="/setup?tab=settings" className={styles.link}>Settings tab</Link>{' '}
             and disable <strong>Allow anonymous OTLP</strong>.
           </p>
         </Step>
@@ -469,6 +471,15 @@ function ImportTab() {
 // ─── Settings tab ────────────────────────────────────────────────────────────
 
 function SettingsTab() {
+  return (
+    <>
+      <AnonymousIngestSection />
+      <IngestKeysSection />
+    </>
+  )
+}
+
+function AnonymousIngestSection() {
   const { data, error, isLoading, mutate } = useSettings()
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
@@ -498,7 +509,7 @@ function SettingsTab() {
           <div className={styles.settingLabel}>Allow anonymous OTLP</div>
           <div className={styles.settingDesc}>
             When enabled, spans without an <code className={styles.code}>Authorization</code> header are accepted and attributed to no actor.
-            Disable to require every OTLP sender to present a valid actor token.
+            Disable to require every OTLP sender to present a valid actor token or ingest key.
           </div>
         </div>
         <label className={styles.toggle}>
@@ -516,8 +527,8 @@ function SettingsTab() {
       {data?.allow_anonymous === false && (
         <div className={styles.warning}>
           Anonymous OTLP is disabled. All ingest requests must include{' '}
-          <code className={styles.code}>Authorization: Bearer &lt;token&gt;</code>.{' '}
-          Go to <a href="/actors" className={styles.link}>Actors</a> to manage tokens.
+          <code className={styles.code}>Authorization: Bearer &lt;actor token or ingest key&gt;</code>.{' '}
+          Actor tokens are on the <a href="/actors" className={styles.link}>Actors</a> pages; ingest keys are below.
         </div>
       )}
 
@@ -528,9 +539,235 @@ function SettingsTab() {
   )
 }
 
+// ─── Ingest keys ─────────────────────────────────────────────────────────────
+
+function formatDate(iso: string) {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return '—'
+  return d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
+}
+
+function senderSnippet(key: string): string {
+  return `OTEL_EXPORTER_OTLP_HEADERS=Authorization=Bearer ${key}
+COTEL_ACTOR_TOKEN=<the actor's token>   # sent as X-Cotel-Actor-Token by the headers helper`
+}
+
+function Modal({ titleId, children, onClose }: { titleId: string; children: React.ReactNode; onClose: () => void }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [onClose])
+
+  return (
+    <div className={styles.overlay} onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div className={styles.modal} role="dialog" aria-modal="true" aria-labelledby={titleId}>
+        {children}
+      </div>
+    </div>
+  )
+}
+
+function IngestKeysSection() {
+  const { data, error, isLoading, mutate } = useIngestKeys()
+  const [name, setName] = useState('')
+  const [creating, setCreating] = useState(false)
+  const [createError, setCreateError] = useState<string | null>(null)
+  const [created, setCreated] = useState<CreatedIngestKey | null>(null)
+  const [revoking, setRevoking] = useState<IngestKey | null>(null)
+  const [revokeBusy, setRevokeBusy] = useState(false)
+  const [revokeError, setRevokeError] = useState<string | null>(null)
+
+  const handleCreate = async (e: React.FormEvent) => {
+    e.preventDefault()
+    const trimmed = name.trim()
+    if (!trimmed) return
+    setCreating(true)
+    setCreateError(null)
+    try {
+      const res = await createIngestKey(trimmed)
+      setCreated(res)
+      setName('')
+      await mutate()
+    } catch (err) {
+      setCreateError(err instanceof Error ? err.message : 'Create failed')
+    } finally {
+      setCreating(false)
+    }
+  }
+
+  const closeRevoke = useCallback(() => {
+    if (revokeBusy) return
+    setRevoking(null)
+    setRevokeError(null)
+  }, [revokeBusy])
+
+  const handleRevoke = async () => {
+    if (!revoking) return
+    setRevokeBusy(true)
+    setRevokeError(null)
+    try {
+      await revokeIngestKey(revoking.id)
+      if (created?.id === revoking.id) setCreated(null)
+      setRevoking(null)
+    } catch (err) {
+      setRevokeError(err instanceof Error ? err.message : 'Revoke failed')
+    } finally {
+      setRevokeBusy(false)
+      await mutate()
+    }
+  }
+
+  const keys = data?.ingest_keys ?? []
+
+  return (
+    <div className={styles.section}>
+      <div className={styles.sectionTitle}>Ingest keys</div>
+      <p className={styles.settingDesc}>
+        An ingest key authorizes OTLP ingest for many senders at once, for example every agent in a
+        Paperclip company. Each sender sends the key as{' '}
+        <code className={styles.code}>Authorization: Bearer &lt;key&gt;</code> and identifies itself
+        with its actor token in <code className={styles.code}>X-Cotel-Actor-Token</code>; without it,
+        spans are stored as Anonymous. An ingest key does not grant dashboard, export or import access.
+      </p>
+
+      <form className={styles.keyForm} onSubmit={handleCreate}>
+        <label className={styles.srOnly} htmlFor="ingest-key-name">Key name</label>
+        <input
+          id="ingest-key-name"
+          className={styles.textInput}
+          placeholder="Key name, e.g. paperclip-acme"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          disabled={creating}
+          maxLength={100}
+        />
+        <button type="submit" className={styles.primaryBtn} disabled={creating || !name.trim()}>
+          {creating ? <><span className={styles.spinner} />Generating…</> : <><Plus size={14} />Generate key</>}
+        </button>
+      </form>
+      {createError && (
+        <div className={styles.alertWrap}>
+          <InlineAlert kind="error" message={createError} />
+        </div>
+      )}
+
+      {created && (
+        <div className={styles.newKey}>
+          <div className={styles.newKeyHeader}>
+            <span className={styles.newKeyTitle}>Key “{created.name}” created</span>
+            <button type="button" className={styles.secondaryBtn} onClick={() => setCreated(null)}>
+              Done
+            </button>
+          </div>
+          <div className={styles.warningBanner}>
+            <AlertTriangle size={15} />
+            <span>Copy this key now. You won't see it again.</span>
+          </div>
+          <div className={styles.codeBlock}>
+            <CopyButton text={created.token} />
+            <pre className={`${styles.pre} ${styles.preWrap}`}>{created.token}</pre>
+          </div>
+          <p className={styles.hint}>
+            Each sender sets these environment variables. Actor tokens are on each actor's page under{' '}
+            <Link to="/actors" className={styles.link}>Actors</Link>.
+          </p>
+          <div className={styles.codeBlock}>
+            <CopyButton text={senderSnippet(created.token)} />
+            <pre className={`${styles.pre} ${styles.preScroll}`}>{senderSnippet(created.token)}</pre>
+          </div>
+        </div>
+      )}
+
+      <div className={styles.keyList}>
+        {isLoading ? (
+          <LoadingSkeleton rows={2} height={32} />
+        ) : error ? (
+          <ErrorState message={error.message} />
+        ) : keys.length === 0 ? (
+          <EmptyState
+            heading="No ingest keys"
+            subtext="Generate one to let many senders share a single Authorization header."
+          />
+        ) : (
+          <div className={styles.tableWrap}>
+            <table className={styles.table}>
+              <thead>
+                <tr>
+                  <th className={styles.th}>Name</th>
+                  <th className={styles.th}>Key</th>
+                  <th className={styles.th}>Created</th>
+                  <th className={styles.th}><span className={styles.srOnly}>Actions</span></th>
+                </tr>
+              </thead>
+              <tbody>
+                {keys.map((k) => (
+                  <tr key={k.id} className={styles.tr}>
+                    <td className={styles.td}>{k.name}</td>
+                    <td className={styles.td}>
+                      <code className={styles.code}>{k.prefix}…</code>
+                    </td>
+                    <td className={styles.td}>{formatDate(k.created_at)}</td>
+                    <td className={`${styles.td} ${styles.tdActions}`}>
+                      <button
+                        type="button"
+                        className={styles.revokeBtn}
+                        onClick={() => { setRevokeError(null); setRevoking(k) }}
+                      >
+                        <Trash2 size={13} />
+                        Revoke
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {revoking && (
+        <Modal titleId="revoke-key-title" onClose={closeRevoke}>
+          <h2 className={styles.dialogTitle} id="revoke-key-title">Revoke ingest key?</h2>
+          <p className={styles.dialogBody}>
+            <strong>{revoking.name}</strong> (<code className={styles.code}>{revoking.prefix}…</code>)
+            stops working immediately for every sender that uses it. This cannot be undone.
+          </p>
+          {revokeError && (
+            <div className={styles.alertWrap}>
+              <InlineAlert kind="error" message={revokeError} />
+            </div>
+          )}
+          <div className={styles.actionRow}>
+            <button
+              type="button"
+              className={`${styles.primaryBtn} ${styles.dangerPrimaryBtn}`}
+              onClick={handleRevoke}
+              disabled={revokeBusy}
+            >
+              {revokeBusy ? <><span className={styles.spinner} />Revoking…</> : 'Revoke'}
+            </button>
+            <button type="button" className={styles.secondaryBtn} onClick={closeRevoke} disabled={revokeBusy}>
+              Cancel
+            </button>
+          </div>
+        </Modal>
+      )}
+    </div>
+  )
+}
+
 // ─── Page ────────────────────────────────────────────────────────────────────
 
 type TabId = 'getting-started' | 'export' | 'import' | 'settings'
+
+const TAB_IDS: TabId[] = ['getting-started', 'export', 'import', 'settings']
+
+function isTabId(v: string | null): v is TabId {
+  return v !== null && (TAB_IDS as string[]).includes(v)
+}
 
 const TABS = [
   { id: 'getting-started', label: 'Getting Started' },
@@ -540,7 +777,14 @@ const TABS = [
 ]
 
 export default function Setup() {
-  const [activeTab, setActiveTab] = useState<TabId>('getting-started')
+  // The tab lives in ?tab= so other pages can link straight to one,
+  // e.g. /setup?tab=settings for ingest keys.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const tabParam = searchParams.get('tab')
+  const activeTab: TabId = isTabId(tabParam) ? tabParam : 'getting-started'
+  const setActiveTab = (id: TabId) => {
+    setSearchParams(id === 'getting-started' ? {} : { tab: id }, { replace: true })
+  }
 
   return (
     <div>

@@ -1,0 +1,165 @@
+-- Schema version: 11
+-- Versioned; never silently rename columns.
+
+CREATE TABLE IF NOT EXISTS schema_version (
+    version     INTEGER PRIMARY KEY,
+    applied_at  TIMESTAMPTZ DEFAULT now()
+);
+
+-- Raw OTLP spans from Claude Code
+CREATE TABLE IF NOT EXISTS spans (
+    -- OTLP identity
+    trace_id        VARCHAR NOT NULL,
+    span_id         VARCHAR NOT NULL PRIMARY KEY,
+    parent_span_id  VARCHAR,
+    name            VARCHAR NOT NULL,
+
+    -- Timing
+    start_time      TIMESTAMPTZ NOT NULL,
+    end_time        TIMESTAMPTZ NOT NULL,
+
+    -- Service metadata
+    service_name    VARCHAR,
+
+    -- Extracted high-cardinality keys (index targets)
+    session_id      VARCHAR,
+    model           VARCHAR,
+    tool_name       VARCHAR,
+
+    -- Actor (person, agent or host) the span is attributed to: the actors.name
+    -- of the token that sent it, NULL when unauthenticated. Was user_id before v11.
+    actor_id        VARCHAR,
+
+    -- OTLP span status: 0=UNSET, 1=OK, 2=ERROR
+    status_code     TINYINT DEFAULT 0,
+
+    -- Token / cost counters
+    input_tokens    INTEGER,
+    output_tokens   INTEGER,
+    cache_read_tokens  INTEGER,
+    cache_write_tokens INTEGER,
+    cost_usd        DOUBLE,
+
+    -- Full attribute bag (for ad-hoc queries)
+    attributes      JSON,
+    resource_attrs  JSON,
+
+    ingested_at     TIMESTAMPTZ DEFAULT now()
+);
+
+-- Migration v1 → v2: add status_code if upgrading an existing database.
+ALTER TABLE spans ADD COLUMN IF NOT EXISTS status_code TINYINT DEFAULT 0;
+
+-- Migration v2 → v3: add the attribution column (named user_id until v11).
+ALTER TABLE spans ADD COLUMN IF NOT EXISTS actor_id VARCHAR;
+
+-- Migration v9 → v10: drop the derived duration_ms column (ADR-0013). As a
+-- VIRTUAL generated column it took a logical slot but no storage slot, so every
+-- later column's logical index ran one ahead of its physical index and a bare
+-- `col = <constant>` probed an unrelated index and matched nothing. Duration is
+-- computed where it is read.
+--
+-- DuckDB refuses to ALTER a table an index depends on, so the secondary indexes
+-- are dropped here and recreated below. Both statements are idempotent, so a
+-- re-apply of this file rebuilds the indexes but moves no row data.
+DROP INDEX IF EXISTS idx_spans_session_id;
+DROP INDEX IF EXISTS idx_spans_start_time;
+DROP INDEX IF EXISTS idx_spans_name;
+DROP INDEX IF EXISTS idx_spans_actor_id;
+ALTER TABLE spans DROP COLUMN IF EXISTS duration_ms;
+
+-- Indexes for dashboard hot paths (DuckDB ART indexes).
+CREATE INDEX IF NOT EXISTS idx_spans_session_id  ON spans(session_id);
+CREATE INDEX IF NOT EXISTS idx_spans_start_time  ON spans(start_time);
+CREATE INDEX IF NOT EXISTS idx_spans_name        ON spans(name);
+CREATE INDEX IF NOT EXISTS idx_spans_actor_id    ON spans(actor_id);
+
+-- Daily aggregates for long-term retention (schema version 1)
+CREATE TABLE IF NOT EXISTS daily_usage (
+    day             DATE NOT NULL,
+    session_id      VARCHAR,
+    model           VARCHAR,
+    tool_name       VARCHAR,
+    actor_id        VARCHAR,
+    span_count      BIGINT,
+    total_input_tokens  BIGINT,
+    total_output_tokens BIGINT,
+    total_cache_read_tokens  BIGINT,
+    total_cache_write_tokens BIGINT,
+    total_cost_usd  DOUBLE,
+    total_duration_ms DOUBLE,
+    fail_count        BIGINT,
+    PRIMARY KEY (day, session_id, model, tool_name)
+);
+
+-- Migration v2 → v3: add the attribution column to daily_usage (user_id until v11).
+ALTER TABLE daily_usage ADD COLUMN IF NOT EXISTS actor_id VARCHAR;
+
+-- Migration v7 → v8: preserve cache-token totals through roll-up.
+-- Additive, nullable, no default: rows rolled up before this migration stay NULL
+-- (honestly "unknown", not a fabricated 0); rows rolled up after get real sums.
+ALTER TABLE daily_usage ADD COLUMN IF NOT EXISTS total_cache_read_tokens  BIGINT;
+ALTER TABLE daily_usage ADD COLUMN IF NOT EXISTS total_cache_write_tokens BIGINT;
+
+-- Migration v8 → v9: preserve duration and failure counts through roll-up.
+ALTER TABLE daily_usage ADD COLUMN IF NOT EXISTS total_duration_ms DOUBLE;
+ALTER TABLE daily_usage ADD COLUMN IF NOT EXISTS fail_count        BIGINT;
+
+-- API tokens for OTLP ingest auth (schema version 4) — kept for upgrade safety, not used by new auth
+CREATE TABLE IF NOT EXISTS api_tokens (
+    id           VARCHAR PRIMARY KEY,
+    name         VARCHAR NOT NULL,
+    token_hash   VARCHAR NOT NULL UNIQUE,
+    prefix       VARCHAR NOT NULL,
+    created_at   TIMESTAMPTZ DEFAULT now(),
+    last_used_at TIMESTAMPTZ
+);
+
+-- Named actors (people, agents, hosts) with always-visible plaintext tokens.
+-- Created as `users` in schema version 5, renamed to `actors` in version 11.
+CREATE TABLE IF NOT EXISTS actors (
+    id         VARCHAR PRIMARY KEY,
+    name       VARCHAR NOT NULL UNIQUE,
+    token      VARCHAR NOT NULL UNIQUE,
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- Runtime key/value settings (schema version 6)
+CREATE TABLE IF NOT EXISTS settings (
+    key        VARCHAR PRIMARY KEY,
+    value      VARCHAR NOT NULL,
+    updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- Seed allow_anonymous=true (old "no tokens = open" default preserved)
+INSERT INTO settings (key, value) VALUES ('allow_anonymous', 'true') ON CONFLICT DO NOTHING;
+
+-- Migration v4→v5: backfill an actor row for each distinct span actor_id.
+-- Uses ON CONFLICT DO NOTHING on the UNIQUE name column to be idempotent.
+-- Token is 'cotel_' + 64 hex chars built from two md5 calls to avoid external deps.
+INSERT INTO actors (id, name, token)
+SELECT
+    uuid()                                                       AS id,
+    actor_id                                                     AS name,
+    'cotel_' || md5(uuid()::VARCHAR) || md5(uuid()::VARCHAR)     AS token
+FROM (SELECT DISTINCT actor_id FROM spans WHERE actor_id IS NOT NULL AND actor_id <> '') t
+WHERE NOT EXISTS (SELECT 1 FROM actors u WHERE u.name = t.actor_id)
+  AND t.actor_id <> '[deleted]';
+
+-- Migration v6 → v7: add deleted_at for soft-delete support.
+ALTER TABLE actors ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ DEFAULT NULL;
+
+INSERT INTO schema_version (version) VALUES (1) ON CONFLICT DO NOTHING;
+INSERT INTO schema_version (version) VALUES (2) ON CONFLICT DO NOTHING;
+INSERT INTO schema_version (version) VALUES (3) ON CONFLICT DO NOTHING;
+INSERT INTO schema_version (version) VALUES (4) ON CONFLICT DO NOTHING;
+INSERT INTO schema_version (version) VALUES (5) ON CONFLICT DO NOTHING;
+INSERT INTO schema_version (version) VALUES (6) ON CONFLICT DO NOTHING;
+INSERT INTO schema_version (version) VALUES (7) ON CONFLICT DO NOTHING;
+INSERT INTO schema_version (version) VALUES (8) ON CONFLICT DO NOTHING;
+INSERT INTO schema_version (version) VALUES (9) ON CONFLICT DO NOTHING;
+INSERT INTO schema_version (version) VALUES (10) ON CONFLICT DO NOTHING;
+-- v11 renames users → actors and user_id → actor_id. A rename cannot be written
+-- idempotently in SQL, so it is not in this file: migrateUsersToActors in
+-- duckdb.go runs it before this file is applied (ADR-0027).
+INSERT INTO schema_version (version) VALUES (11) ON CONFLICT DO NOTHING;

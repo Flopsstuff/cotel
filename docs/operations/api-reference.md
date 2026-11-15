@@ -2,7 +2,9 @@
 
 The dashboard is a client of the same public JSON API you can call yourself.
 Everything below is mounted under `/api/v1/` on the dashboard port (`:8080` by
-default) and returns `application/json`.
+default) and returns `application/json`. The OTLP ingest endpoints, `/v1/traces`
+and `/v1/logs`, are the exception: they live on the ingest port (`:4318` by
+default) and are described [at the end](#otlp-ingest-v1-traces-and-v1-logs).
 
 ## The list-query contract
 
@@ -249,6 +251,66 @@ returns one actor in the same shape and accepts `range`. See
 [Actors and Authentication](./actors-and-auth.md) for the management endpoints
 (create, rotate, delete).
 
+## Ingest keys
+
+Shared credentials that authorize OTLP ingest without identifying an actor
+([ADR-0028](../decisions/0028-ingest-keys-and-actor-tokens.md)). The key itself
+is stored hashed, so it appears in exactly one response: the one that creates
+it. An ingest key authorizes `/v1/*` ingest only; it cannot call these
+endpoints or any other `/api/v1/` endpoint. See
+[Ingest keys](./actors-and-auth.md#ingest-keys-one-key-for-many-senders) for
+how senders use them.
+
+### `GET /ingest-keys`
+
+Every key, oldest first. Not paginated, and it takes no parameters.
+
+```json
+{
+  "ingest_keys": [
+    { "id": "…", "name": "paperclip", "prefix": "cotel_ik_ab1", "created_at": "2026-11-15T10:02:11Z" }
+  ]
+}
+```
+
+`prefix` is the first 12 characters of the key, kept so a key can be told apart
+in the list. It is not enough to authenticate with.
+
+### `POST /ingest-keys`
+
+Creates a key. Body: `{"name": "paperclip"}`. The name is trimmed, must not be
+empty and is at most 100 characters; otherwise `400`.
+
+Answers `201` with the row and the full key in `token`:
+
+```json
+{ "id": "…", "name": "paperclip", "prefix": "cotel_ik_ab1", "created_at": "2026-11-15T10:02:11Z", "token": "cotel_ik_ab1…" }
+```
+
+`token` is never returned again. A lost key cannot be recovered; create a new
+one and revoke the old.
+
+### `DELETE /ingest-keys/{id}`
+
+Revokes a key by deleting it. Answers `204` with no body, or `404` when no key
+has that id. Every sender using the key gets `401` from its next request on.
+
+## OTLP ingest: `/v1/traces` and `/v1/logs`
+
+These two are not under `/api/v1/` and not on the dashboard port: they are
+served on the **ingest port** (`:4318` by default), and they are what Claude
+Code's OTLP exporter talks to. Both take the same credentials — an actor token,
+or an ingest key with `X-Cotel-Actor-Token` — and answer `401
+{"error":"unauthorized"}` when those are wrong. The full decision table is in
+[How ingest decides](./actors-and-auth.md#how-ingest-decides).
+
+- **`POST /v1/traces`** stores the spans in an OTLP/HTTP trace export
+  (`application/json` or `application/x-protobuf`) and answers `200 {}`.
+- **`POST /v1/logs`** accepts an OTLP/HTTP log export and **discards** it,
+  answering `200 {}`. cotel stores spans only; the endpoint exists so a sender
+  that exports logs as well as traces (Paperclip configures both) gets a success
+  instead of `404`.
+
 ## `GET /health`
 
 Instance health. Takes no parameters and is never range-scoped.
@@ -288,3 +350,4 @@ README's *Health check* section for how the container `HEALTHCHECK` uses it.
 - [ADR-0012 — Tools list: ranged stats and server-side sort](../decisions/0012-tools-list-ranged-stats-and-server-side-sort.md)
 - [ADR-0014 — Overview: one range selector every panel obeys](../decisions/0014-overview-single-range-selector.md)
 - [ADR-0009 — daily_usage unknown sentinel](../decisions/0009-daily-usage-unknown-sentinel.md)
+- [ADR-0028 — Ingest keys authorize, actor tokens identify](../decisions/0028-ingest-keys-and-actor-tokens.md)

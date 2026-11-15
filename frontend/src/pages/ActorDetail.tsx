@@ -130,7 +130,7 @@ export default function ActorDetail() {
       </div>
 
       {!isAnon && (
-        <Card title="Token">
+        <Card title="Actor token">
           <div className={styles.tokenRow}>
             <code className={styles.tokenText}>{data.token}</code>
             <button className={styles.iconBtn} onClick={() => copyToken(data.token)} title="Copy token">
@@ -138,9 +138,17 @@ export default function ActorDetail() {
             </button>
           </div>
           {notice && <div className={styles.notice}>{notice}</div>}
-          <p className={styles.hint}>
-            Set <code className={styles.code}>OTEL_EXPORTER_OTLP_HEADERS=Authorization=Bearer {data.token}</code> in your Claude Code settings.
-          </p>
+          <ul className={styles.hintList}>
+            <li>
+              Send it directly: set{' '}
+              <code className={styles.code}>OTEL_EXPORTER_OTLP_HEADERS=Authorization=Bearer {data.token}</code>.
+            </li>
+            <li>
+              With an <Link to="/setup?tab=settings" className={styles.hintLink}>ingest key</Link>: set{' '}
+              <code className={styles.code}>COTEL_ACTOR_TOKEN={data.token}</code>, sent as{' '}
+              <code className={styles.code}>X-Cotel-Actor-Token</code>.
+            </li>
+          </ul>
         </Card>
       )}
 

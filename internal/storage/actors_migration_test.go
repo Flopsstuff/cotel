@@ -58,8 +58,8 @@ func TestMigrateUsersToActors_FromV10(t *testing.T) {
 	}
 	defer db.Close()
 
-	if v, _ := appliedSchemaVersion(db.rw); v != 11 {
-		t.Fatalf("schema version = %d, want 11", v)
+	if v, want := appliedVersion(t, db), embeddedVersion(t); v != want {
+		t.Fatalf("schema version = %d, want %d", v, want)
 	}
 
 	// The old names are gone, so no query can silently read an empty twin.
