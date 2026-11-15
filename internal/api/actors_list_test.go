@@ -1,6 +1,10 @@
 package api_test
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -163,5 +167,46 @@ func TestLegacyUserSpellings(t *testing.T) {
 
 	if code := deleteActor(t, h, alice.ID, "user_only"); code != 204 {
 		t.Fatalf("mode=user_only alias: code %d, want 204", code)
+	}
+}
+
+func patchActor(t *testing.T, h http.Handler, id, body string) (int, map[string]any) {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/actors/"+id, strings.NewReader(body))
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	var out map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &out)
+	return w.Code, out
+}
+
+// PATCH /actors/{id} sets, normalizes and clears paperclip_agent_id (ADR-0029).
+func TestPatchActor_PaperclipAgentID(t *testing.T) {
+	db, ro := openTestDB(t)
+	h := newActorHandler(t, db, ro)
+	a := createAPIActor(t, db, "Wayland")
+	const id = "709C0DB6-7E36-42AE-89DF-EF06D7F1ACAD"
+
+	code, body := patchActor(t, h, a.ID, `{"paperclip_agent_id":" `+id+` "}`)
+	if code != 200 || body["paperclip_agent_id"] != strings.ToLower(id) || body["name"] != "Wayland" {
+		t.Fatalf("set: %d %v", code, body)
+	}
+	if _, got := getJSON(t, h, "/api/v1/actors/"+a.ID); got["paperclip_agent_id"] != strings.ToLower(id) {
+		t.Fatalf("GET after set: %v", got["paperclip_agent_id"])
+	}
+	if code, body = patchActor(t, h, a.ID, `{"paperclip_agent_id":""}`); code != 200 || body["paperclip_agent_id"] != nil {
+		t.Fatalf("clear: %d %v", code, body)
+	}
+
+	for _, bad := range []string{`{"paperclip_agent_id":"not-a-uuid"}`, `{}`, `nope`} {
+		if code, _ := patchActor(t, h, a.ID, bad); code != 400 {
+			t.Errorf("body %s: code %d, want 400", bad, code)
+		}
+	}
+	if code, _ := patchActor(t, h, "no-such-actor", `{"paperclip_agent_id":""}`); code != 404 {
+		t.Errorf("unknown actor: code %d, want 404", code)
+	}
+	if code, _ := patchActor(t, h, "__anonymous__", `{"paperclip_agent_id":""}`); code != 404 {
+		t.Errorf("anonymous: code %d, want 404", code)
 	}
 }

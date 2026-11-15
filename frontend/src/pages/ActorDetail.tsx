@@ -1,7 +1,7 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { Copy, Check, RotateCcw, Trash2, Activity, ListTree } from 'lucide-react'
-import { useActor, rotateActorToken, deleteActor } from '../api'
+import { useActor, rotateActorToken, deleteActor, setActorPaperclipAgentId } from '../api'
 import type { Actor } from '../api'
 import { Card, KpiCard, LoadingSkeleton, ErrorState, SegmentedControl, DeleteActorModal } from '../components'
 import { getCookie, setCookie } from '../lib/cookie'
@@ -27,6 +27,106 @@ const RANGE_SUFFIX: Record<RangeKey, string> = {
   month: '30d',
   week: '7d',
   day: '24h',
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+interface PaperclipAgentCardProps {
+  actorId: string
+  value: string | null
+  onSaved: () => Promise<unknown>
+}
+
+// PaperclipAgentCard maps a Paperclip agent UUID to the actor, so spans that
+// Paperclip sends with the shared ingest key land on this actor.
+function PaperclipAgentCard({ actorId, value, onSaved }: PaperclipAgentCardProps) {
+  const [input, setInput] = useState(value ?? '')
+  const [invalid, setInvalid] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [saved, setSaved] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
+  const savedTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => { setInput(value ?? '') }, [value])
+  useEffect(() => () => { if (savedTimer.current) clearTimeout(savedTimer.current) }, [])
+
+  const submit = async (next: string) => {
+    setSaving(true)
+    setSaved(false)
+    setSaveError(null)
+    try {
+      const actor = await setActorPaperclipAgentId(actorId, next)
+      setInput(actor.paperclip_agent_id ?? '')
+      await onSaved()
+      setSaved(true)
+      if (savedTimer.current) clearTimeout(savedTimer.current)
+      savedTimer.current = setTimeout(() => setSaved(false), 3000)
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : 'Save failed')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleSave = (e: React.FormEvent) => {
+    e.preventDefault()
+    const trimmed = input.trim()
+    if (!UUID_RE.test(trimmed)) {
+      setInvalid(true)
+      return
+    }
+    setInvalid(false)
+    void submit(trimmed)
+  }
+
+  const handleClear = () => {
+    setInvalid(false)
+    void submit('')
+  }
+
+  return (
+    <Card title="Paperclip agent">
+      <p className={styles.cardDesc}>
+        Spans that Paperclip sends with the shared ingest key are attributed to this actor when their{' '}
+        <code className={styles.code}>paperclip.agent.id</code> matches. Find the agent&apos;s ID in
+        Paperclip, in the agent page URL or the agent settings.
+      </p>
+      <form className={styles.fieldRow} onSubmit={handleSave}>
+        <label className={styles.srOnly} htmlFor="paperclip-agent-id">Paperclip agent ID</label>
+        <input
+          id="paperclip-agent-id"
+          className={`${styles.textInput} ${invalid ? styles.textInputInvalid : ''}`}
+          placeholder="00000000-0000-0000-0000-000000000000"
+          value={input}
+          onChange={(e) => {
+            setInput(e.target.value)
+            setSaved(false)
+            if (UUID_RE.test(e.target.value.trim())) setInvalid(false)
+          }}
+          disabled={saving}
+          spellCheck={false}
+          autoComplete="off"
+          aria-invalid={invalid}
+          aria-describedby={invalid ? 'paperclip-agent-id-error' : undefined}
+        />
+        <button type="submit" className={styles.primaryBtn} disabled={saving}>
+          {saving ? 'Saving…' : 'Save'}
+        </button>
+        {value && (
+          <button type="button" className={styles.linkBtn} onClick={handleClear} disabled={saving}>
+            Clear
+          </button>
+        )}
+        {saved && <span className={styles.savedNote}><Check size={14} /> Saved</span>}
+      </form>
+      {invalid && (
+        <div id="paperclip-agent-id-error" className={styles.fieldError}>
+          Enter the agent&apos;s UUID, e.g. 3f2b8c1e-9a4d-4e6f-b7c2-1d5e8a9f0b3c.
+        </div>
+      )}
+      {saveError && <div className={styles.fieldError}>{saveError}</div>}
+    </Card>
+  )
 }
 
 function isRangeKey(v: string | null): v is RangeKey {
@@ -152,6 +252,15 @@ export default function ActorDetail() {
             </li>
           </ul>
         </Card>
+      )}
+
+      {!isAnon && (
+        <PaperclipAgentCard
+          key={data.id}
+          actorId={data.id}
+          value={data.paperclip_agent_id ?? null}
+          onSaved={() => mutate()}
+        />
       )}
 
       <Card title="Actions">

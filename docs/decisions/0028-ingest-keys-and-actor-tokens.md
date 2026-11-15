@@ -1,7 +1,7 @@
 # ADR 0028 — Ingest keys authorize, actor tokens identify
 
 **Date:** 2026-11-15
-**Status:** Accepted
+**Status:** Accepted; amended by [ADR-0029](./0029-paperclip-agents-by-agent-id.md) for Paperclip agents
 **Deciders:** Flop (board)
 
 ---

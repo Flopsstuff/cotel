@@ -1,4 +1,4 @@
--- Schema version: 12
+-- Schema version: 13
 -- Versioned; never silently rename columns.
 
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -175,3 +175,9 @@ INSERT INTO schema_version (version) VALUES (10) ON CONFLICT DO NOTHING;
 -- duckdb.go runs it before this file is applied (ADR-0027).
 INSERT INTO schema_version (version) VALUES (11) ON CONFLICT DO NOTHING;
 INSERT INTO schema_version (version) VALUES (12) ON CONFLICT DO NOTHING;
+
+-- v13: map a Paperclip agent to an actor (ADR-0029). Spans that arrive with an
+-- ingest key and no actor token are attributed by their paperclip.agent.id.
+-- No UNIQUE constraint: storage keeps one actor per agent id in a transaction.
+ALTER TABLE actors ADD COLUMN IF NOT EXISTS paperclip_agent_id VARCHAR;
+INSERT INTO schema_version (version) VALUES (13) ON CONFLICT DO NOTHING;

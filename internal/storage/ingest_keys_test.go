@@ -184,8 +184,8 @@ func TestSchemaV12_FromV11(t *testing.T) {
 		if err != nil {
 			t.Fatalf("open #%d: %v", i+1, err)
 		}
-		if v := appliedVersion(t, db); v != 12 {
-			t.Fatalf("open #%d: schema version = %d, want 12", i+1, v)
+		if v := appliedVersion(t, db); v < 12 {
+			t.Fatalf("open #%d: schema version = %d, want >= 12", i+1, v)
 		}
 		if n := queryInt64(t, db, `SELECT count(*) FROM actors WHERE name = 'Daedalus'`); n != 1 {
 			t.Fatalf("open #%d: v11 actor lost (%d rows)", i+1, n)

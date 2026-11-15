@@ -36,3 +36,4 @@ New ADRs go in this directory as `NNNN-short-title.md`, numbered sequentially.
 | [ADR-0026](./0026-scheduled-loopback-probe-with-a-pager) | The deploy host asks `/healthz` on a schedule, and it pages | Accepted |
 | [ADR-0027](./0027-users-become-actors) | Users become actors, down to the schema | Accepted |
 | [ADR-0028](./0028-ingest-keys-and-actor-tokens) | Ingest keys authorize, actor tokens identify | Accepted |
+| [ADR-0029](./0029-paperclip-agents-by-agent-id) | Paperclip agents are identified by `paperclip.agent.id` | Accepted |

@@ -22,6 +22,10 @@ type Actor struct {
 	Name      string
 	Token     string
 	CreatedAt time.Time
+	// PaperclipAgentID maps a Paperclip agent to this actor: spans authorized by
+	// an ingest key and tagged paperclip.agent.id = this value are attributed
+	// here (ADR-0029). Empty when unset.
+	PaperclipAgentID string
 }
 
 // ActorWithStats adds span-derived metrics to an Actor.
@@ -164,7 +168,7 @@ func (db *DB) ListActorsPage(opts ListActorsOptions) ([]ActorWithStats, int, err
 
 	cte := fmt.Sprintf(actorsPageCTE, rawSince, aggSince, AnonymousActorID)
 	query := cte + fmt.Sprintf(`
-SELECT id, name, token, created_at, cost, sessions, last_seen,
+SELECT id, name, token, created_at, cost, sessions, last_seen, paperclip_agent_id,
        COUNT(*) OVER () AS total
 FROM all_actors
 WHERE TRUE%s
@@ -181,14 +185,15 @@ ORDER BY %s %s NULLS LAST, name ASC%s
 	var total int
 	for rows.Next() {
 		var u ActorWithStats
-		var token sql.NullString
+		var token, paperclipAgentID sql.NullString
 		var createdAt, lastSeen sql.NullTime
 		if err := rows.Scan(
 			&u.ID, &u.Name, &token, &createdAt,
-			&u.TotalCostUSD, &u.Sessions, &lastSeen, &total,
+			&u.TotalCostUSD, &u.Sessions, &lastSeen, &paperclipAgentID, &total,
 		); err != nil {
 			return nil, 0, err
 		}
+		u.PaperclipAgentID = paperclipAgentID.String
 		if token.Valid {
 			u.Token = token.String
 		}
@@ -232,7 +237,8 @@ named AS (
     SELECT u.id, u.name, u.token, u.created_at,
            COALESCE(ua.cost, 0) AS cost,
            COALESCE(ua.sessions, 0) AS sessions,
-           s.last_seen AS last_seen
+           s.last_seen AS last_seen,
+           u.paperclip_agent_id AS paperclip_agent_id
     FROM actors u
     LEFT JOIN usage_agg ua ON ua.actor_id = u.name
     LEFT JOIN seen s ON s.actor_id = u.name
@@ -246,7 +252,8 @@ anon AS (
         CAST(NULL AS TIMESTAMPTZ) AS created_at,
         COALESCE((SELECT cost FROM usage_agg WHERE actor_id IS NULL), 0) AS cost,
         COALESCE((SELECT sessions FROM usage_agg WHERE actor_id IS NULL), 0) AS sessions,
-        (SELECT last_seen FROM seen WHERE actor_id IS NULL) AS last_seen
+        (SELECT last_seen FROM seen WHERE actor_id IS NULL) AS last_seen,
+        CAST(NULL AS VARCHAR) AS paperclip_agent_id
     FROM (SELECT 1) d
     WHERE EXISTS (SELECT 1 FROM spans WHERE actor_id IS NULL)
        OR EXISTS (SELECT 1 FROM daily_usage WHERE actor_id IS NULL)
@@ -276,9 +283,11 @@ func (db *DB) GetActorWithStats(id string, since *time.Time) (ActorWithStats, er
 	}
 
 	var u ActorWithStats
+	var paperclipAgentID sql.NullString
 	err := db.rw.QueryRow(
-		`SELECT id, name, token, created_at FROM actors WHERE id = ? AND deleted_at IS NULL`, id,
-	).Scan(&u.ID, &u.Name, &u.Token, &u.CreatedAt)
+		`SELECT id, name, token, created_at, paperclip_agent_id FROM actors WHERE id = ? AND deleted_at IS NULL`, id,
+	).Scan(&u.ID, &u.Name, &u.Token, &u.CreatedAt, &paperclipAgentID)
+	u.PaperclipAgentID = paperclipAgentID.String
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ActorWithStats{}, ErrNotFound
@@ -476,4 +485,65 @@ func (db *DB) DeleteAnonymousData() error {
 		return err
 	}
 	return tx.Commit()
+}
+
+// SetActorPaperclipAgentID maps the Paperclip agent agentID to the actor
+// actorID, or clears the mapping when agentID is empty. An agent maps to at most
+// one actor, so the id is first cleared from any other actor that holds it - the
+// latest assignment wins. Returns ErrNotFound for an unknown or deleted actor.
+//
+// There is deliberately no UNIQUE constraint on the column: DuckDB has raised
+// false duplicate-key errors on UPDATEs of UNIQUE-constrained rows (see
+// SoftDeleteActor), so uniqueness is kept here instead, in one transaction.
+func (db *DB) SetActorPaperclipAgentID(actorID, agentID string) (err error) {
+	tx, err := db.rw.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	var n int
+	if err = tx.QueryRow(
+		`SELECT count(*) FROM actors WHERE id = ? AND deleted_at IS NULL`, actorID,
+	).Scan(&n); err != nil {
+		return err
+	}
+	if n == 0 {
+		err = ErrNotFound
+		return err
+	}
+	if agentID != "" {
+		if _, err = tx.Exec(
+			`UPDATE actors SET paperclip_agent_id = NULL WHERE paperclip_agent_id = ? AND id <> ?`,
+			agentID, actorID,
+		); err != nil {
+			return err
+		}
+	}
+	if _, err = tx.Exec(
+		`UPDATE actors SET paperclip_agent_id = ? WHERE id = ?`, nullableStr(agentID), actorID,
+	); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// ActorNameByPaperclipAgentID returns the name of the live actor mapped to the
+// Paperclip agent agentID, or "" when none is.
+func (db *DB) ActorNameByPaperclipAgentID(agentID string) (string, error) {
+	if agentID == "" {
+		return "", nil
+	}
+	var name string
+	err := db.rw.QueryRow(
+		`SELECT name FROM actors WHERE paperclip_agent_id = ? AND deleted_at IS NULL LIMIT 1`, agentID,
+	).Scan(&name)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return name, err
 }

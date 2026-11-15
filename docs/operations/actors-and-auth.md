@@ -116,7 +116,8 @@ There is no last-used time: ingest does not write to the database to record whic
 | Request | Result |
 |---|---|
 | `Authorization: Bearer <ingest key>` + `X-Cotel-Actor-Token: <valid actor token>` | Accepted, attributed to that actor |
-| Valid ingest key, actor token missing, empty or unknown | Accepted as **Anonymous** — even with allow-anonymous off, because the key authorized the request |
+| Valid ingest key, no valid actor token, span carries `paperclip.agent.id` mapped to an actor | Accepted, attributed to that actor ([Paperclip agents](#paperclip-agents)) |
+| Valid ingest key, no valid actor token and no mapped `paperclip.agent.id` | Accepted as **Anonymous** — even with allow-anonymous off, because the key authorized the request |
 | Unknown `cotel_ik_` key | `401` |
 | `Authorization: Bearer <actor token>` | Accepted, attributed to that actor; `X-Cotel-Actor-Token` is ignored |
 | Any other unknown `cotel_` bearer | `401` |
@@ -126,9 +127,20 @@ A wrong actor token is not an error. A typo, a rotated token or a deleted actor 
 
 `POST /v1/logs` accepts the same credentials and discards the body (`200 {}`). It exists so that a sender exporting logs as well as traces, as Paperclip does, does not get `404`; cotel stores spans only.
 
+### Paperclip agents
+
+Paperclip sends every agent's telemetry with one company-wide header set, so its agents cannot each send an actor token. Instead, Paperclip tags every span with `paperclip.agent.id`, and cotel maps that id to an actor ([ADR-0029](../decisions/0029-paperclip-agents-by-agent-id.md)):
+
+1. In Paperclip, **Company Settings → General → Agent observability**: destination **Custom OTLP**, base URL of your ingest endpoint (e.g. `https://otlp.example.com`), one header `Authorization` = `Bearer cotel_ik_<key>`, **Enable export** on. Leave the content-capture switches off unless you want prompts and tool output stored in span attributes; **Additional tool details** is useful (it gives the Tools page command detail).
+2. In cotel, open each agent's actor page and fill in **Paperclip agent** with the agent's UUID (from its Paperclip page URL), or `PATCH /api/v1/actors/{id}` with `{"paperclip_agent_id": "<uuid>"}`.
+
+That is all: no helper, managed settings or per-agent env is needed on the Paperclip host, and agents on remote machines are covered the same way. The id is honoured only when an ingest key authorized the request, so an unauthenticated sender cannot claim an agent by setting the attribute. An actor token still wins when one is sent. A new agent shows up as Anonymous until its actor is mapped.
+
+The helper approach below does **not** work for Paperclip agents: Paperclip starts them through the Claude Agent SDK with `--setting-sources=project,local`, so they never read the user `settings.json` the helper is registered in, and registering it in managed settings makes Claude Code drop the endpoint Paperclip sets. ADR-0029 has the details.
+
 ### Configuring a sender
 
-Each sender needs three things:
+For a person's or a host's own Claude Code, which reads the user `settings.json`. Each sender needs three things:
 
 1. **The ingest key** in its OTLP headers: `Authorization=Bearer cotel_ik_<key>` in `OTEL_EXPORTER_OTLP_HEADERS` or `OTEL_EXPORTER_OTLP_TRACES_HEADERS`. With Paperclip this is the company-wide header set; Paperclip puts it in the per-signal header vars.
 2. **Its own actor token** in the env var `COTEL_ACTOR_TOKEN`, in that sender's own process env (for a Paperclip agent, its adapter env). Do not put it in the `env` block of a shared `settings.json`: that block applies to every launch and overrides the inherited env, so every sender would claim the same actor.

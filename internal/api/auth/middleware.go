@@ -88,12 +88,13 @@ func IngestMiddleware(db IngestAuthDB, next http.Handler) http.Handler {
 			unauthorized(w)
 			return
 		}
+		ctx := ingest.WithIngestKeyAuth(r.Context())
 		if token := strings.TrimSpace(r.Header.Get(ActorTokenHeader)); token != "" {
 			if actor, err := db.GetActorByToken(token); err == nil && actor != nil {
-				r = r.WithContext(ingest.WithActorName(r.Context(), actor.Name))
+				ctx = ingest.WithActorName(ctx, actor.Name)
 			}
 		}
-		next.ServeHTTP(w, r)
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 

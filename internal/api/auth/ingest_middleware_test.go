@@ -198,3 +198,46 @@ func TestIngestMiddleware_RealStorage(t *testing.T) {
 		t.Fatalf("deleted key: code %d, want 401", w.Code)
 	}
 }
+
+// Only a request authorized by an ingest key is marked for attribution by
+// paperclip.agent.id; actor-token and anonymous requests are not (ADR-0029).
+func TestIngestMiddleware_MarksIngestKeyRequests(t *testing.T) {
+	db, err := storage.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	actor, err := db.CreateActor("flop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := db.CreateIngestKey("paperclip")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mark := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if ingest.IngestKeyAuthFromContext(r.Context()) {
+			w.Header().Set("X-Test-Ingest-Key", "1")
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+	h := auth.IngestMiddleware(db, mark)
+	for _, c := range []struct {
+		name, auth string
+		want       string
+	}{
+		{"ingest key", "Bearer " + key.Token, "1"},
+		{"actor token", "Bearer " + actor.Token, ""},
+		{"anonymous", "", ""},
+	} {
+		req := httptest.NewRequest(http.MethodPost, "/v1/traces", nil)
+		if c.auth != "" {
+			req.Header.Set("Authorization", c.auth)
+		}
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		if got := w.Header().Get("X-Test-Ingest-Key"); got != c.want {
+			t.Errorf("%s: ingest-key mark = %q, want %q", c.name, got, c.want)
+		}
+	}
+}

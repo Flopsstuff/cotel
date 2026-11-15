@@ -340,3 +340,85 @@ func TestTracesResponseMatchesRequestEncoding(t *testing.T) {
 		})
 	}
 }
+
+// resolvingStore is a Storer that also maps Paperclip agent ids to actors.
+type resolvingStore struct {
+	memStore
+	agents  map[string]string
+	lookups int
+}
+
+func (r *resolvingStore) ActorNameByPaperclipAgentID(id string) (string, error) {
+	r.lookups++
+	return r.agents[id], nil
+}
+
+func agentPayload(resourceAgent, spanAgent string) []byte {
+	attr := func(v string) string {
+		if v == "" {
+			return ""
+		}
+		return `{"key":"paperclip.agent.id","value":{"stringValue":"` + v + `"}}`
+	}
+	return []byte(`{"resourceSpans":[{"resource":{"attributes":[` + attr(resourceAgent) + `]},
+	  "scopeSpans":[{"spans":[
+	    {"traceId":"00000000000000000000000000000001","spanId":"0000000000000001","name":"a",
+	     "startTimeUnixNano":"1","endTimeUnixNano":"2","attributes":[` + attr(spanAgent) + `]},
+	    {"traceId":"00000000000000000000000000000001","spanId":"0000000000000002","name":"b",
+	     "startTimeUnixNano":"1","endTimeUnixNano":"2","attributes":[` + attr(spanAgent) + `]}]}]}]}`)
+}
+
+// Spans are attributed by paperclip.agent.id only on ingest-key requests with
+// no actor token, the actor token wins, and unauthenticated requests never are.
+func TestPaperclipAgentAttribution(t *testing.T) {
+	const wayland, daedalus = "709c0db6-7e36-42ae-89df-ef06d7f1acad", "386b876d-eeba-4bf9-bc10-0dec7b09ee8a"
+	cases := []struct {
+		name          string
+		ingestKey     bool
+		actorToken    string // actor name injected by the middleware
+		resAgent      string
+		spanAgent     string
+		want          string
+		wantLookupMax int
+	}{
+		{"ingest key, resource attr", true, "", wayland, "", "Wayland", 1},
+		{"ingest key, span attr only", true, "", "", daedalus, "Daedalus", 1},
+		{"resource attr beats span attr", true, "", wayland, daedalus, "Wayland", 1},
+		{"unknown agent stays anonymous", true, "", "11111111-1111-1111-1111-111111111111", "", "", 1},
+		{"actor token wins", true, "flop", wayland, "", "flop", 0},
+		{"no ingest key: attribute ignored", false, "", wayland, "", "", 0},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			store := &resolvingStore{agents: map[string]string{wayland: "Wayland", daedalus: "Daedalus"}}
+			h := ingest.New(store)
+			req := httptest.NewRequest(http.MethodPost, "/v1/traces", bytes.NewReader(agentPayload(c.resAgent, c.spanAgent)))
+			req.Header.Set("Content-Type", "application/json")
+			ctx := req.Context()
+			if c.ingestKey {
+				ctx = ingest.WithIngestKeyAuth(ctx)
+			}
+			if c.actorToken != "" {
+				ctx = ingest.WithActorName(ctx, c.actorToken)
+			}
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, req.WithContext(ctx))
+			h.Flush()
+			if w.Code != http.StatusOK {
+				t.Fatalf("status %d: %s", w.Code, w.Body.String())
+			}
+			if len(store.spans) != 2 {
+				t.Fatalf("stored %d spans, want 2", len(store.spans))
+			}
+			for _, s := range store.spans {
+				if s.ActorID != c.want {
+					t.Errorf("span %s actor = %q, want %q", s.SpanID, s.ActorID, c.want)
+				}
+			}
+			// Two spans from one agent cost at most one lookup.
+			if store.lookups > c.wantLookupMax {
+				t.Errorf("lookups = %d, want <= %d", store.lookups, c.wantLookupMax)
+			}
+		})
+	}
+}
