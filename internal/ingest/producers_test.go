@@ -32,6 +32,16 @@ func i(v string) string { return `{"intValue":"` + v + `"}` }
 // ingestOne posts one span from service svc and returns what was stored.
 func ingestOne(t *testing.T, svc, spanName string, attrs ...kv) storage.Span {
 	t.Helper()
+	stored := ingestSpans(t, svc, spanName, attrs...)
+	if len(stored) != 1 {
+		t.Fatalf("expected 1 span, got %d", len(stored))
+	}
+	return stored[0]
+}
+
+// ingestSpans posts one span from service svc and returns every span stored.
+func ingestSpans(t *testing.T, svc, spanName string, attrs ...kv) []storage.Span {
+	t.Helper()
 	parts := make([]string, 0, len(attrs))
 	for _, a := range attrs {
 		parts = append(parts, `{"key":"`+a.key+`","value":`+a.val+`}`)
@@ -50,12 +60,15 @@ func ingestOne(t *testing.T, svc, spanName string, attrs ...kv) storage.Span {
 	h := ingest.New(store)
 	req := httptest.NewRequest(http.MethodPost, "/v1/traces", bytes.NewBufferString(payload))
 	req.Header.Set("Content-Type", "application/json")
-	h.ServeHTTP(httptest.NewRecorder(), req)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
 	h.Flush()
-	if len(store.spans) != 1 {
-		t.Fatalf("expected 1 span, got %d", len(store.spans))
+	// A dropped span is still a successful request; without this a rejected
+	// request would pass every "nothing stored" assertion.
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", w.Code, w.Body.String())
 	}
-	return store.spans[0]
+	return store.spans
 }
 
 func wantTokens(t *testing.T, name string, got *int64, want int64) {
@@ -119,28 +132,63 @@ func TestCodexTurnSpanDerivesNonCachedInput(t *testing.T) {
 	wantTokens(t, "cache_read", sp.CacheReadTokens, 600)
 }
 
-// thread.id on most Codex spans is the tracing layer's OS thread number.
+// thread.id on most Codex spans is the tracing layer's OS thread number, not a
+// session, and a Codex span without a session is not stored (ADR-0030).
 func TestCodexIntegerThreadIDIsNotASession(t *testing.T) {
-	sp := ingestOne(t, "codex-app-server", "fs.get_metadata", kv{"thread.id", i("3")})
-	if sp.SessionID != "" {
-		t.Errorf("session_id: got %q, want empty", sp.SessionID)
+	if got := ingestSpans(t, "codex-app-server", "fs.get_metadata", kv{"thread.id", i("3")}); len(got) != 0 {
+		t.Errorf("stored %d spans, want 0 (session_id %q)", len(got), got[0].SessionID)
 	}
 }
 
 // handle_responses repeats the turn's usage per request as gen_ai.usage.*; the
-// turn span already carries the sum, so these must not add to it.
+// turn span already carries the sum. It has no session, so it is not stored and
+// cannot add to the turn's tokens.
 func TestCodexPerRequestUsageIsNotCounted(t *testing.T) {
-	sp := ingestOne(t, "codex-app-server", "handle_responses",
+	got := ingestSpans(t, "codex-app-server", "handle_responses",
+		kv{"thread.id", i("5")},
 		kv{"gen_ai.usage.input_tokens", i("24325")},
 		kv{"gen_ai.usage.output_tokens", i("196")},
 		kv{"gen_ai.usage.cache_read.input_tokens", i("11264")},
 	)
-	if sp.InputTokens != nil || sp.OutputTokens != nil || sp.CacheReadTokens != nil {
-		t.Errorf("handle_responses must carry no tokens, got in=%v out=%v cr=%v",
-			sp.InputTokens, sp.OutputTokens, sp.CacheReadTokens)
+	if len(got) != 0 {
+		t.Errorf("handle_responses: stored %d spans, want 0", len(got))
 	}
-	if sp.CostUSD != nil {
-		t.Errorf("handle_responses must carry no cost, got %v", *sp.CostUSD)
+}
+
+// The Codex spans that make up nearly all of its volume carry no session and
+// are dropped; every other producer's sessionless spans are stored (ADR-0030).
+func TestOnlyCodexSessionlessSpansAreDropped(t *testing.T) {
+	for _, name := range []string{"receiving", "append_items", "persist_rollout_items", "realtime_conversation.running_state"} {
+		if got := ingestSpans(t, "codex-app-server", name, kv{"thread.id", i("7")}); len(got) != 0 {
+			t.Errorf("codex %s: stored %d spans, want 0", name, len(got))
+		}
+	}
+	for _, svc := range []string{"grok-cli", "claude-code", ""} {
+		if got := ingestSpans(t, svc, "anything"); len(got) != 1 {
+			t.Errorf("%q sessionless span: stored %d, want 1", svc, len(got))
+		}
+	}
+}
+
+// WouldDrop applies the same rule to a stored span's JSON-decoded attributes,
+// where integers arrive as float64.
+func TestWouldDrop(t *testing.T) {
+	cases := []struct {
+		svc, name string
+		attrs     map[string]any
+		want      bool
+	}{
+		{"codex-app-server", "receiving", map[string]any{"thread.id": float64(5)}, true},
+		{"codex-app-server", "fs.read_file", map[string]any{}, true},
+		{"codex-app-server", "session_task.turn", map[string]any{"thread.id": codexConv}, false},
+		{"codex-app-server", "exec", map[string]any{"conversation.id": codexConv}, false},
+		{"grok-cli", "sampling.stream_decode", map[string]any{}, false},
+		{"claude-code", "claude_code.tool", map[string]any{}, false},
+	}
+	for _, c := range cases {
+		if got := ingest.WouldDrop(c.svc, c.name, c.attrs); got != c.want {
+			t.Errorf("WouldDrop(%s, %s) = %v, want %v", c.svc, c.name, got, c.want)
+		}
 	}
 }
 
