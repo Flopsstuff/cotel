@@ -362,6 +362,67 @@ func TestSessions(t *testing.T) {
 				}
 			},
 		},
+		{
+			// Claude Code puts a failed call on claude_code.tool.execution, which
+			// has no tool_name; the claude_code.tool span that names the tool
+			// stays OK.
+			name: "a failed Claude Code tool call is counted and leaves the session ok",
+			seed: func(t *testing.T, db *storage.DB) {
+				now := time.Now()
+				insertSpan(t, db, storage.Span{
+					TraceID: "t1", SpanID: "s1", Name: "claude_code.llm_request", SessionID: "sess1",
+					StartTime: now, EndTime: now.Add(time.Second),
+				})
+				insertSpan(t, db, storage.Span{
+					TraceID: "t1", SpanID: "s2", Name: "claude_code.tool", SessionID: "sess1",
+					ToolName: "Bash", StartTime: now, EndTime: now.Add(time.Second),
+				})
+				insertSpan(t, db, storage.Span{
+					TraceID: "t1", SpanID: "s3", Name: "claude_code.tool.execution", SessionID: "sess1",
+					StatusCode: 2, StartTime: now, EndTime: now.Add(time.Second),
+				})
+			},
+			path:       "/api/v1/sessions",
+			wantStatus: http.StatusOK,
+			checkBody: func(t *testing.T, body map[string]any) {
+				wantSession(t, body, "ok", 1, 1)
+			},
+		},
+		{
+			// Codex and Grok keep tool_name on the span that fails.
+			name: "a failed span that names its tool is counted and leaves the session ok",
+			seed: func(t *testing.T, db *storage.DB) {
+				now := time.Now()
+				insertSpan(t, db, storage.Span{
+					TraceID: "t1", SpanID: "s1", Name: "tool.execution", SessionID: "sess1",
+					ToolName: "shell", StatusCode: 2, StartTime: now, EndTime: now.Add(time.Second),
+				})
+			},
+			path:       "/api/v1/sessions",
+			wantStatus: http.StatusOK,
+			checkBody: func(t *testing.T, body map[string]any) {
+				wantSession(t, body, "ok", 1, 1)
+			},
+		},
+		{
+			name: "a failed LLM request makes the session an error",
+			seed: func(t *testing.T, db *storage.DB) {
+				now := time.Now()
+				insertSpan(t, db, storage.Span{
+					TraceID: "t1", SpanID: "s1", Name: "claude_code.llm_request", SessionID: "sess1",
+					StatusCode: 2, StartTime: now, EndTime: now.Add(time.Second),
+				})
+				insertSpan(t, db, storage.Span{
+					TraceID: "t1", SpanID: "s2", Name: "claude_code.tool", SessionID: "sess1",
+					ToolName: "Bash", StartTime: now, EndTime: now.Add(time.Second),
+				})
+			},
+			path:       "/api/v1/sessions",
+			wantStatus: http.StatusOK,
+			checkBody: func(t *testing.T, body map[string]any) {
+				wantSession(t, body, "error", 1, 0)
+			},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -374,6 +435,26 @@ func TestSessions(t *testing.T) {
 			}
 			tc.checkBody(t, body)
 		})
+	}
+}
+
+// wantSession checks the status and tool counters of the only session in a
+// /sessions response.
+func wantSession(t *testing.T, body map[string]any, status string, toolCalls, failedToolCalls float64) {
+	t.Helper()
+	items, ok := body["items"].([]any)
+	if !ok || len(items) != 1 {
+		t.Fatalf("want 1 item, got %v", body["items"])
+	}
+	item := items[0].(map[string]any)
+	if item["status"] != status {
+		t.Errorf("want status=%s, got %v", status, item["status"])
+	}
+	if item["tool_calls"] != toolCalls {
+		t.Errorf("want tool_calls=%v, got %v", toolCalls, item["tool_calls"])
+	}
+	if item["failed_tool_calls"] != failedToolCalls {
+		t.Errorf("want failed_tool_calls=%v, got %v", failedToolCalls, item["failed_tool_calls"])
 	}
 }
 

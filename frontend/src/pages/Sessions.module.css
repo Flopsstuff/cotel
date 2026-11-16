@@ -105,6 +105,13 @@
   font-style: italic;
 }
 
+.failedTools {
+  margin-left: 8px;
+  font-size: var(--text-xs);
+  color: var(--color-warning);
+  white-space: nowrap;
+}
+
 .pagination {
   display: flex;
   align-items: center;

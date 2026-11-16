@@ -83,6 +83,25 @@ Two consequences are worth knowing:
 range, with all unattributed spans counting as the single `__anonymous__`
 principal the actors list shows.
 
+## `GET /sessions`
+
+Each row carries `status` and two tool counters:
+
+| Field | Meaning |
+|---|---|
+| `tool_calls` | Spans that name a tool |
+| `failed_tool_calls` | Errored tool spans |
+| `status` | `error` when a span that is not a tool call errored, `ok` otherwise |
+
+A failed tool call does not make the session an error. An agent's shell commands
+exit non-zero in the normal course of work, so a status that counted them would
+mark nearly every working session as failed. For Claude Code, `error` therefore
+means a failed LLM request.
+
+A tool span is any `claude_code.tool*` span, or a span that carries a
+`tool_name`. Claude Code reports a failed call on `claude_code.tool.execution`,
+which has no `tool_name`; Codex and Grok keep the name on the span that fails.
+
 ## `GET /history`
 
 Activity over time, bucketed at the requested `granularity`.

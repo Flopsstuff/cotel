@@ -150,6 +150,19 @@ export default function Sessions() {
                 key: 'tool_calls',
                 label: 'Tools',
                 sortable: true,
+                render: (v, row) => (
+                  <>
+                    {Number(v)}
+                    {row.failed_tool_calls > 0 && (
+                      <span
+                        className={styles.failedTools}
+                        title="Tool calls that returned an error. They do not make the session an error."
+                      >
+                        {row.failed_tool_calls} failed
+                      </span>
+                    )}
+                  </>
+                ),
               },
               {
                 key: 'status',

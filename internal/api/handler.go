@@ -657,7 +657,11 @@ type sessionItem struct {
 	InputTokens  int64   `json:"input_tokens"`
 	OutputTokens int64   `json:"output_tokens"`
 	ToolCalls    int64   `json:"tool_calls"`
-	Status       string  `json:"status"`
+	// FailedToolCalls counts the errored tool spans. They do not decide Status.
+	FailedToolCalls int64 `json:"failed_tool_calls"`
+	// Status is "error" when a span that is not a tool call errored, which for
+	// Claude Code means a failed LLM request, and "ok" otherwise.
+	Status string `json:"status"`
 }
 
 type sessionsResponse struct {
@@ -677,6 +681,17 @@ type sessionsResponse struct {
 // session: it groups into a row whose link 404s, and it is what the roll-up
 // records as UnknownSentinel rather than as a session of its own.
 const hasSession = `session_id IS NOT NULL AND session_id <> ''`
+
+// toolSpan matches the spans a tool call produces. Claude Code reports a failed
+// call on claude_code.tool.execution, which carries no tool_name, so its spans
+// are matched by name; Codex and Grok keep tool_name on the span that fails.
+//
+// A session's status ignores these. An agent's shell commands exit non-zero in
+// the normal course of work (a grep with no match, a file that is not there),
+// so nearly every working session has an errored tool span: counting them made
+// 96 of the 159 production sessions that used a tool read as failed
+// (2026-11-16).
+const toolSpan = `(starts_with(name, 'claude_code.tool') OR (tool_name IS NOT NULL AND tool_name <> ''))`
 
 func (h *Handler) handleSessions(w http.ResponseWriter, r *http.Request) {
 	rangeKey, since := parseRangeDefault(r, "all")
@@ -730,7 +745,8 @@ func (h *Handler) handleSessions(w http.ResponseWriter, r *http.Request) {
 			COALESCE(SUM(input_tokens), 0),
 			COALESCE(SUM(output_tokens), 0),
 			COUNT(*) FILTER (WHERE tool_name IS NOT NULL AND tool_name <> ''),
-			MAX(CASE WHEN status_code = 2 THEN 1 ELSE 0 END),
+			COUNT(*) FILTER (WHERE status_code = 2 AND `+toolSpan+`),
+			MAX(CASE WHEN status_code = 2 AND NOT `+toolSpan+` THEN 1 ELSE 0 END),
 			COALESCE(MAX(actor_id), '')
 		FROM spans
 		WHERE `+hasSession+`%s
@@ -753,7 +769,7 @@ func (h *Handler) handleSessions(w http.ResponseWriter, r *http.Request) {
 		var firstSeen, lastSeen time.Time
 		var hasError int
 		if err := rows.Scan(&s.SessionID, &firstSeen, &lastSeen, &s.Model,
-			&s.CostUSD, &s.InputTokens, &s.OutputTokens, &s.ToolCalls, &hasError, &s.ActorID); err != nil {
+			&s.CostUSD, &s.InputTokens, &s.OutputTokens, &s.ToolCalls, &s.FailedToolCalls, &hasError, &s.ActorID); err != nil {
 			queryFailed(w)
 			return
 		}

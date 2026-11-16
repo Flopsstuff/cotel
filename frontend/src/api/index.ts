@@ -29,6 +29,10 @@ export interface SessionItem {
   input_tokens: number
   output_tokens: number
   tool_calls: number
+  // Errored tool spans. They do not decide `status`.
+  failed_tool_calls: number
+  // "error" when something other than a tool call failed (for Claude Code, an
+  // LLM request); a session whose only failures are tool calls is "ok".
   status: string
 }
 
