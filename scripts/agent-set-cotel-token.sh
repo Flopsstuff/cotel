@@ -21,7 +21,7 @@
 # edits (needs `agents:create`), and a blind cross-agent write cannot read and
 # preserve another agent's secret env, so it would silently wipe secrets. Each
 # agent can read its own full config and merge the variable in safely. See
-# scripts/agent-set-git-identity.sh and docs/operations/agent-identity.md.
+# docs/operations/agent-identity.md.
 #
 # IMPORTANT — COTEL_ACTOR_TOKEN must live in the per-agent adapter env, never in a
 # shared settings.json `env` block: that block is applied at startup and
@@ -103,7 +103,7 @@ env["COTEL_ACTOR_TOKEN"] = {"type": "plain", "value": token}
 
 # Send ONLY env (the API shallow-merges top-level adapterConfig keys, and an
 # env-only PATCH avoids the 403 that a full-adapterConfig self-PATCH triggers for
-# managed-instruction agents). See agent-set-git-identity.sh for the full note.
+# managed-instruction agents).
 call("PATCH", f"/api/agents/{agent_id}", {"adapterConfig": {"env": env}})
 print(f"set cotel actor token for {name} (token ...{token[-8:]}) — applies on the next run")
 PY
