@@ -10,28 +10,26 @@ How FlopBut's local agents are distinguished in git history and on GitHub.
 ## Canonical identities
 
 Slug is the lowercased name. The email is a label for git history only — it is
-intentionally **not** a mailbox and **not** linked to any GitHub account. The
-domain `agents.flopbut.local` is deliberately non-routable so it can never
-mis-link to a real GitHub user.
+intentionally **not** a mailbox and **not** linked to any GitHub account, so it
+never mis-links to a real GitHub user. The domain was `agents.flopbut.local`
+until 2026-11-21; commits made before that keep the old addresses and history
+is not rewritten.
 
 | Agent     | NAME        | Email                            |
 |-----------|-------------|----------------------------------|
-| Prospero  | `Prospero`  | `prospero@agents.flopbut.local`  |
-| Daedalus  | `Daedalus`  | `daedalus@agents.flopbut.local`  |
-| Wayland   | `Wayland`   | `wayland@agents.flopbut.local`   |
-| Aldric    | `Aldric`    | `aldric@agents.flopbut.local`    |
-| Soren     | `Soren`     | `soren@agents.flopbut.local`     |
-| Lyra      | `Lyra`      | `lyra@agents.flopbut.local`      |
-| Iris      | `Iris`      | `iris@agents.flopbut.local`      |
-| Orion     | `Orion`     | `orion@agents.flopbut.local`     |
-| Robert    | `Robert`    | `robert@agents.flopbut.local`    |
-| Pygmalion | `Pygmalion` | `pygmalion@agents.flopbut.local` |
-| Argus     | `Argus`     | `argus@agents.flopbut.local`     |
-| Clio      | `Clio`      | `clio@agents.flopbut.local`      |
-| Vesper    | `Vesper`    | `vesper@agents.flopbut.local`    |
-
-If the board later wants a real domain, change the values everywhere — the
-scheme is unchanged.
+| Prospero  | `Prospero`  | `prospero@agents.flopbut.pl`  |
+| Daedalus  | `Daedalus`  | `daedalus@agents.flopbut.pl`  |
+| Wayland   | `Wayland`   | `wayland@agents.flopbut.pl`   |
+| Aldric    | `Aldric`    | `aldric@agents.flopbut.pl`    |
+| Soren     | `Soren`     | `soren@agents.flopbut.pl`     |
+| Lyra      | `Lyra`      | `lyra@agents.flopbut.pl`      |
+| Iris      | `Iris`      | `iris@agents.flopbut.pl`      |
+| Orion     | `Orion`     | `orion@agents.flopbut.pl`     |
+| Robert    | `Robert`    | `robert@agents.flopbut.pl`    |
+| Pygmalion | `Pygmalion` | `pygmalion@agents.flopbut.pl` |
+| Argus     | `Argus`     | `argus@agents.flopbut.pl`     |
+| Clio      | `Clio`      | `clio@agents.flopbut.pl`      |
+| Vesper    | `Vesper`    | `vesper@agents.flopbut.pl`    |
 
 ## 1. Env aliases (author/committer identity)
 
@@ -40,9 +38,9 @@ Each local agent's Paperclip `adapterConfig.env` carries four variables:
 ```json
 "env": {
   "GIT_AUTHOR_NAME":     { "type": "plain", "value": "Wayland" },
-  "GIT_AUTHOR_EMAIL":    { "type": "plain", "value": "wayland@agents.flopbut.local" },
+  "GIT_AUTHOR_EMAIL":    { "type": "plain", "value": "wayland@agents.flopbut.pl" },
   "GIT_COMMITTER_NAME":  { "type": "plain", "value": "Wayland" },
-  "GIT_COMMITTER_EMAIL": { "type": "plain", "value": "wayland@agents.flopbut.local" }
+  "GIT_COMMITTER_EMAIL": { "type": "plain", "value": "wayland@agents.flopbut.pl" }
 }
 ```
 
@@ -50,52 +48,44 @@ Each local agent's Paperclip `adapterConfig.env` carries four variables:
 setup is needed. New values take effect on the agent's **next** run (the current
 process inherited its env at spawn).
 
-### Rolling it out — agents self-apply
+### Who sets them
 
-Each agent runs this once, inside a heartbeat:
-
-```bash
-scripts/agent-set-git-identity.sh
-```
-
-It reads the agent's own name from `/api/agents/me`, derives the email, and
-**merges** the four `GIT_*` vars into its own `adapterConfig.env`. Idempotent.
-
-> **Why self-apply, not a central rollout?** A `PATCH` to `adapterConfig`
-> *replaces* the whole `env` object, and the API redacts other agents' configs
-> and rejects cross-agent edits unless the caller holds `agents:create` (most
-> agents, including the CTO, do not). Even an authorized caller cannot read
-> another agent's *secret* env (e.g. an adapter API key) to merge it back, so a
-> blind cross-agent write would silently wipe secrets. An agent editing itself
-> can read its full env and merge safely — so self-apply is both the only
-> permitted path and the only safe one.
+Only the board, from the Paperclip UI. The server refuses `adapterConfig.env`
+writes from any agent key, including an agent editing itself (403 `Agent keys
+cannot configure host-executed local adapter settings (env)`), so agents cannot
+self-apply. The `scripts/agent-set-git-identity.sh` helper that used to do this
+was removed for that reason.
 
 ## 2. Commit trailers
 
-Every commit ends with exactly two co-author trailers — the authoring agent,
-then the model it runs on:
+Every commit ends with one co-author trailer naming the committing agent and
+the model it runs on in this run, then one line per other agent whose commits
+were squashed in:
 
 ```
-Co-Authored-By: Wayland <wayland@agents.flopbut.local>
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Co-Authored-By: Wayland (Claude Opus 5.5) <wayland@agents.flopbut.pl>
+Co-Authored-By: Aldric <aldric@agents.flopbut.pl>
 ```
 
-A third trailer is never added. In particular `Co-Authored-By: Paperclip
-<noreply@paperclip.ing>` is prohibited by board order — it was once described
-here as mandatory, and that is no longer true.
+The agent determines its model at commit time and writes the line itself.
+`Co-Authored-By: Paperclip <noreply@paperclip.ing>` is prohibited by board
+order, as is any adapter-injected line (`Cursor`, `GitHub`).
 
-The robust way to get the agent line is the **`prepare-commit-msg` hook** in
-`scripts/git-hooks/`, which reads `$GIT_AUTHOR_NAME` / `$GIT_AUTHOR_EMAIL` and
-appends that trailer idempotently (it never duplicates). The model line is the
-committing agent's own responsibility. Install the hook per repo:
+The **`prepare-commit-msg` hook** in `scripts/git-hooks/` is a safety net for
+an agent that forgets its line. It looks for a `Co-Authored-By` trailer whose
+email equals `$GIT_AUTHOR_EMAIL` (case-insensitive; the name and model part are
+ignored). If there is one, it does nothing. If there is none, it appends a bare
+`Co-Authored-By: <Name> <email>` — it cannot know the model, so that line still
+fails the footer check and should be fixed by amending. The hook only acts for
+`@agents.flopbut.*` emails, so human commits are untouched, and it skips merge
+and squash messages. Install it per repo:
 
 ```bash
 scripts/install-agent-git-hooks.sh            # current repo
 scripts/install-agent-git-hooks.sh /path/repo # another checkout
 ```
 
-This points `core.hooksPath` at `scripts/git-hooks`. The hook is a no-op when no
-agent identity is in the env, so it is safe for human contributors too.
+This points `core.hooksPath` at `scripts/git-hooks`.
 
 ## 3. PR attribution
 

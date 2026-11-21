@@ -26,4 +26,4 @@ git -C "$REPO_DIR" config core.hooksPath "$HOOKS_DIR"
 
 echo "Installed agent git hooks for $REPO_DIR"
 echo "  core.hooksPath -> $HOOKS_DIR"
-echo "Verify: GIT_AUTHOR_NAME=Test GIT_AUTHOR_EMAIL=test@agents.flopbut.local git commit --allow-empty -m demo"
+echo "Verify: GIT_AUTHOR_NAME=Test GIT_AUTHOR_EMAIL=test@agents.flopbut.pl git commit --allow-empty -m demo  # appends Co-Authored-By: Test <test@agents.flopbut.pl>"
